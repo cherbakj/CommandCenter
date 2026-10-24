@@ -137,20 +137,51 @@ def summary(data) -> str:
     return " · ".join(parts)
 
 
+def _time_reached(at, now, window_hours=4) -> bool:
+    """True from `at` ("HH:MM") until `window_hours` later, so a late start still catches up."""
+    at = str(at or "").strip()
+    if not at:
+        return False
+    hour, minute = (int(x) for x in at.split(":"))
+    scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return scheduled <= now < scheduled + timedelta(hours=window_hours)
+
+
+async def _briefing(now):
+    data = await build(refresh=True)
+    agenda = data["agenda"] if isinstance(data["agenda"], list) else []
+    first = next((m for m in agenda if m["start"] >= now.isoformat(timespec="minutes")), None)
+    body = f"First up: {first['subject']} at {datetime.fromisoformat(first['start']):%I:%M %p}" if first else ""
+    alerts.raise_alert("Today", summary(data), body, "normal", {"type": "today"})
+
+
+async def _wrapup(now):
+    data = await build(refresh=True)
+    next_day = 3 if now.weekday() == 4 else 1  # Friday wraps up to Monday
+    tomorrow = await outlook.call(outlook.meetings_for_day, next_day)
+    today_iso = date.today().isoformat()
+    open_due = [t for t in data["tasks"]["items"] if t["due"] and t["due"] <= today_iso]
+    f = data["followups"] if "error" not in data["followups"] else {}
+    label = "Monday" if next_day == 3 else "Tomorrow"
+    first = tomorrow[0] if tomorrow else None
+    parts = [f"{len(open_due)} task(s) still due", f"{len(f.get('needs_reply', []))} reply(ies) owed",
+             f"{len(f.get('awaiting_reply', []))} waiting on others"]
+    body = (f"{label}: {len(tomorrow)} meeting(s), first is {first['subject']} at "
+            f"{datetime.fromisoformat(first['start']):%I:%M %p}" if first else f"{label}: no meetings")
+    alerts.raise_alert("Wrap-up", " · ".join(parts), body, "normal", {"type": "today"})
+
+
 async def briefing_loop():
-    """Pops a one-line summary of the day once, at today.briefing_time (e.g. "07:30")."""
+    """Morning briefing at today.briefing_time and end-of-day wrap-up at today.wrapup_time, once each per day."""
     while True:
         try:
-            at = str(config.section("today", {}).get("briefing_time") or "").strip()
-            if at:
-                hour, minute = (int(x) for x in at.split(":"))
-                now = datetime.now()
-                if (now.hour, now.minute) >= (hour, minute) and not db.seen(f"briefing:{date.today()}"):
-                    data = await build(refresh=True)
-                    agenda = data["agenda"] if isinstance(data["agenda"], list) else []
-                    first = next((m for m in agenda if m["start"] >= now.isoformat(timespec="minutes")), None)
-                    body = f"First up: {first['subject']} at {datetime.fromisoformat(first['start']):%I:%M %p}" if first else ""
-                    alerts.raise_alert("Today", summary(data), body, "normal", {"type": "today"})
+            cfg = config.section("today", {})
+            now = datetime.now()
+            if not (cfg.get("weekdays_only", True) and now.weekday() >= 5):
+                if _time_reached(cfg.get("briefing_time"), now) and not db.seen(f"briefing:{date.today()}"):
+                    await _briefing(now)
+                if _time_reached(cfg.get("wrapup_time"), now) and not db.seen(f"wrapup:{date.today()}"):
+                    await _wrapup(now)
         except Exception:
             log.exception("Briefing failed")
         await asyncio.sleep(60)

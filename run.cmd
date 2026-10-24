@@ -1,4 +1,9 @@
 @echo off
-rem Starts Command Center. Extra commands: run.cmd login <profile> <url>  |  run.cmd setpass <connection>
+rem Command Center.  No arguments: open the desktop app (no console window).
+rem Other commands: run.cmd install | uninstall | serve | login <profile> <url> | setpass <connection>
 cd /d "%~dp0"
-".venv\Scripts\python.exe" -m commandcenter %*
+if "%~1"=="" (
+  start "" ".venv\Scripts\pythonw.exe" -m commandcenter app
+) else (
+  ".venv\Scripts\python.exe" -m commandcenter %*
+)

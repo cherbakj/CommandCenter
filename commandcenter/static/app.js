@@ -155,6 +155,7 @@ async function showMail(id) {
         el("button", { onclick: () => act("/api/mail/read", { id, read: m.unread }) }, m.unread ? "Mark read" : "Mark unread"),
         el("button", { onclick: () => act("/api/mail/flag", { id, flagged: !m.flagged }) }, m.flagged ? "Clear flag" : "Flag"),
         el("button", { onclick: () => newTaskDialog({ subject: m.subject, notes: `From ${m.sender_name} <${m.sender}>, ${when(m.received)}` }) }, "+ Task"),
+        m.sender && el("button", { class: "alt", onclick: () => openTeamsChat(m.sender, "") }, "Chat in Teams"),
         el("button", { onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook")),
       el("pre", {}, m.body),
     );
@@ -306,7 +307,7 @@ $("#sql-filter").addEventListener("input", renderTables);
 
 // ---- today -------------------------------------------------------------------
 
-const WORKDAY = { start: 8, end: 17 };
+let WORKDAY = { start: 8, end: 17 };
 let todayData = null;
 let asanaConnected = false;
 
@@ -322,6 +323,8 @@ function tickClock() {
   const hours = now.getHours() + now.getMinutes() / 60;
   const pct = Math.round(Math.min(1, Math.max(0, (hours - WORKDAY.start) / (WORKDAY.end - WORKDAY.start))) * 100);
   $("#xp-pct").textContent = `${pct}%`;
+  const fmt = (h) => new Date(2000, 0, 1, Math.floor(h), Math.round((h % 1) * 60)).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  $("#xp-label").textContent = `WORKDAY ${fmt(WORKDAY.start)} – ${fmt(WORKDAY.end)}`;
   $("#xp-fill").style.width = `${pct}%`;
 }
 
@@ -452,7 +455,8 @@ function renderFollowups(f) {
       el("div", { class: "grow" }, el("div", { class: "title" }, m.subject),
         el("div", { class: "muted" }, `${m.sender_name} · ${when(m.received)}`)),
       fuActions(m.id, m.sender || m.sender_name, viewMail(m.id),
-        el("button", { class: "small primary", onclick: () => replyDialog(m, false) }, "Reply"))),
+        el("button", { class: "small primary", onclick: () => replyDialog(m, false) }, "Reply"),
+        m.sender && el("button", { class: "small alt", title: "Chat in Teams", onclick: () => openTeamsChat(m.sender, "") }, "Teams"))),
       null, "Nothing waiting on you."),
     fuGroup("Awaiting their reply", f.awaiting_reply, (m) => el("li", {},
       el("div", { class: "grow" }, el("div", { class: "title" }, m.subject),
@@ -570,6 +574,212 @@ $("#muted-btn").addEventListener("click", mutedDialog);
 setInterval(tickClock, 1000);
 setInterval(() => { if ($("#tab-today").classList.contains("active")) loaders.today(); }, 120000);
 
+// ---- settings from config (accent color, workday) -----------------------------
+
+let appliedAccent = null;
+function applyUi(ui) {
+  if (!ui) return;
+  const [ws, we] = (ui.workday || []).map((t) => { const [h, m] = String(t).split(":").map(Number); return h + (m || 0) / 60; });
+  if (Number.isFinite(ws) && Number.isFinite(we) && we > ws) WORKDAY = { start: ws, end: we };
+  const hex = /^#?([0-9a-f]{6})$/i.exec(ui.accent || "");
+  if (hex && ui.accent !== appliedAccent) {
+    const n = parseInt(hex[1], 16);
+    const root = document.documentElement.style;
+    root.setProperty("--accent", `#${hex[1]}`);
+    root.setProperty("--accent-rgb", `${n >> 16} ${(n >> 8) & 255} ${n & 255}`);
+    appliedAccent = ui.accent;
+  }
+}
+
+async function openExternal(url) {
+  await guarded(() => api("/api/open", { url }));
+}
+
+// ---- focus mode --------------------------------------------------------------
+
+let focusInfo = { active: false };
+function renderFocus(f) {
+  focusInfo = f || { active: false };
+  const chip = $("#focus-chip");
+  if (focusInfo.active) {
+    const mins = Math.max(0, Math.round((new Date(focusInfo.until) - new Date()) / 60000));
+    chip.textContent = `Focus · ${mins >= 60 ? Math.floor(mins / 60) + "h " + (mins % 60) + "m" : mins + "m"}`;
+    chip.className = "focus-chip small on";
+    $("#focus-line").textContent = `▲ FOCUS MODE until ${timeOf(focusInfo.until)}${focusInfo.reason !== "manual" ? " · " + focusInfo.reason : ""} · only high-priority alerts pop up`;
+  } else {
+    chip.textContent = "Focus";
+    chip.className = "focus-chip small subtle";
+    $("#focus-line").textContent = "";
+  }
+}
+
+async function setFocus(minutes) {
+  await guarded(async () => renderFocus(await api("/api/focus", { minutes })));
+}
+
+function focusDialog() {
+  const pick = (m) => el("button", { type: "button", class: m ? "primary" : "subtle", onclick: () => { $("#dialog").close(); setFocus(m); } },
+    m === 0 ? "Turn off" : m < 60 ? `${m} min` : `${m / 60} hour${m > 60 ? "s" : ""}`);
+  showDialog(el("h3", {}, "Focus mode"),
+    el("p", { class: "muted" }, "While focus is on, only high-priority alerts pop up or play a sound. Everything still lands in the Alerts feed. A calendar event with “focus” in its title turns this on automatically."),
+    focusInfo.active && el("p", { class: "good" }, `On until ${timeOf(focusInfo.until)}.`),
+    el("div", { class: "row" }, pick(30), pick(60), pick(120), focusInfo.active && pick(0), el("button", { value: "cancel", class: "subtle" }, "Cancel")));
+}
+$("#focus-chip").addEventListener("click", focusDialog);
+
+// ---- teams -------------------------------------------------------------------
+
+let teamsUrl = "https://teams.microsoft.com/v2/";
+
+function openTeamsChat(to, message) {
+  const users = to.split(/[;,]/).map((s) => s.trim()).filter(Boolean).join(",");
+  if (!users) { showMessage("Teams", "Enter at least one email address."); return; }
+  openExternal(`msteams:/l/chat/0/0?users=${encodeURIComponent(users)}${message ? "&message=" + encodeURIComponent(message) : ""}`);
+}
+
+async function teamsLogin() {
+  if (!await confirmDialog("Log in to Teams", "A browser window will open on Teams. Sign in (including MFA), wait until your chats load, then close that window. Command Center will then check your unread count every few minutes.", "Open browser")) return;
+  guarded(() => api("/api/teams/login", {}));
+}
+
+loaders.teams = () => guarded(async () => {
+  const t = await api("/api/teams");
+  teamsUrl = t.url;
+  const s = t.state || {};
+  const box = $("#teams-status");
+  if (!t.set_up) {
+    box.replaceChildren(el("div", { class: "panel-label" }, "TEAMS STATUS"),
+      el("p", {}, "Not connected yet. Log in once and Command Center will watch your Teams unread count in the background."),
+      el("div", { class: "row" }, el("button", { class: "primary", onclick: teamsLogin }, "Log in to Teams")));
+  } else {
+    box.replaceChildren(el("div", { class: "panel-label" }, "TEAMS STATUS"),
+      el("div", { class: "big-number" }, s.unread ?? "–"),
+      el("div", { class: "muted" }, "unread chats and mentions", s.checked ? ` · checked ${when(s.checked)}` : " · first check pending"),
+      s.ok === false && el("p", { class: "err" }, s.error),
+      el("div", { class: "row" },
+        el("button", { class: "small", onclick: (e) => { e.target.disabled = true; e.target.textContent = "Checking…"; guarded(() => api("/api/teams/check", {})).then(loaders.teams); } }, "Check now"),
+        el("button", { class: "small alt", onclick: () => openExternal("msteams:") }, "Open Teams app"),
+        el("button", { class: "small subtle", onclick: teamsLogin }, s.login_needed ? "Log in again" : "Re-login")));
+  }
+  const act = t.activity;
+  if (act.error) fill($("#teams-activity"), [el("li", { class: "err" }, act.error)], "");
+  else fill($("#teams-activity"), act.map((m) => el("li", { class: m.unread ? "unread" : "" },
+    el("div", { class: "grow" }, el("div", { class: "title" }, m.subject), el("div", { class: "muted" }, when(m.received))),
+    el("div", { class: "actions" }, viewMail(m.id)))),
+    "No Teams emails yet. In Teams: Settings → Notifications → turn on email for missed activity.");
+});
+$("#teams-refresh").addEventListener("click", loaders.teams);
+$("#teams-send").addEventListener("click", () => openTeamsChat($("#teams-to").value, $("#teams-msg").value));
+
+// ---- command palette (Ctrl+K) ------------------------------------------------
+
+const pal = { items: [], active: 0, mail: [], seq: 0, timer: null };
+
+function paletteSources() {
+  const out = [];
+  const add = (group, label, hint, run) => out.push({ group, label, hint: hint || "", run });
+  const tabs = { today: "Today", alerts: "Alerts", mail: "Mail", calendar: "Calendar", teams: "Teams", websites: "Websites", sql: "SQL" };
+  for (const [k, v] of Object.entries(tabs)) add("Commands", `Go to ${v}`, "tab", () => openTab(k));
+  add("Commands", "New task", "Outlook or Asana", () => newTaskDialog());
+  add("Commands", "Rescan follow-ups", "", () => { openTab("today"); loaders.today(true); });
+  add("Commands", "Focus 30 minutes", "mute non-urgent alerts", () => setFocus(30));
+  add("Commands", "Focus 1 hour", "mute non-urgent alerts", () => setFocus(60));
+  add("Commands", "Focus 2 hours", "mute non-urgent alerts", () => setFocus(120));
+  if (focusInfo.active) add("Commands", "Focus off", "", () => setFocus(0));
+  add("Commands", "Send a Teams message", "", () => { openTab("teams"); $("#teams-to").focus(); });
+  add("Commands", "Open Teams app", "", () => openExternal("msteams:"));
+  add("Commands", "Mark all alerts read", "", () => guarded(async () => { await api("/api/alerts/read", {}); refresh(); }));
+  add("Commands", "Reload config", "config.yaml", () => guarded(async () => { await api("/api/reload", {}); showMessage("Reloaded", "config.yaml was reloaded."); }));
+  add("Commands", asanaConnected ? "Disconnect Asana" : "Connect Asana", "", asanaDialog);
+  if (todayData) {
+    const now = new Date();
+    const agenda = Array.isArray(todayData.agenda) ? todayData.agenda : [];
+    const next = agenda.find((m) => m.join_url && new Date(m.end) > now);
+    if (next) add("Commands", `Join next meeting: ${next.subject}`, timeOf(next.start), () => openExternal(next.join_url));
+    for (const m of agenda) add("Agenda", m.subject, timeOf(m.start), () => guarded(() => api("/api/outlook/open", { id: m.id })));
+    for (const t of todayData.tasks.items) add("Tasks", t.subject, dueText(t.due), () => t.url ? openExternal(t.url) : guarded(() => api("/api/outlook/open", { id: t.id })));
+    const f = todayData.followups.error ? {} : todayData.followups;
+    for (const m of [...(f.needs_reply || []), ...(f.flagged || []), ...(f.unread_vip || [])])
+      add("Follow-ups", m.subject, m.sender_name, () => { openTab("mail"); showMail(m.id); });
+  }
+  for (const q of sqlInfo.queries || []) add("SQL", `Run query: ${q.name}`, q.connection, () => { openTab("sql"); $("#sql-query").value = q.name; renderParams(); });
+  for (const m of pal.mail) add("Mail", m.subject, `${m.folder === "Sent" ? "to " + m.to : m.sender_name} · ${when(m.received)}`, () => { openTab("mail"); showMail(m.id); });
+  return out;
+}
+
+function paletteScore(item, words) {
+  if (!words.length) return item.group === "Commands" ? 1 : 0;
+  if (item.group === "Mail") return 0.5;  // already matched by Outlook
+  const text = `${item.label} ${item.hint}`.toLowerCase();
+  if (!words.every((w) => text.includes(w))) return 0;
+  return 2 - text.indexOf(words[0]) / 200 + (item.group === "Commands" ? 0.3 : 0);
+}
+
+function renderPalette() {
+  const q = $("#palette-input").value.trim().toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
+  pal.items = paletteSources().map((i) => ({ ...i, score: paletteScore(i, words) })).filter((i) => i.score > 0)
+    .sort((a, b) => b.score - a.score).slice(0, 60);
+  const order = ["Commands", "Agenda", "Tasks", "Follow-ups", "SQL", "Mail"];
+  pal.items.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
+  pal.active = Math.min(pal.active, Math.max(0, pal.items.length - 1));
+  const rows = [];
+  let group = null;
+  pal.items.forEach((item, i) => {
+    if (item.group !== group) { group = item.group; rows.push(el("li", { class: "group" }, group)); }
+    rows.push(el("li", { class: `item ${i === pal.active ? "active" : ""}`, onclick: () => runPalette(i), onmousemove: () => { if (pal.active !== i) { pal.active = i; renderPalette(); } } },
+      el("span", { class: "label" }, item.label), el("span", { class: "hint" }, item.hint)));
+  });
+  if (!rows.length) rows.push(el("li", { class: "group" }, q.length >= 3 ? "Searching mail…" : "No matches"));
+  $("#palette-results").replaceChildren(...rows);
+  $("#palette-results .item.active")?.scrollIntoView({ block: "nearest" });
+}
+
+function searchMail(q) {
+  clearTimeout(pal.timer);
+  pal.mail = [];
+  if (q.length < 3) return;
+  const seq = ++pal.seq;
+  pal.timer = setTimeout(async () => {
+    try {
+      const { mail } = await api(`/api/search?q=${encodeURIComponent(q)}`);
+      if (seq === pal.seq) { pal.mail = mail; renderPalette(); }
+    } catch { /* Outlook closed: commands still work */ }
+  }, 300);
+}
+
+function openPalette() {
+  $("#palette").classList.add("open");
+  $("#palette-input").value = "";
+  pal.active = 0; pal.mail = [];
+  renderPalette();
+  $("#palette-input").focus();
+  if (!sqlInfo.queries?.length) api("/api/sql").then((d) => { sqlInfo = d; renderPalette(); }).catch(() => {});
+}
+function closePalette() { $("#palette").classList.remove("open"); }
+function runPalette(i) {
+  const item = pal.items[i];
+  if (!item) return;
+  closePalette();
+  item.run();
+}
+
+$("#search-btn").addEventListener("click", openPalette);
+$("#palette").addEventListener("click", (e) => { if (e.target.id === "palette") closePalette(); });
+$("#palette-input").addEventListener("input", (e) => { pal.active = 0; searchMail(e.target.value.trim()); renderPalette(); });
+$("#palette-input").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { pal.active = Math.min(pal.active + 1, pal.items.length - 1); renderPalette(); e.preventDefault(); }
+  else if (e.key === "ArrowUp") { pal.active = Math.max(pal.active - 1, 0); renderPalette(); e.preventDefault(); }
+  else if (e.key === "Enter") { runPalette(pal.active); e.preventDefault(); }
+  else if (e.key === "Escape") closePalette();
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    $("#palette").classList.contains("open") ? closePalette() : openPalette();
+  }
+});
+
 // ---- status + polling --------------------------------------------------------
 
 let lastUnread = -1;
@@ -579,11 +789,15 @@ async function refresh() {
     $("#badge").hidden = unread === 0;
     $("#badge").textContent = unread;
     document.title = unread ? `(${unread}) Command Center` : "Command Center";
+    applyUi(st.ui);
+    renderFocus(st.focus);
     const sites = Object.values(st.websites).filter(Boolean);
     const sitesOk = sites.every((s) => s.ok);
+    const dot = (state) => el("span", { class: `dot ${state === undefined ? "" : state ? "ok" : "bad"}` });
     $("#status").replaceChildren(
-      el("span", {}, el("span", { class: `dot ${st.outlook ? (st.outlook.ok ? "ok" : "bad") : ""}` }), "Outlook"),
-      el("span", {}, el("span", { class: `dot ${sites.length ? (sitesOk ? "ok" : "bad") : ""}` }), "Websites"));
+      el("span", {}, dot(st.outlook ? st.outlook.ok : undefined), "Outlook"),
+      el("span", {}, dot(st.teams ? st.teams.ok : undefined), "Teams"),
+      ...(sites.length ? [el("span", {}, dot(sitesOk), "Websites")] : []));
     if (unread !== lastUnread && $("#tab-alerts").classList.contains("active")) loaders.alerts();
     lastUnread = unread;
   } catch { $("#status").textContent = "Server not reachable"; }

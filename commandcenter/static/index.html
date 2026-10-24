@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Command Center</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2305070d'/%3E%3Cpath d='M4 26 L14 6 L18 6 L8 26Z' fill='%23ff2bd6'/%3E%3Cpath d='M14 26 L24 6 L28 6 L18 26Z' fill='%2300f0ff'/%3E%3C/svg%3E">
+  <link rel="icon" href="/static/icon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -18,39 +18,41 @@
       <button data-tab="alerts">Alerts <span id="badge" class="badge" hidden></span></button>
       <button data-tab="mail">Mail</button>
       <button data-tab="calendar">Calendar</button>
+      <button data-tab="teams">Teams</button>
       <button data-tab="websites">Websites</button>
       <button data-tab="sql">SQL</button>
     </nav>
-    <div class="status" id="status"></div>
+    <div class="header-right">
+      <button id="search-btn" class="search-btn subtle" title="Search and commands"><span>Search / command</span><kbd>Ctrl K</kbd></button>
+      <button id="focus-chip" class="focus-chip small subtle" title="Focus mode: only high-priority alerts pop up">Focus</button>
+      <div class="status" id="status"></div>
+    </div>
   </header>
 
   <main>
     <!-- TODAY -->
     <section id="tab-today" class="tab active">
-      <div class="hero">
-        <div class="panel clock-panel">
+      <div class="today-layout">
+        <div class="panel a-clock">
           <div class="panel-label">SYS.TIME</div>
           <div id="clock" class="clock">--:--</div>
           <div id="date-line" class="date-line"></div>
+          <div id="focus-line" class="focus-line"></div>
           <div class="xp">
-            <div class="xp-head"><span>WORKDAY PROGRESS</span><span id="xp-pct">0%</span></div>
+            <div class="xp-head"><span id="xp-label">WORKDAY PROGRESS</span><span id="xp-pct">0%</span></div>
             <div class="xp-bar"><div id="xp-fill"></div></div>
           </div>
         </div>
-        <div class="panel weather-panel" id="weather">
+        <div class="panel a-weather" id="weather">
           <div class="panel-label">ENV.WEATHER</div>
           <div class="muted">Loading weather…</div>
         </div>
-      </div>
-
-      <div class="stats" id="stats"></div>
-
-      <div class="today-grid">
-        <div class="panel">
+        <div class="a-stats" id="stats"></div>
+        <div class="panel a-agenda">
           <div class="panel-head"><span class="panel-label">01 // AGENDA</span><span id="agenda-count" class="chip"></span></div>
           <ul id="agenda" class="list"></ul>
         </div>
-        <div class="panel">
+        <div class="panel a-tasks">
           <div class="panel-head">
             <span class="panel-label">02 // TASKS</span>
             <span class="spacer"></span>
@@ -60,7 +62,7 @@
           <div id="tasks-note" class="muted"></div>
           <ul id="tasks" class="list"></ul>
         </div>
-        <div class="panel wide">
+        <div class="panel a-follow">
           <div class="panel-head">
             <span class="panel-label">03 // FOLLOW-UPS</span>
             <span class="spacer"></span>
@@ -81,7 +83,7 @@
         <button id="alerts-clear" class="subtle">Clear</button>
         <button id="reload" class="subtle">Reload config</button>
       </div>
-      <ul id="alerts-list" class="list panel-list"></ul>
+      <ul id="alerts-list" class="list panel-list flow"></ul>
     </section>
 
     <!-- MAIL -->
@@ -100,13 +102,33 @@
     <!-- CALENDAR -->
     <section id="tab-calendar" class="tab">
       <div class="toolbar"><span class="panel-label">NEXT 24 HOURS</span><span class="spacer"></span><button id="cal-refresh">↻ Refresh</button></div>
-      <ul id="cal-list" class="list panel-list"></ul>
+      <ul id="cal-list" class="list panel-list flow"></ul>
+    </section>
+
+    <!-- TEAMS -->
+    <section id="tab-teams" class="tab">
+      <div class="teams-grid">
+        <div>
+          <div class="panel" id="teams-status"></div>
+          <div class="panel" style="margin-top: var(--gap)">
+            <div class="panel-label">SEND A TEAMS MESSAGE</div>
+            <p class="muted">Opens the chat in Teams with your message filled in. You press send.</p>
+            <input id="teams-to" placeholder="Email address(es), comma separated">
+            <textarea id="teams-msg" placeholder="Message (optional)"></textarea>
+            <div class="row"><button id="teams-send" class="primary">Open chat in Teams</button></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-label">TEAMS ACTIVITY (MISSED-ACTIVITY EMAILS)</span><span class="spacer"></span><button id="teams-refresh" class="small">↻ Refresh</button></div>
+          <ul id="teams-activity" class="list"></ul>
+        </div>
+      </div>
     </section>
 
     <!-- WEBSITES -->
     <section id="tab-websites" class="tab">
       <div class="toolbar"><span class="muted">Monitors are defined in config.yaml</span><span class="spacer"></span><button id="web-refresh">↻ Refresh</button></div>
-      <ul id="web-list" class="list panel-list"></ul>
+      <ul id="web-list" class="list panel-list flow"></ul>
     </section>
 
     <!-- SQL -->
@@ -131,6 +153,14 @@
       </div>
     </section>
   </main>
+
+  <div id="palette">
+    <div class="palette-box">
+      <input id="palette-input" placeholder="Search mail, tasks, meetings… or type a command" autocomplete="off" spellcheck="false">
+      <ul id="palette-results"></ul>
+      <div class="palette-foot"><span>↑↓ move</span><span>Enter run</span><span>Esc close</span><span class="spacer"></span><span>3+ letters searches mail</span></div>
+    </div>
+  </div>
 
   <dialog id="dialog"><form method="dialog"><div id="dialog-body"></div></form></dialog>
   <script src="/static/app.js"></script>

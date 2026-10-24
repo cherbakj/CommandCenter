@@ -1,6 +1,8 @@
 """FastAPI app: JSON API + the dashboard page. Listens on 127.0.0.1 only."""
 import asyncio
 import logging
+import os
+import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import alerts, config, db, today
-from .connectors import asana, outlook, sql, web
+from .connectors import asana, outlook, sql, teams, web
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -19,7 +21,7 @@ STATIC = Path(__file__).parent / "static"
 async def lifespan(app: FastAPI):
     db.prune_seen()
     tasks = [asyncio.create_task(outlook.watch_loop()), asyncio.create_task(web.watch_loop()),
-             asyncio.create_task(today.briefing_loop())]
+             asyncio.create_task(today.briefing_loop()), asyncio.create_task(teams.watch_loop())]
     alerts.raise_alert("Command Center", "Started", "Watching Outlook and websites.", "low")
     yield
     for t in tasks:
@@ -74,11 +76,48 @@ async def clear_alerts():
 
 @app.get("/api/status")
 async def status():
+    t = config.section("today", {})
     return {
         "outlook": db.kv_get("outlook:status"),
         "websites": {m["name"]: db.kv_get(f"web:{m['name']}") for m in web.monitors() if m.get("enabled", True)},
+        "teams": db.kv_get("teams:state") if teams.is_set_up() else None,
+        "focus": alerts.focus_state(),
+        "ui": {"accent": config.section("ui", {}).get("accent", "#39ff14"),
+               "workday": [t.get("workday_start", "08:00"), t.get("workday_end", "17:00")]},
+        "desktop": hasattr(app.state, "show_window"),
         "config_path": str(config.CONFIG_PATH),
     }
+
+
+@app.post("/api/focus")
+async def focus(minutes: int = Body(..., embed=True)):
+    alerts.set_focus(minutes)
+    return alerts.focus_state()
+
+
+@app.post("/api/window/show")
+async def show_window():
+    """Used by a second launch of the app to bring the running window forward."""
+    show = getattr(app.state, "show_window", None)
+    show() if show else webbrowser.open(alerts.dashboard_url())
+    return {"ok": True}
+
+
+@app.post("/api/open")
+async def open_external(url: str = Body(..., embed=True)):
+    """Opens a link with Windows (default browser, or the Teams app for msteams: links)."""
+    if not url.startswith(("https://", "http://", "msteams:")):
+        raise HTTPException(400, "Only web and Teams links can be opened")
+    await asyncio.to_thread(os.startfile, url)
+    return {"ok": True}
+
+
+@app.get("/api/search")
+async def search(q: str):
+    q = q.strip()
+    if len(q) < 3:
+        return {"mail": []}
+    return {"mail": await outlook.call(outlook.search_mail, q[:100])}
 
 
 @app.post("/api/reload")
@@ -147,6 +186,28 @@ async def asana_token(token: str = Body(..., embed=True)):
 async def asana_disconnect():
     await asyncio.to_thread(asana.disconnect)
     return {"ok": True}
+
+
+# ---- teams -------------------------------------------------------------------
+
+@app.get("/api/teams")
+async def teams_info():
+    try:
+        activity = await outlook.call(outlook.teams_activity)
+    except Exception as e:
+        activity = {"error": str(e)}
+    return {"set_up": teams.is_set_up(), "state": db.kv_get("teams:state"), "url": teams.url(), "activity": activity}
+
+
+@app.post("/api/teams/login")
+async def teams_login():
+    asyncio.create_task(teams.login())
+    return {"ok": True}
+
+
+@app.post("/api/teams/check")
+async def teams_check():
+    return await teams.check()
 
 
 # ---- outlook -----------------------------------------------------------------

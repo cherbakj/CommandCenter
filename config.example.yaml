@@ -18,7 +18,21 @@ today:
   zip: "92630"
   country: us
   units: fahrenheit        # or celsius
-  briefing_time: "07:30"   # daily pop-up summary of your day; "" to turn off
+  briefing_time: "07:30"   # morning pop-up summary of your day; "" to turn off
+  wrapup_time: "16:30"     # end-of-day pop-up: tomorrow's first meeting, what's still open
+  weekdays_only: true      # skip the briefing and wrap-up on weekends
+  workday_start: "08:00"   # for the workday progress bar
+  workday_end: "17:00"
+
+ui:
+  accent: "#39ff14"        # main accent color (neon green); any hex color works
+  start_minimized: false   # true = open to the tray only
+
+teams:
+  enabled: true            # checks Teams once you've logged in on the Teams tab
+  url: https://teams.microsoft.com/v2/
+  poll_minutes: 3
+  priority: normal
 
 followups:
   awaiting_reply_days: 7   # sent mail with no answer, looking back this many days
@@ -48,6 +62,8 @@ asana:
 outlook:
   enabled: true
   poll_seconds: 60
+  auto_start: true                    # reopen Outlook if it gets closed
+  focus_keywords: ["focus"]           # a calendar event with this in its title turns on focus mode
   rules:
     - name: VIP sender
       senders: ["your.manager@sonance.com", "@importantcustomer.com"]

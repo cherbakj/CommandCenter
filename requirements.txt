@@ -6,3 +6,6 @@ playwright
 keyring
 pyodbc
 windows-toasts
+pystray
+pillow
+pywebview

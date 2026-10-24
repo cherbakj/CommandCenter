@@ -7,7 +7,9 @@ import asyncio
 import html
 import logging
 import re
+import subprocess
 import threading
+import winreg
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
@@ -57,8 +59,34 @@ def _guarded(fn, args):
         raise
 
 
+class OutlookClosed(Exception):
+    pass
+
+
+def is_running() -> bool:
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq OUTLOOK.EXE", "/NH"], capture_output=True,
+                         text=True, creationflags=subprocess.CREATE_NO_WINDOW).stdout
+    return "outlook.exe" in out.lower()
+
+
+def launch():
+    """Starts the Outlook desktop app (visible), found through its App Paths registration."""
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\OUTLOOK.EXE") as key:
+                path = winreg.QueryValue(key, None)
+            subprocess.Popen([path], creationflags=subprocess.DETACHED_PROCESS, close_fds=True)
+            return
+        except OSError:
+            continue
+    raise OutlookClosed("Couldn't find Outlook to start it")
+
+
 def _ns():
     if getattr(_local, "ns", None) is None:
+        # Dispatch would silently start a hidden Outlook, so only attach to one that's running.
+        if not is_running():
+            raise OutlookClosed("Outlook is closed. Open Outlook to use mail, calendar and tasks.")
         _local.ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
     return _local.ns
 
@@ -146,8 +174,21 @@ def upcoming_meetings(hours=24) -> list[dict]:
 
 
 def meetings_today() -> list[dict]:
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    return _meetings(today, today + timedelta(days=1))
+    return meetings_for_day(0)
+
+
+def meetings_for_day(offset_days=0) -> list[dict]:
+    day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=offset_days)
+    return _meetings(day, day + timedelta(days=1))
+
+
+def current_focus_block(keywords) -> dict | None:
+    """The calendar event happening now whose subject contains a focus keyword, if any."""
+    now = datetime.now()
+    for m in _meetings(now, now + timedelta(minutes=1)):
+        if any(k.lower() in m["subject"].lower() for k in keywords):
+            return m
+    return None
 
 
 def _meetings(start, end) -> list[dict]:
@@ -402,8 +443,26 @@ async def watch_loop():
     if not cfg.get("enabled", True):
         return
     poll = cfg.get("poll_seconds", 60)
+    was_running = True
     while True:
+        if not await asyncio.to_thread(is_running):
+            if was_running:
+                if cfg.get("auto_start", True):
+                    try:
+                        await asyncio.to_thread(launch)
+                        alerts.raise_alert("Outlook", "Outlook was closed, so I restarted it",
+                                           "Mail, calendar and task alerts need Outlook running.", "normal")
+                    except Exception as e:
+                        alerts.raise_alert("Outlook", "Outlook is closed and couldn't be restarted", str(e), "high")
+                else:
+                    alerts.raise_alert("Outlook", "Outlook is closed", "Mail and calendar alerts are paused.", "normal")
+            was_running = False
+            db.kv_set("outlook:status", {"ok": False, "checked": db.now(), "error": "Outlook is closed"})
+            await asyncio.sleep(poll)
+            continue
+        was_running = True
         try:
+            await _update_focus_block(cfg.get("focus_keywords", ["focus"]))
             for mail, rule in await call(scan_new_mail):
                 alerts.raise_alert(
                     "Outlook",
@@ -421,3 +480,48 @@ async def watch_loop():
             log.exception("Outlook scan failed")
             db.kv_set("outlook:status", {"ok": False, "checked": db.now(), "error": str(e)})
         await asyncio.sleep(poll)
+
+
+async def _update_focus_block(keywords):
+    if not keywords:
+        return
+    block = await call(current_focus_block, keywords)
+    if not block:
+        return
+    key = f"{block['id']}:{block['start']}"
+    if key == db.kv_get("focus:skip") or key == (db.kv_get("focus:calendar") or {}).get("key"):
+        return
+    db.kv_set("focus:calendar", {"key": key, "subject": block["subject"], "until": block["end"] + ":00"})
+    until = datetime.fromisoformat(block["end"]).strftime("%I:%M %p").lstrip("0")
+    alerts.raise_alert("Focus", f"Focus mode on until {until}", block["subject"], "low")
+
+
+# ---- search ------------------------------------------------------------------
+
+def _mail_rows(folder_id, where, date_field, limit) -> list[dict]:
+    table = _ns().GetDefaultFolder(folder_id).GetTable(where)
+    table.Columns.RemoveAll()
+    for c in ("EntryID", "Subject", "SenderName", date_field, "UnRead", "To"):
+        table.Columns.Add(c)
+    table.Sort(f"[{date_field}]", True)
+    out = []
+    while not table.EndOfTable and len(out) < limit:
+        entry_id, subject, sender, when, unread, to = table.GetNextRow().GetValues()
+        out.append({"id": entry_id, "subject": subject or "(no subject)", "sender_name": sender or "",
+                    "to": to or "", "received": _local_time(when).isoformat(timespec="minutes") if when else None,
+                    "unread": bool(unread), "folder": "Sent" if folder_id == OL_FOLDER_SENT else "Inbox"})
+    return out
+
+
+def search_mail(query, limit=15) -> list[dict]:
+    q = query.replace("'", "''")
+    where = (f'@SQL=("urn:schemas:httpmail:subject" LIKE \'%{q}%\' OR '
+             f'"urn:schemas:httpmail:fromname" LIKE \'%{q}%\' OR "urn:schemas:httpmail:displayto" LIKE \'%{q}%\')')
+    found = _mail_rows(OL_FOLDER_INBOX, where, "ReceivedTime", limit) + _mail_rows(OL_FOLDER_SENT, where, "SentOn", limit)
+    return sorted(found, key=lambda m: m["received"] or "", reverse=True)[:limit]
+
+
+def teams_activity(limit=20) -> list[dict]:
+    """Teams' missed-activity emails (chats, mentions) from the inbox."""
+    where = '@SQL="urn:schemas:httpmail:fromemail" LIKE \'%teams.microsoft.com%\''
+    return _mail_rows(OL_FOLDER_INBOX, where, "ReceivedTime", limit)

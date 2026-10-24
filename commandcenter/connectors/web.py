@@ -39,10 +39,23 @@ def _browser_channel() -> str:
     return config.section("browser", {}).get("channel", "msedge")
 
 
+async def _normal_user_agent(pw) -> str:
+    # Headless Edge announces itself as "HeadlessEdg"; some sites (Teams included) refuse it.
+    ua = db.kv_get("browser:ua")
+    if not ua:
+        browser = await pw.chromium.launch(channel=_browser_channel(), headless=True)
+        page = await browser.new_page()
+        ua = (await page.evaluate("navigator.userAgent")).replace("HeadlessEdg/", "Edg/").replace("HeadlessChrome", "Chrome")
+        await browser.close()
+        db.kv_set("browser:ua", ua)
+    return ua
+
+
 async def _launch(pw, profile, headless):
     return await pw.chromium.launch_persistent_context(
         _profile_dir(profile), channel=_browser_channel(), headless=headless,
         viewport={"width": 1400, "height": 900},
+        user_agent=await _normal_user_agent(pw) if headless else None,
     )
 
 
