@@ -11,6 +11,7 @@ and for this Windows user only (127.0.0.1:8765 behind a per-launch session cooki
 - **Windows Hello / the Windows password** is asked when the window is first shown. There's no idle re-lock; **Lock** in the header logs out of Command Center.
 - A puzzle-piece launch animation with live sync checks plays on each load. Turn it off under Profile.
 - Commands: `run.cmd install|uninstall|serve|login <profile> <url>|setpass <connection>`. `serve` = server only, with a one-time browser sign-in link.
+- **Dependencies:** `requirements.txt` pins the top-level packages; `requirements.lock` pins everything (pip freeze). Set up or repair `.venv` with `.venv\Scripts\python.exe -m pip install -r requirements.lock`. After an intended upgrade, regenerate it with `pip freeze` (keep its header) and update the pins in `requirements.txt`.
 
 ## Configure it
 `config.yaml` (created from `config.example.yaml`; every setting is commented). Secrets are never in config: they live in
@@ -58,13 +59,19 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - **Mail / Teams / Websites / SQL tabs:** as before. Teams unread count comes from a background browser profile once Joe logs in; chats open through `msteams:` links.
 
 ## Security model (security.py, desktop.py)
-- **Loopback and same user:** binds 127.0.0.1 with SO_EXCLUSIVEADDRUSE. Each connection is checked against the owning process's Windows user.
+- **Loopback and same user:** binds 127.0.0.1 with SO_EXCLUSIVEADDRUSE. Each connection is checked against the owning process's Windows user (always on; the result is cached per PID + process creation time, so a recycled PID is checked again).
 - **Request checks:** Host check; `Sec-Fetch-Site` cross-site/same-site refused; non-GET requests need the `X-CommandCenter` header plus our Origin; WebSockets need our exact Origin.
 - **Session cookie:** per-launch secret held in memory, set by a one-time `/auth?k=` bootstrap (HttpOnly, SameSite=Strict). Every route needs it.
 - **Response headers:** strict CSP, `frame-ancestors 'self'`, nosniff, no-referrer, `no-store`.
 - **Window:** WebView2 with devtools, remote debugging, `file://` access and downloads off; no pywebview `js_api`.
-- **App folder:** ACL limited to Joe, SYSTEM and Administrators, enforced at start.
+- **App folder:** ACL limited to Joe, SYSTEM and Administrators, enforced at start. The folders above it (up to the drive root) are checked read-only at start; if another account can write, delete or re-permission one, a high-priority Security alert gives the `icacls ... /inheritance:r /grant:r` fix, and `GET /api/status` reports `folder_security`.
+- **Project folders:** a project that other accounts can modify (folder, `.claude`, `.git`, settings/hook files) is flagged `writable_by_others` in `/api/projects` and shown in red; starting Claude (embedded or New window) or opening it in VS Code needs an explicit confirmation, sent as `allow_unsafe` / `unsafe=1`. Folders with `;` or `"` in the path are never listed. Git runs with fsmonitor, hooks and untracked cache off; repos with their own filter drivers skip `git status`.
+- **Hotbar:** only web, `msteams:`, folders and documents (.pdf .docx .xlsx .pptx .csv .txt .png .jpg .md); UNC only to NetBIOS names or `*.sonance.com`. Checked on save and on every open.
+- **VS Code server:** archive paths must stay inside the build folder; node.exe and every .exe/.node/.dll must be validly Authenticode-signed (Microsoft; GitHub, Inc. for its bundled tools) before the server starts.
+- **Lock screen:** its Quit/Hide/Unlock links work only while the lock page is showing.
 - **Secrets:** only in Credential Manager or memory. Logs, the database and API responses were swept for secrets.
+  Logi passwords never come back in lists (`has_password` only); one user's password is fetched on an explicit Show/Clipboard click (POST `/api/toolkit/logi/password`), logged as a `reveal` in `toolkit_changes` without the value. New Logi passwords: 16 random characters (crypto.getRandomValues), upper/lower/digit/symbol, no look-alikes.
+- **Log:** `data/commandcenter.log`, rotated at 5 MB (3 old files). Alerts are logged by id, source and priority only, never titles or bodies.
 - **Dev bypass:** `CC_DEV_NO_AUTH=1` works in `serve` mode only and logs a warning.
 
 ## Code layout
@@ -80,3 +87,9 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - Cylance blocks `.ps1` files, so never create them. Run everything through `run.cmd` or `.venv\Scripts\python.exe`.
 - **Outlook COM** calls must stay on one thread (`outlook.call()`). Use `_table_rows()`/`_mail_rows()` for bulk reads; the To-Do folder ignores GetTable filters.
 - **Tests:** run a second copy with `CC_PORT=<port> CC_DEV_NO_AUTH=1 python -m commandcenter serve --no-browser`. Never use 8765 for tests.
+
+## Repo guard (protects shared repos such as Pulse)
+`tools/repo-guard/` holds local-only git hooks, installed in `C:\Sonance\internal\Pulse\pulse-nextjs\.git\hooks` (which covers its worktrees).
+They block commits and pushes that would carry Command Center details (paths, names, cookie and keyring names), JWTs or private keys,
+or local-only files (`.env`, `.vscode/`, `.claude/settings.local.json`, `*.dpapi`). Hooks live in `.git` and are never pushed.
+Command Center's own repo has no remote. To guard another repo, copy `guard.sh` to `<repo>/.git/hooks/command-center-guard.sh` along with `pre-commit` and `pre-push`.

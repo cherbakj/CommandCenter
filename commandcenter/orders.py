@@ -27,12 +27,24 @@ def pattern() -> re.Pattern:
 
 
 def find_orders(text) -> list[str]:
-    seen = []
+    seen, keys = [], set()
     for m in pattern().finditer(text or ""):
         number = m.group(1) if m.groups() else m.group(0)
-        if number not in seen:
+        key = number.lstrip("0") or number  # 2296106 and 0002296106 are the same order
+        if number and key not in keys:
+            keys.add(key)
             seen.append(number)
     return seen
+
+
+# The values config.example.yaml ships with: lookups can't work until they're replaced.
+PLACEHOLDER_SERVERS = {r"yourserver\instance", "yourserver"}
+PLACEHOLDER_DATABASES = {"yourdatabase"}
+
+
+def _is_placeholder(value, known) -> bool:
+    v = str(value or "").strip().lower()
+    return not v or v in known or v.startswith("your")
 
 
 def ready() -> str | None:
@@ -41,6 +53,13 @@ def ready() -> str | None:
     q = next((q for q in sql.queries() if q.get("name") == name), None)
     if not q:
         return f"Add a saved SQL query named {name!r} (orders.lookup_query) to config.yaml"
+    conn = next((c for c in sql.connections() if c.get("name") == q.get("connection")), None)
+    if conn and (_is_placeholder(conn.get("server"), PLACEHOLDER_SERVERS)
+                 or _is_placeholder(conn.get("database"), PLACEHOLDER_DATABASES)):
+        return (f"Set your real SQL server and database for the {conn['name']!r} connection in config.yaml "
+                "(sql.connections), then save the password on the SQL tab")
+    if "yourorderstable" in str(q.get("sql", "")).lower():
+        return f"Replace the placeholder table in the {name!r} query (sql.queries in config.yaml) with your real orders table"
     try:
         if not sql.has_password(q["connection"]):
             return f"Save the SQL password for {q['connection']!r} on the SQL tab"

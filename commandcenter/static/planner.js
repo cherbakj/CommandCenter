@@ -35,7 +35,17 @@
         el("button", { class: "small subtle", title: "Open in Outlook", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open")));
   }
 
-  const ITEM_LABEL = { task: "Due", flag: "Flag due", snooze: "Snooze ends", "reply-watch": "Reply check" };
+  const ITEM_LABEL = { task: "Due", flag: "Due",  // the source tag already says To Do / Flagged
+    snooze: "Snooze ends", "reply-watch": "Reply check" };
+  const shortDay = (iso) => dayDate(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+
+  // The real due date: overdue items are listed on today, so look the original date up in Today's data.
+  function dueOf(x) {
+    const t = CC.todayData;
+    if (x.kind === "task") return (t?.tasks?.items || []).find((i) => i.id === x.id)?.due || (x.overdue ? null : x.day);
+    if (x.kind === "flag") return (t?.followups?.flagged || []).find((i) => i.id === x.id)?.due || (x.overdue ? null : x.day);
+    return null;
+  }
 
   function itemRow(x) {
     const open = () => {
@@ -43,11 +53,18 @@
       if (x.kind === "task" && x.source !== "asana") return guarded(() => api("/api/outlook/open", { id: x.id }));
       CC.openTab("mail");
     };
-    return el("li", { class: `pl-item ${x.overdue ? "overdue" : ""}` },
-      el("div", { class: "pl-time" }, x.time ? hhmm(x.time) : ITEM_LABEL[x.kind] || ""),
+    // What kind of date this is ("Due Oct 22", "Flag due Oct 24", "Reply check 3:00 PM") is a tag in the
+    // meta line; only items with a clock time use the time column.
+    const due = dueOf(x);
+    const label = ITEM_LABEL[x.kind] || "";
+    const when = x.time ? hhmm(x.time) : due ? shortDay(due) : "";
+    return el("li", { class: `pl-item ${x.overdue ? "overdue" : ""} ${x.time ? "" : "no-time"}` },
+      x.time ? el("div", { class: "pl-time" }, hhmm(x.time)) : null,
       el("div", { class: "pl-body" },
         el("div", { class: "pl-title" }, x.title || "(untitled)", x.overdue && el("span", { class: "tag overdue" }, "Overdue")),
-        el("div", { class: "muted src-line" }, CC.srcTag(x.source), [ITEM_LABEL[x.kind], x.who].filter(Boolean).join(" · "))),
+        el("div", { class: "muted src-line" }, CC.srcTag(x.source),
+          label && el("span", { class: `pl-due ${x.overdue ? "late" : ""}` }, [label, when].filter(Boolean).join(" ")),
+          x.who ? ` ${x.who}` : "")),
       el("div", { class: "pl-acts" }, el("button", { class: "small subtle", onclick: open }, "Open")));
   }
 
@@ -69,7 +86,8 @@
     return el("article", { class: `pl-day ${isToday ? "today" : ""} ${weekend ? "weekend" : ""}` },
       el("header", { class: "pl-day-head" },
         el("div", {},
-          el("div", { class: "pl-dow" }, isToday ? "Today" : date.toLocaleDateString([], { weekday: "short" })),
+          el("div", { class: "pl-dow" }, isToday ? "Today" : date.toLocaleDateString([], { weekday: "short" }),
+            weekend && el("span", { class: "pl-wkd" }, "Weekend")),
           el("div", { class: "pl-date" }, date.toLocaleDateString([], { month: "short", day: "numeric" }))),
         el("div", { class: "pl-counts" },
           d.meetings.length ? el("span", { class: "chip", title: "Outlook meetings" }, `${d.meetings.length} mtg`) : null,

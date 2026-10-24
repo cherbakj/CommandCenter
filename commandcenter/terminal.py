@@ -9,7 +9,8 @@ pywinpty) and streams it to xterm.js in the page over a WebSocket.
 - Every process is put in a Windows job object that kills the whole tree when it is closed, so nothing
   Claude started survives "End session", app shutdown, or even a crash of Command Center.
 
-WebSocket /ws/claude?path=<project>&resume=0|1&attach=0|1&cols=&rows=
+WebSocket /ws/claude?path=<project>&resume=0|1&attach=0|1&cols=&rows=[&unsafe=1]
+  unsafe=1 is needed to start Claude in a folder other accounts can modify (projects.writable_by_others).
   client -> server  text JSON  {"type": "input", "data": "..."} | {"type": "resize", "cols": n, "rows": n}
   server -> client  text       terminal output
                     binary     JSON control: attached, replay-start, replay-end, exit, ended, error
@@ -364,9 +365,9 @@ async def _sender(ws: WebSocket, q: asyncio.Queue):
         pass  # the page went away; the receive loop cleans up
 
 
-async def _fail(ws: WebSocket, message: str):
+async def _fail(ws: WebSocket, message: str, code: str | None = None):
     await ws.accept()
-    await ws.send_bytes(json.dumps({"type": "error", "message": message}).encode())
+    await ws.send_bytes(json.dumps({"type": "error", "message": message, **({"code": code} if code else {})}).encode())
     await ws.close(code=1008)
 
 
@@ -387,6 +388,10 @@ async def claude_socket(websocket: WebSocket):
     if session is None or (not session.alive and not attach_only):
         if attach_only:
             return await _fail(websocket, "No Claude session is open for that project")
+        # Claude runs hooks, MCP servers and settings from the project folder: refuse folders other accounts
+        # can change unless the page asked for it after an explicit confirmation (unsafe=1).
+        if qp.get("unsafe") != "1" and await asyncio.to_thread(projects.writable_by_others, path):
+            return await _fail(websocket, projects.UNSAFE_MESSAGE, code="unsafe_folder")
         try:
             session = _start(path, resume, cols, rows)
         except Exception as e:

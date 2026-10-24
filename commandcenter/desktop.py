@@ -172,6 +172,9 @@ class DesktopApp:
         self.require_unlock = security.settings().get("unlock_on_start", True)
         self.unlocked = False
         self.locked_by_user = False  # Lock in the dashboard: always ask again, whatever unlock_on_start says
+        # True while the window shows the local lock page. Its buttons (ACTION_URL links) are honored only then:
+        # any page could navigate to https://commandcenter.invalid/quit, but only the lock page should.
+        self.lock_showing = True  # the window is created on the lock page
         self._unlocking = False
         self._unlock_lock = threading.Lock()
         self._cancel = threading.Event()
@@ -223,6 +226,7 @@ class DesktopApp:
         self.unlocked = False
         self.locked_by_user = True
         if self.window:
+            self.lock_showing = True
             self.window.load_html(_lock_page("Locked. Select Unlock to confirm it's you."))
 
     def restart(self):
@@ -268,6 +272,9 @@ class DesktopApp:
         threading.Thread(target=update, daemon=True).start()
 
     def _on_action(self, action):
+        if not self.lock_showing:
+            log.warning("Ignored a lock-screen action (%s) while the lock screen isn't showing", str(action)[:20])
+            return
         actions = {"unlock": self._unlock, "quit": self.quit, "hide": self.hide, "minimize": self.minimize}
         actions.get(action, lambda: None)()
 
@@ -295,6 +302,7 @@ class DesktopApp:
             if ok and not self.quitting:
                 log.info("Unlocked (%s)", detail)
                 self.unlocked, self.locked_by_user = True, False
+                self.lock_showing = False  # from here on the window shows the dashboard, not the lock page
                 self.window.load_url(security.bootstrap_url())
             else:
                 log.info("Still locked: %s", detail)

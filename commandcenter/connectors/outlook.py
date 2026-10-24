@@ -42,6 +42,11 @@ PR_DELIVERY_TIME = "http://schemas.microsoft.com/mapi/proptag/0x0E060040"
 PID_TASK_DUE = "http://schemas.microsoft.com/mapi/id/{00062003-0000-0000-C000-000000000046}/81050040"
 PR_HEADERS = "http://schemas.microsoft.com/mapi/proptag/0x007D001F"
 PR_LAST_VERB = "http://schemas.microsoft.com/mapi/proptag/0x10810003"
+PR_SENDER_SMTP = "http://schemas.microsoft.com/mapi/proptag/0x5D01001F"         # PR_SENDER_SMTP_ADDRESS
+PR_SENT_REPR_SMTP = "http://schemas.microsoft.com/mapi/proptag/0x5D02001F"      # PR_SENT_REPRESENTING_SMTP_ADDRESS
+PR_SENDER_EMAIL = "http://schemas.microsoft.com/mapi/proptag/0x0C1F001F"        # SMTP or an Exchange DN
+# Links in a plain-text preview: http(s)/www URLs (Safe Links included), with Outlook's <...> around them.
+PREVIEW_URL = re.compile(r"<?\b(?:https?://|www\.)[^\s<>]+>?", re.I)
 REPLIED_VERBS = (102, 103, 104)  # reply, reply all, forward
 
 _executor = ThreadPoolExecutor(1, initializer=pythoncom.CoInitialize, thread_name_prefix="outlook")
@@ -119,8 +124,14 @@ def _summary(item) -> dict:
         "unread": bool(item.UnRead),
         "high_importance": item.Importance == OL_IMPORTANCE_HIGH,
         "flagged": bool(item.IsMarkedAsTask),
-        "preview": re.sub(r"\s+", " ", (item.Body or "")[:300]).strip(),
+        "preview": _preview(item.Body),
     }
+
+
+def _preview(body) -> str:
+    """First ~300 characters of the body as one line, without tracking / Safe Links URLs."""
+    text = PREVIEW_URL.sub(" ", (body or "")[:3000])
+    return re.sub(r"\s+", " ", text).strip()[:300]
 
 
 def _date_or_none(value):
@@ -372,14 +383,18 @@ def todo_items() -> dict:
 
     flagged = []
     # The To-Do search folder ignores GetTable filters, so filter the rows here.
-    rows = _table_rows(OL_FOLDER_TODO, "", ["EntryID", "Subject", "MessageClass", PR_FLAG_STATUS,
-                                            PR_SENDER_NAME, PR_DELIVERY_TIME, PID_TASK_DUE])
-    for entry_id, subject, msg_class, flag, sender, received, due in rows:
+    base = ["EntryID", "Subject", "MessageClass", PR_FLAG_STATUS, PR_SENDER_NAME, PR_DELIVERY_TIME, PID_TASK_DUE]
+    try:
+        rows = _table_rows(OL_FOLDER_TODO, "", base + [PR_SENDER_SMTP, PR_SENT_REPR_SMTP, PR_SENDER_EMAIL])
+    except pywintypes.com_error:  # a store that can't add these columns: names only
+        rows = [tuple(r) + (None, None, None) for r in _table_rows(OL_FOLDER_TODO, "", base)]
+    for entry_id, subject, msg_class, flag, sender, received, due, smtp, repr_smtp, email in rows:
         if flag != 2 or not (msg_class or "").startswith("IPM.Note"):
             continue
         received = _utc_to_local(received)
+        address = next((a for a in (smtp, repr_smtp, email) if isinstance(a, str) and "@" in a), "")
         flagged.append({
-            "id": entry_id, "subject": subject or "(no subject)", "sender_name": sender or "",
+            "id": entry_id, "subject": subject or "(no subject)", "sender_name": sender or "", "sender": address,
             "due": due.date().isoformat() if due and due.year < NO_DATE_YEAR else None,
             "received": received.isoformat(timespec="minutes") if received else None,
         })

@@ -21,7 +21,7 @@
   const state = {
     view: null, meta: null,
     accounts: null, accountFilter: "", selected: null, methods: {},
-    logi: null, logiFilter: "", showPw: false,
+    logi: null, logiFilter: "",
     tree: null, treeSel: null,
     changesTable: "",
   };
@@ -44,12 +44,24 @@
     }
     return box;
   };
-  const masked = (col, v) => (col === "Password" && !state.showPw && v ? "••••••••" : show(v));
+  const masked = (col, v) => (col === "Password" && v ? "••••••••" : show(v));
 
-  function newPassword() {  // same format as the original toolkit: Sonance + 5 digits (crypto RNG)
-    const d = new Uint32Array(5);
-    crypto.getRandomValues(d);
-    return "Sonance" + Array.from(d, (x) => x % 10).join("");
+  // New Logi passwords: 16 characters from an alphabet without look-alikes (no I/l/1, O/0), with at least one
+  // upper-case letter, lower-case letter, digit and symbol. crypto.getRandomValues with rejection sampling
+  // (no modulo bias), then a Fisher-Yates shuffle so the guaranteed characters aren't always first.
+  const PW_SETS = ["ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnpqrstuvwxyz", "23456789", "!#$%*+-=?@_"];
+  function randBelow(n) {
+    const limit = Math.floor(0x100000000 / n) * n;
+    const a = new Uint32Array(1);
+    do { crypto.getRandomValues(a); } while (a[0] >= limit);
+    return a[0] % n;
+  }
+  function newPassword(length = 16) {
+    const all = PW_SETS.join("");
+    const chars = PW_SETS.map((set) => set[randBelow(set.length)]);
+    while (chars.length < length) chars.push(all[randBelow(all.length)]);
+    for (let i = chars.length - 1; i > 0; i--) { const j = randBelow(i + 1); [chars[i], chars[j]] = [chars[j], chars[i]]; }
+    return chars.join("");
   }
 
   let toastTimer;
@@ -547,14 +559,11 @@
     build(root) {
       this.filter = el("input", { placeholder: "Filter by UserID or name…", autocomplete: "off", class: "tk-search" });
       this.filter.addEventListener("input", () => { state.logiFilter = this.filter.value; this.draw(); });
-      const pw = el("input", { type: "checkbox" });
-      pw.addEventListener("change", () => { state.showPw = pw.checked; this.draw(); });
       this.count = el("span", { class: "chip" }, "—");
       this.body = el("div", { class: "tk-fill" }, el("div", { class: "tk-note" }, "Click Load users to read Logi.dbo.Users and the customer tree access table."));
       root.append(el("div", { class: "panel tk-p-logi" },
         el("div", { class: "panel-head" }, el("span", { class: "panel-label" }, "LOGI USER MANAGEMENT"), this.count,
           el("span", { class: "spacer" }), this.filter,
-          el("label", { class: "tk-check-label" }, pw, "Show passwords"),
           el("button", { type: "button", class: "small", onclick: () => this.load() }, "Load users"),
           el("button", { type: "button", class: "small alt", onclick: () => this.lookup() }, "Look up user…"),
           el("button", { type: "button", class: "small primary", onclick: () => this.addUser() }, "+ Add user")),
@@ -589,7 +598,8 @@
       const rows = ids.map((id) => {
         const u = userMap.get(id), d = dashMap.get(id) || [];
         const userCells = u
-          ? LOGI_USER_COLS.map((c) => el("td", { class: (c === "Password" ? "mono " : "") + (u[c] == null ? "muted" : "") }, masked(c, u[c])))
+          ? LOGI_USER_COLS.map((c) => (c === "Password" ? this.passwordCell(u)
+            : el("td", { class: u[c] == null ? "muted" : "" }, show(u[c]))))
           : [el("td", { colspan: String(LOGI_USER_COLS.length), class: "muted tk-norec" }, `${id} — no Users record`)];
         const userActions = el("td", { class: "tk-actions" }, u ? [
           el("button", { type: "button", class: "small", onclick: () => this.editUser(u) }, "Edit"),
@@ -611,15 +621,42 @@
       this.body.replaceChildren(table([...LOGI_USER_COLS, { label: "", cls: "tk-actions" }, "Customer tree access (OPRID rows)"], rows, { cls: "tk-logi-table" }));
     },
 
-    clip(u) {
+    // Passwords aren't in the list (only has_password). Show / Clipboard / Copy fetch ONE user's password from
+    // the server on that click; the server logs each one ("reveal" in the change log, without the value).
+    passwordCell(u) {
+      if (typeof u.Password === "string") {
+        return el("td", { class: "mono" }, show(u.Password), " ",
+          el("button", { type: "button", class: "icon subtle", title: "Hide the password again", onclick: () => { delete u.Password; this.draw(); } }, "Hide"));
+      }
+      if (!u.has_password) return el("td", { class: "mono muted" }, "—");
+      return el("td", { class: "mono" }, "•••••••• ",
+        el("button", { type: "button", class: "icon subtle", title: "Show this user's password (the reveal is logged)",
+          onclick: async () => { try { u.Password = await this.passwordOf(u); this.draw(); } catch (e) { await message("Couldn't read the password", e.message, true); } } }, "Show"));
+    },
+
+    async passwordOf(u) {
+      if (typeof u.Password === "string") return u.Password;
+      if (!u.has_password) return "";
+      return (await api("/api/toolkit/logi/password", { user_id: String(u.UserID) })).password;
+    },
+
+    async withPassword(u) {
+      return { ...u, Password: await this.passwordOf(u) };
+    },
+
+    async clip(u) {
+      let full;
+      try { full = await this.withPassword(u); } catch (e) { await message("Couldn't read the password", e.message, true); return; }
       const nodes = this.dashFor(u.UserID).map((r) => r.TREE_NODE).filter((n) => n != null && String(n).trim() !== "");
-      const text = LOGI_USER_COLS.map((c) => `${c}: ${u[c] ?? ""}`).join("\n") + `\nTree Nodes: ${nodes.length ? nodes.join(", ") : "(none)"}`;
+      const text = LOGI_USER_COLS.map((c) => `${c}: ${full[c] ?? ""}`).join("\n") + `\nTree Nodes: ${nodes.length ? nodes.join(", ") : "(none)"}`;
       copyText(text, `${u.UserID} details`);
     },
 
     async editUser(u) {
       await editRow({ table: "logi_users", row: u, cols: LOGI_USER_COLS, pkCols: ["UserID"], title: `Edit Logi user ${u.UserID}`,
-        fieldOpts: { UserID: { hint: "Renaming does not rename the Roles, Rights or tree access rows." }, Password: { generate: true, copy: true } },
+        fieldOpts: { UserID: { hint: "Renaming does not rename the Roles, Rights or tree access rows." },
+          Password: { generate: true, copy: true, placeholder: typeof u.Password !== "string" && u.has_password ? "hidden: leave blank to keep it" : "—",
+            hint: typeof u.Password !== "string" && u.has_password ? "Leave blank to keep the current password, or Generate a new one." : null } },
         after: (changes) => { Object.assign(u, changes); this.draw(); } });
     },
 
@@ -752,8 +789,12 @@
             const sv = src[c];
             return el("div", { class: "tk-copy-row" },
               el("div", { class: "field-label" }, c),
-              el("div", { class: "tk-copy-src" }, el("span", { class: "mono", title: c === "Password" ? "" : show(sv) }, masked(c, sv)),
-                el("button", { type: "button", class: "icon subtle", title: `Copy source ${c}`, onclick: () => copyText(sv, c) }, "⧉")),
+              el("div", { class: "tk-copy-src" }, el("span", { class: "mono", title: c === "Password" ? "" : show(sv) },
+                c === "Password" ? (src.has_password || sv ? "••••••••" : "—") : show(sv)),
+                el("button", { type: "button", class: "icon subtle", title: `Copy source ${c}`, onclick: async () => {
+                  if (c !== "Password") { copyText(sv, c); return; }
+                  try { copyText(await this.passwordOf(src), c); } catch (e) { toast(e.message, true); }
+                } }, "⧉")),
               el("div", { class: "tk-inline" }, f[c],
                 c === "Password" ? el("button", { type: "button", class: "icon alt", onclick: () => { f.Password.value = newPassword(); } }, "↺") : null,
                 el("button", { type: "button", class: "icon subtle", title: `Copy new ${c}`, onclick: () => copyText(f[c].value, c) }, "⧉")),
@@ -773,7 +814,11 @@
             el("p", { class: "muted" }, "Creates a new user in Users, Roles, Rights and customer tree access, with the source user's tree nodes and a new password."),
             el("div", { class: "tk-copy-grid" },
               el("div", { class: "tk-copy-row tk-copy-head" }, el("span", {}, "Field"),
-                el("span", {}, "Source value ", el("button", { type: "button", class: "icon subtle", title: "Copy all source values", onclick: () => copyText(LOGI_USER_COLS.map((c) => `${c}: ${src[c] ?? ""}`).join("\n"), `${src.UserID} details`) }, "⧉")),
+                el("span", {}, "Source value ", el("button", { type: "button", class: "icon subtle", title: "Copy all source values", onclick: async () => {
+                  let full;
+                  try { full = await this.withPassword(src); } catch (e) { toast(e.message, true); return; }
+                  copyText(LOGI_USER_COLS.map((c) => `${c}: ${full[c] ?? ""}`).join("\n"), `${src.UserID} details`);
+                } }, "⧉")),
                 el("span", {}, "New value ", el("button", { type: "button", class: "icon subtle", title: "Copy all new values", onclick: () => copyText(LOGI_USER_COLS.map((c) => `${c}: ${f[c].value}`).join("\n"), "New credentials") }, "⧉")),
                 el("span", {}, "")),
               ...rows),
@@ -882,6 +927,7 @@
 
   function summarize(c) {
     const b = c.before_json || {}, a = c.after_json || {};
+    if (c.action === "reveal") return "password shown or copied (the value isn't recorded)";
     if (c.action === "update") {
       return Object.keys(a).filter((k) => norm(a[k]) !== norm(b[k])).map((k) => `${k}: ${show(b[k])} → ${show(a[k])}`).join("; ") || "—";
     }

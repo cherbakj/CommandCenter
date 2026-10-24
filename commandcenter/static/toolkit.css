@@ -99,7 +99,10 @@ button.tk-danger-o:hover { background: rgb(255 59 92 / .16); box-shadow: 0 0 .6r
 .tk-field { margin-bottom: .55rem; min-width: 0; }
 .tk-field input, .tk-field select { margin-bottom: 0; }
 .tk-field .field-label, .tk .field-label { display: block; font: 700 .74rem var(--font-ui); letter-spacing: .1em; color: var(--muted); margin-bottom: .2rem; text-transform: uppercase; }
-.tk-field .tk-check-label { display: flex; margin: .3rem 0; }
+/* long checkbox labels (Connection view) wrap instead of overflowing the panel */
+.tk-field .tk-check-label { display: flex; align-items: flex-start; gap: .2rem; margin: .3rem 0; white-space: normal;
+  min-width: 0; overflow-wrap: anywhere; }
+.tk-field .tk-check-label input { flex: none; margin-top: .15rem; }
 
 /* dialogs */
 dialog.tk-dialog { max-height: 92vh; overflow: auto; }

@@ -216,8 +216,8 @@
 
   CC.registerTab({ id: "pulse", label: "Pulse", render, onShow: () => guarded(load), before: "websites" });
 
+  // "Go to Pulse" comes from the core palette (one entry per nav tab), so it isn't repeated here.
   CC.addPaletteSource(() => [
-    { group: "Commands", label: "Go to Pulse", hint: "tab", run: () => CC.openTab("pulse") },
     ...state.tickets.slice(0, 50).map((t) => ({
       group: "Pulse", label: `#${t.ticket_no} ${t.title}`, hint: `${t.status} · ${t.requester || ""}`,
       run: () => openExternal(t.url),

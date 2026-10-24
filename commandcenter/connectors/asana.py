@@ -93,4 +93,7 @@ def create_task(name, due=None, notes="") -> str:
 
 
 def complete(task_id):
-    _request("PUT", f"/tasks/{urllib.parse.quote(task_id)}", data={"completed": True})
+    # Asana task ids (gids) are digits; anything else could change which API path the token is sent to.
+    if not isinstance(task_id, str) or not task_id.isascii() or not task_id.isdigit() or len(task_id) > 30:
+        raise ValueError("That isn't an Asana task id")
+    _request("PUT", f"/tasks/{urllib.parse.quote(task_id, safe='')}", data={"completed": True})

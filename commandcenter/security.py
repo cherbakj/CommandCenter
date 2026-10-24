@@ -41,6 +41,7 @@ import uuid
 import pywintypes
 import win32api
 import win32event
+import win32process
 import win32security
 import winerror
 from fastapi import APIRouter, Request, WebSocket
@@ -206,33 +207,41 @@ def connection_pid(client, server_port: int) -> int | None:
     return None
 
 
-_pid_cache: dict[int, tuple[bool, float]] = {}
+# (pid, process creation time) -> same user? A PID can be reused by another account's process the
+# moment the first one exits, so the creation time is part of the key: a recycled PID is a new entry.
+_pid_cache: dict[tuple[int, int], bool] = {}
+
+
+def _creation_time(handle) -> int:
+    t = win32process.GetProcessTimes(handle)["CreationTime"]
+    return int(t.timestamp() * 1_000_000) if hasattr(t, "timestamp") else int(t)
 
 
 def pid_is_current_user(pid: int) -> bool:
     if pid == os.getpid():
         return True
-    cached = _pid_cache.get(pid)
-    if cached and cached[1] > time.monotonic():
-        return cached[0]
-    ok = False
     try:
         handle = win32api.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        try:
-            ok = _token_sid(handle) == MY_SID
-        finally:
-            handle.Close()
     except pywintypes.error:
-        ok = False  # another account's (or a protected) process: we may not even open it
+        return False  # another account's (or a protected) process: we may not even open it
+    try:
+        key = (pid, _creation_time(handle))
+        cached = _pid_cache.get(key)
+        if cached is not None:
+            return cached
+        ok = _token_sid(handle) == MY_SID
+    except pywintypes.error:
+        return False
+    finally:
+        handle.Close()
     if len(_pid_cache) > 256:
         _pid_cache.clear()
-    _pid_cache[pid] = (ok, time.monotonic() + 10)
+    _pid_cache[key] = ok
     return ok
 
 
 def same_user(scope) -> bool:
-    if not settings().get("same_user_check", True):
-        return True
+    """Always on (there is no setting to turn it off)."""
     client = scope.get("client")
     server = scope.get("server") or ("127.0.0.1", port())
     pid = connection_pid(client, int(server[1]))
@@ -276,7 +285,7 @@ CSP_TEMPLATE = ("default-src 'self'; script-src 'self'; "
                 "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
                 "font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; "
                 "connect-src 'self' ws://127.0.0.1:{port} ws://localhost:{port}; "
-                "frame-src http://127.0.0.1:* http://localhost:*; frame-ancestors 'self'; "
+                "frame-src http://127.0.0.1:*; frame-ancestors 'self'; "
                 "object-src 'none'; base-uri 'none'; form-action 'self'")
 
 
@@ -567,6 +576,137 @@ def harden_folders():
             restrict_folder(path)
         except Exception as e:
             log.error("Couldn't restrict permissions on %s: %s", path, e)
+    try:
+        status = folder_security(max_age=0)
+        if not status["ok"]:
+            log.warning("Folders above the app folder are writable by other accounts: %s", ", ".join(status["unsafe"]))
+    except Exception:
+        log.exception("Couldn't check the permissions of the folders above the app folder")
+
+
+# ---- who else can change a folder (read-only checks; nothing here changes an ACL) ----------------
+
+CREATOR_OWNER_SID = "S-1-3-0"
+OWNER_RIGHTS_SID = "S-1-3-4"
+TRUSTED_INSTALLER_SID = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+TRUSTED_SIDS = {MY_SID_STR, SYSTEM_SID, ADMINS_SID, CREATOR_OWNER_SID, TRUSTED_INSTALLER_SID}
+_ALLOW_ACE_TYPES = {0, 5, 9, 11}  # ACCESS_ALLOWED (plain, object, callback, callback object)
+_INHERIT_ONLY_ACE = 0x08
+_INHERITED_ACE = 0x10
+# Rights that let an account add files or folders, write, delete or rename entries, rewrite the ACL or
+# take ownership: FILE_WRITE_DATA/ADD_FILE, FILE_APPEND_DATA/ADD_SUBDIRECTORY, FILE_DELETE_CHILD, DELETE,
+# WRITE_DAC, WRITE_OWNER, GENERIC_WRITE, GENERIC_ALL.
+WRITE_RIGHTS = 0x2 | 0x4 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x40000000 | 0x10000000
+# A drive root lets every signed-in user create new folders in it (Windows default). That can't touch
+# folders that already exist, so on a root only deleting, renaming or re-permissioning entries counts.
+ROOT_RIGHTS = 0x40 | 0x40000 | 0x80000 | 0x40000000 | 0x10000000
+
+
+def writable_by(path, drive_root: bool = False) -> list[tuple[str, bool]]:
+    """(SID, explicit) for each account outside TRUSTED_SIDS that can change path (see WRITE_RIGHTS),
+    including a foreign owner (owners can always rewrite the ACL). [] means only you, SYSTEM,
+    Administrators and TrustedInstaller can. Raises pywintypes.error if the ACL can't be read."""
+    sd = win32security.GetNamedSecurityInfo(str(path), win32security.SE_FILE_OBJECT,
+                                            win32security.OWNER_SECURITY_INFORMATION | win32security.DACL_SECURITY_INFORMATION)
+    found: dict[str, bool] = {}
+    owner = sd.GetSecurityDescriptorOwner()
+    owner_str = win32security.ConvertSidToStringSid(owner) if owner else ""
+    if owner_str not in TRUSTED_SIDS:
+        found[owner_str or "(no owner)"] = True
+    dacl = sd.GetSecurityDescriptorDacl()
+    if dacl is None:
+        return [("S-1-1-0", True)]  # NULL DACL: everyone has full access
+    rights = ROOT_RIGHTS if drive_root else WRITE_RIGHTS
+    for i in range(dacl.GetAceCount()):
+        ace = dacl.GetAce(i)
+        (ace_type, flags), mask, sid = ace[0], ace[1], ace[-1]
+        if ace_type not in _ALLOW_ACE_TYPES or flags & _INHERIT_ONLY_ACE or not mask & rights:
+            continue
+        sid_str = win32security.ConvertSidToStringSid(sid)
+        if sid_str in TRUSTED_SIDS or (sid_str == OWNER_RIGHTS_SID and owner_str in TRUSTED_SIDS):
+            continue
+        found[sid_str] = found.get(sid_str, False) or not flags & _INHERITED_ACE
+    return list(found.items())
+
+
+_names: dict[str, str] = {}
+
+
+def account_name(sid_str: str) -> str:
+    if sid_str not in _names:
+        try:
+            name, domain, _ = win32security.LookupAccountSid(None, win32security.ConvertStringSidToSid(sid_str))
+            _names[sid_str] = f"{domain}\\{name}" if domain else name
+        except pywintypes.error:
+            _names[sid_str] = sid_str
+    return _names[sid_str]
+
+
+def _fix_command(path) -> str:
+    target = f'"{path}"' if " " in str(path) else str(path)
+    return (f"icacls {target} /inheritance:r /grant:r *{MY_SID_STR}:(OI)(CI)F *{SYSTEM_SID}:(OI)(CI)F "
+            f"*{ADMINS_SID}:(OI)(CI)F")
+
+
+def check_ancestors(folder) -> dict:
+    """Every folder above `folder`, up to the drive root: can another account change it? Anyone who can
+    rename or replace one of them can swap in their own copy of the app (code, .venv) that you then run."""
+    folder = os.path.abspath(str(folder))
+    chain = []
+    parent = os.path.dirname(folder)
+    while parent and parent not in chain:
+        chain.append(parent)
+        if os.path.dirname(parent) == parent:
+            break
+        parent = os.path.dirname(parent)
+    unsafe, details, commands = [], {}, []
+    for path in chain:  # nearest first
+        root = os.path.dirname(path) == path
+        try:
+            who = writable_by(path, drive_root=root)
+        except pywintypes.error as e:
+            who = [(f"(couldn't read the permissions: {e.strerror})", True)]
+        if not who:
+            continue
+        unsafe.append(path)
+        details[path] = [account_name(sid) if sid.startswith("S-") else sid for sid, _ in who]
+        if not root:
+            commands.append((path, any(explicit for _, explicit in who)))
+    # Fix the top-most unsafe folder (its children inherit from it); deeper ones only if they add entries of their own.
+    fix_cmds = [_fix_command(p) for i, (p, explicit) in enumerate(reversed(commands)) if i == 0 or explicit]
+    unsafe.reverse()  # drive root first
+    fix = " && ".join(fix_cmds)
+    if unsafe and os.path.dirname(unsafe[0]) == unsafe[0]:
+        fix = ((fix + "  Also: ") if fix else "") + (
+            f"the drive root {unsafe[0]} lets other accounts delete, rename or re-permission folders in it; "
+            "ask IT to restore its default permissions.")
+    return {"ok": not unsafe, "unsafe": unsafe, "fix": fix, "accounts": details}
+
+
+_folder_cache = {"at": 0.0, "value": None}
+_folder_lock = threading.Lock()
+
+
+def folder_security(max_age: float = 300) -> dict:
+    """check_ancestors() for the app folder, cached for max_age seconds."""
+    with _folder_lock:
+        if _folder_cache["value"] is None or time.monotonic() - _folder_cache["at"] > max_age:
+            _folder_cache["value"] = check_ancestors(config.ROOT)
+            _folder_cache["at"] = time.monotonic()
+        return _folder_cache["value"]
+
+
+def folder_alert():
+    """Once per launch (app start-up): a high-priority alert if a folder above the app is unsafe."""
+    status = folder_security()
+    if status["ok"]:
+        return
+    from . import alerts
+    who = "; ".join(f"{p}: {', '.join(a)}" for p, a in status["accounts"].items())
+    alerts.raise_alert(
+        "Security", "Other accounts can change the folders above Command Center",
+        f"{who}. Anyone who can rename or replace these folders can swap in code that runs as you. "
+        f"Fix it from a Command Prompt (as you; you need to own the folder or have full control): {status['fix']}", "high")
 
 
 # ---- Windows Hello, with the Windows password as the fallback ----------------------------------

@@ -68,6 +68,10 @@ header::after {
 .slash { color: var(--accent-2); margin: 0 .1rem; }
 .navs { display: flex; align-items: center; gap: .9rem; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .navs::-webkit-scrollbar { display: none; }
+/* Sideways-scrolling nav (narrow window): fade the edge that hides more tabs. */
+.navs.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 2.5rem), transparent); }
+.navs.fade-l { -webkit-mask-image: linear-gradient(90deg, transparent, #000 2.5rem); mask-image: linear-gradient(90deg, transparent, #000 2.5rem); }
+.navs.fade-l.fade-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(90deg, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent); }
 nav { display: flex; align-items: center; gap: .2rem; flex: none; }
 .nav-group { padding: .15rem .3rem .15rem .2rem; border: 1px solid var(--line-soft); background: rgb(var(--accent-rgb) / .025); }
 .nav-group[data-pane="work"] { border-color: rgb(var(--accent-2-rgb) / .3); background: rgb(var(--accent-2-rgb) / .025); }
@@ -152,7 +156,7 @@ body.resizing iframe, body.resizing .xterm { pointer-events: none; }
   background: linear-gradient(90deg, rgb(var(--accent-2-rgb) / .08), rgb(0 0 0 / .2) 60%);
 }
 main.ws-single .work-bar { margin: .9rem 1.5rem 0; }
-.work-label { font: 700 .74rem var(--font-ui); letter-spacing: .14em; color: var(--accent-2); white-space: nowrap; }
+.work-label { font: 700 .74rem var(--font-ui); letter-spacing: .14em; color: var(--accent-2); white-space: nowrap; text-transform: uppercase; }
 .project-select { width: auto; min-width: 13rem; max-width: 24rem; margin: 0; padding: .3rem .55rem; font: 600 .9rem var(--font-ui); letter-spacing: .03em; }
 .project-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .76rem var(--font-mono); }
 .work-bar .spacer { flex: 1; }
@@ -255,6 +259,12 @@ textarea { min-height: 7.5rem; resize: vertical; }
   .list li > .check + .grow + .actions { padding-left: 1.9rem; }
 }
 
+/* Alert rows keep their buttons in a right-hand column (the ✓ never drops to a line of its own) and an
+   unread row is tinted edge to edge. */
+.list li.alert-row { flex-wrap: nowrap; }
+.list li.alert-row > .actions { flex-basis: auto; flex-direction: column; align-items: flex-end; justify-content: flex-start; padding-left: 0; }
+.list li.alert-row.unread { background: rgb(var(--accent-rgb) / .08); box-shadow: inset 0 0 0 1px rgb(var(--accent-rgb) / .12); }
+
 /* Long lists (alerts, calendar, websites, Teams) flow into columns on wide screens. */
 .flow { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 34rem), 1fr)); }
 .flow li { border-right: 1px solid var(--line-soft); }
@@ -288,9 +298,26 @@ textarea { min-height: 7.5rem; resize: vertical; }
 .a-weather .w-temp small { font-size: 1rem; }
 .a-weather .w-desc { font-size: .9rem; }
 .a-weather .w-loc { font-size: .74rem; }
-.a-weather .w-meters, .a-weather .hours { display: none; }
-@container (min-width: 34rem) { .a-weather .w-meters { display: grid; min-width: 12rem; grid-template-columns: 1fr; gap: .3rem; } }
-@container (min-width: 52rem) { .a-weather .w-meters { grid-template-columns: repeat(3, 1fr); } }
+.a-weather .w-loc span { white-space: nowrap; }
+/* Meters and the hourly strip always show: a compact row under the temperature in a narrow panel,
+   beside it when there's room. */
+.a-weather .weather-main { flex-wrap: wrap; row-gap: .45rem; }
+.a-weather .w-meters { display: grid; flex: 1 1 100%; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .3rem .8rem; }
+.a-weather .meter-head { font-size: .66rem; letter-spacing: .05em; gap: .3rem; }
+.a-weather .meter-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-weather .meter-head b { white-space: nowrap; }
+.a-weather .hours { display: none; }
+@container (min-width: 20rem) {
+  .a-weather .hours { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .25rem; padding-top: .35rem; margin-top: .45rem; }
+  .a-weather .hour { font-size: .68rem; line-height: 1.25; }
+  .a-weather .hour .hi { font-size: 1rem; margin: 0; }
+  .a-weather .hour b { font-size: .8rem; }
+  .a-weather .hour .rain { font-size: .62rem; white-space: nowrap; }
+}
+@container (min-width: 46rem) {
+  .a-weather .weather-main { flex-wrap: nowrap; }
+  .a-weather .w-meters { flex: 1 1 auto; min-width: 16rem; }
+}
 .today-layout .a-stats { grid-template-columns: repeat(auto-fill, minmax(8.2rem, 1fr)); gap: .5rem; align-content: start; }
 .a-stats .stat { padding: .45rem .7rem; }
 .a-stats .stat .n { font-size: 1.45rem; }
@@ -322,7 +349,6 @@ textarea { min-height: 7.5rem; resize: vertical; }
 }
 @container pane (min-width: 110rem) {
   .a-follow .followups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .a-weather .hours { display: grid; grid-template-columns: repeat(6, 1fr); padding-top: .4rem; margin-top: .4rem; }
 }
 /* Tall enough: Today fills the pane exactly and every list scrolls inside its panel (no pane scroll). */
 @media (min-height: 1000px) {
@@ -366,6 +392,12 @@ textarea { min-height: 7.5rem; resize: vertical; }
   background: repeating-linear-gradient(90deg, var(--accent) 0 .5rem, transparent .5rem .62rem);
   box-shadow: 0 0 .6rem rgb(var(--accent-rgb) / .6);
 }
+/* Weekend: no workday, the bar is a calm hatched "off" state. */
+.xp.weekend .xp-head { color: var(--accent-2); }
+.xp.weekend .xp-bar { border-color: rgb(var(--accent-2-rgb) / .55); }
+.xp.weekend #xp-fill { background: repeating-linear-gradient(135deg, rgb(var(--accent-2-rgb) / .35) 0 .3rem, transparent .3rem .6rem); box-shadow: none; }
+.list li.weekend-row { border: 1px dashed rgb(var(--accent-2-rgb) / .45); border-left: 3px solid var(--accent-2); margin: .3rem 0; background: rgb(var(--accent-2-rgb) / .05); align-items: center; }
+.list li.weekend-row .time-col, .list li.weekend-row .slot-title { color: var(--accent-2); }
 .weather-main { display: flex; align-items: center; gap: 1.4rem; margin: .6rem 0 .9rem; flex-wrap: wrap; }
 .w-icon { font-size: 4rem; line-height: 1; filter: drop-shadow(0 0 .75rem rgb(255 255 255 / .25)); }
 .w-temp { font: 900 3.75rem/1 var(--font-display); color: #fff; text-shadow: var(--glow); }
@@ -380,7 +412,7 @@ textarea { min-height: 7.5rem; resize: vertical; }
 .segments i.on { background: var(--accent); box-shadow: 0 0 .4rem rgb(var(--accent-rgb) / .6); }
 .segments.hot i.on { background: var(--amber); box-shadow: 0 0 .4rem rgb(var(--amber-rgb) / .6); }
 .hours { display: grid; grid-template-columns: repeat(6, 1fr); gap: .5rem; border-top: 1px solid var(--line); padding-top: .75rem; }
-.a-weather .weather-main > div:nth-child(2) { min-width: 0; }
+.a-weather .weather-main > div:nth-child(2) { min-width: 0; flex: 1 1 10rem; }
 .hour { text-align: center; font: 600 .8rem var(--font-mono); color: var(--muted); }
 .hour .hi { font-size: 1.4rem; margin: .1rem 0; }
 .hour b { color: var(--text); font: 700 .95rem var(--font-ui); }
@@ -408,7 +440,7 @@ textarea { min-height: 7.5rem; resize: vertical; }
 /* ---- mail / sql / teams (sized by the pane, not the window) ---- */
 .split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }
 .split .list { max-height: 60vh; overflow-y: auto; }
-#mail-view { overflow: auto; }
+#mail-view { overflow: auto; overflow-wrap: anywhere; }
 @container pane (min-width: 50rem) {
   #tab-mail.active { display: flex; flex-direction: column; height: 100%; min-height: 26rem; }
   #tab-mail .split { flex: 1; min-height: 0; grid-template-columns: minmax(18rem, 2fr) minmax(0, 3fr); align-items: stretch; }
@@ -418,7 +450,7 @@ textarea { min-height: 7.5rem; resize: vertical; }
 }
 @container pane (min-width: 100rem) { #tab-mail .split { grid-template-columns: minmax(34rem, 1fr) minmax(0, 2.2fr); } }
 #mail-view h2 { font: 700 1.25rem var(--font-body); margin: 0 0 .4rem; color: #fff; }
-#mail-view pre { white-space: pre-wrap; font: 400 1rem/1.6 var(--font-body); max-height: 55vh; overflow-y: auto; border-top: 1px solid var(--line); padding-top: .75rem; color: var(--text); }
+#mail-view pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font: 400 1rem/1.6 var(--font-body); max-height: 55vh; overflow-y: auto; border-top: 1px solid var(--line); padding-top: .75rem; color: var(--text); }
 .sql-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }
 @container pane (min-width: 46rem) { .sql-grid { grid-template-columns: minmax(16rem, 21rem) minmax(0, 1fr); } }
 #sql-tables { max-height: 19rem; overflow-y: auto; border: 1px solid var(--line); }
@@ -583,12 +615,17 @@ dialog:focus-visible { outline: none; }
 ::-webkit-scrollbar-thumb:hover { background: rgb(var(--accent-rgb) / .5); }
 
 /* ---- header at smaller widths: one row from 1920px up, then the nav groups wrap to a second row ---- */
+/* Labels next to the search key and the status dots show while the header has room (app.js fitHeader). */
+header.hdr-tight .search-btn span, header.hdr-tight .status-name { display: none; }
+header.hdr-tight .status > span { padding: .25rem .4rem; }
+header.hdr-tight .status .dot { margin-right: 0; }
 @media (max-width: 2799px) {
-  .search-btn span, .status-name { display: none; }
-  .status > span { padding: .25rem .4rem; }
-  .status .dot { margin-right: 0; }
-  nav button { padding: .5rem .62rem; letter-spacing: .07em; }
-  .navs { gap: .6rem; }
+  .status > span { padding: .25rem .5rem; }
+  .search-btn { gap: .45rem; }
+  header { gap: .8rem; }
+  nav button { padding: .5rem .5rem; letter-spacing: .06em; }
+  .navs { gap: .5rem; }
+  .layout-toggle { min-width: 0; }
 }
 header.nav-wrap { flex-wrap: wrap; row-gap: .35rem; }
 header.nav-wrap .navs { order: 3; flex-basis: 100%; }
@@ -601,13 +638,16 @@ header.nav-wrap .navs { order: 3; flex-basis: 100%; }
 }
 @media (max-width: 700px) {
   header { gap: .6rem; padding: .5rem .75rem; }
+  .work-bar { flex-wrap: wrap; row-gap: .4rem; }
+  .project-select { order: 5; flex: 1 1 100%; max-width: none; }
   .logo-text { display: none; }
   main.ws-single .pane-body { padding: 1rem; }
   main.ws-single .work-bar { margin: .75rem 1rem 0; }
   .project-path { display: none; }
-  .project-select { min-width: 0; flex: 1; }
+  .project-select { min-width: 0; }
   .hours { grid-template-columns: repeat(3, 1fr); }
 }
+@media (max-width: 340px) { .search-btn span { display: none; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

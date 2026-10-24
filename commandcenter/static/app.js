@@ -81,6 +81,27 @@ function showDialog(...content) {
   if (!$("#dialog").open) $("#dialog").showModal();
 }
 
+// Enter in a dialog text field runs the dialog's main (primary) action. It never "submits" the
+// <form method="dialog">: that would press the first button (often Cancel) and lose what was typed.
+const NO_ENTER_ACTION = new Set(["checkbox", "radio", "range", "color", "file", "button", "submit", "reset", "image"]);
+function primaryFor(node, root) {
+  // The closest primary button wins (e.g. the Snooze button next to the custom time), else the dialog's last one.
+  for (let n = node.parentElement; n && root.contains(n); n = n.parentElement) {
+    const found = [...n.querySelectorAll("button.primary")].filter((b) => !b.disabled && b.offsetParent !== null);
+    if (found.length) return found[found.length - 1];
+    if (n === root) break;
+  }
+  return null;
+}
+$("#dialog").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.isComposing || e.defaultPrevented || e.target.tagName !== "INPUT") return;
+  e.preventDefault();
+  if (!NO_ENTER_ACTION.has(e.target.type)) primaryFor(e.target, $("#dialog"))?.click();
+});
+
+// Something modal is up (a dialog, the restart overlay, the launch splash): global shortcuts stay quiet.
+const modalOpen = () => !!document.querySelector("dialog[open], .restart-overlay, .sp-overlay, [aria-modal='true']");
+
 function showMessage(title, text) {
   showDialog(el("h3", {}, title), el("p", {}, text), el("div", { class: "row" }, el("button", {}, "OK")));
 }
@@ -210,13 +231,29 @@ function fitHeader() {
   cancelAnimationFrame(headerFrame);
   headerFrame = requestAnimationFrame(() => {
     const h = document.querySelector("header"), n = document.querySelector(".navs");
-    h.classList.remove("nav-wrap");
-    if (n.scrollWidth > n.clientWidth + 1) h.classList.add("nav-wrap");
+    const overflows = () => n.scrollWidth > n.clientWidth + 1;
+    // 1) Labels on the right ("Search", "Outlook", "Teams") when everything fits on one row.
+    // 2) Otherwise drop those labels to keep one row. 3) Otherwise the navs take a second row,
+    //    which leaves room for the labels again.
+    h.classList.remove("nav-wrap", "hdr-tight");
+    if (overflows()) {
+      h.classList.add("hdr-tight");
+      if (overflows()) { h.classList.remove("hdr-tight"); h.classList.add("nav-wrap"); }
+    }
+    navFade();
   });
 }
+// A narrow window scrolls the nav sideways: fade the edge that has more tabs behind it.
+function navFade() {
+  const n = document.querySelector(".navs");
+  n.classList.toggle("fade-r", n.scrollLeft + n.clientWidth < n.scrollWidth - 2);
+  n.classList.toggle("fade-l", n.scrollLeft > 2);
+}
+document.querySelector(".navs").addEventListener("scroll", navFade, { passive: true });
 (() => {
   const ro = new ResizeObserver(fitHeader);
   ro.observe(document.querySelector("header"));
+  ro.observe(document.querySelector(".header-right"));
   document.querySelectorAll(".nav-group").forEach((n) => ro.observe(n));
 })();
 
@@ -352,7 +389,7 @@ function alertAction(a) {
 }
 
 function alertRow(a, compact = false) {
-  return el("li", { class: a.read ? "" : "unread" },
+  return el("li", { class: `alert-row ${a.read ? "" : "unread"}` },
     el("span", { class: `prio ${a.priority}` }),
     el("div", { class: "grow" },
       el("div", { class: "title" }, a.title),
@@ -489,12 +526,24 @@ function pyRegex(src) {
 }
 
 function findOrders(text, re) {
-  const out = [];
-  // Digits inside links (tracking ids, safelinks) are never order numbers.
-  const plain = String(text).slice(0, 200000).replace(/\b(?:https?:\/\/|www\.)\S+/gi, " ");
-  for (const m of plain.matchAll(re)) {
+  const out = [], seen = new Set();
+  // Digits inside links (tracking ids, safelinks) and email addresses are never order numbers.
+  const plain = String(text).slice(0, 200000)
+    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, (s) => " ".repeat(s.length))
+    .replace(/[^\s<>()"',;:]+@[^\s<>()"',;:]+/g, (s) => " ".repeat(s.length));
+  let rx;
+  try { rx = new RegExp(re.source, re.flags.includes("d") ? re.flags : re.flags + "d"); } catch { rx = re; }
+  for (const m of plain.matchAll(rx)) {
     const n = m[1] ?? m[0];
-    if (n && !out.includes(n)) out.push(n);
+    if (!n) continue;
+    // A number glued to letters or more digits is part of something else (tracking number, part code).
+    const [s, e] = m.indices?.[m[1] !== undefined ? 1 : 0] || [m.index, m.index + n.length];
+    if (/[A-Za-z0-9]/.test(plain[s - 1] || "") || /[A-Za-z0-9]/.test(plain[e] || "")) continue;
+    // 2296106 and 0002296106 are the same order: keep the first form seen (the subject comes first).
+    const key = n.replace(/^0+(?=\d)/, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(n);
     if (out.length >= 8) break;
   }
   return out;
@@ -796,6 +845,14 @@ function tickClock() {
   $("#clock").replaceChildren(hm, el("span", { class: "sec" }, String(now.getSeconds()).padStart(2, "0")),
     ampm ? el("span", { class: "ampm" }, ampm) : "");
   $("#date-line").textContent = `${now.toLocaleDateString([], { weekday: "long" })} // ${now.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+  const weekend = isWeekend(now);
+  $(".a-clock .xp")?.classList.toggle("weekend", weekend);
+  if (weekend) {
+    $("#xp-label").textContent = "WEEKEND · OFF THE CLOCK";
+    $("#xp-pct").textContent = "—";
+    $("#xp-fill").style.width = "100%";
+    return;
+  }
   const hours = now.getHours() + now.getMinutes() / 60;
   const pct = Math.round(Math.min(1, Math.max(0, (hours - WORKDAY.start) / (WORKDAY.end - WORKDAY.start))) * 100);
   $("#xp-pct").textContent = `${pct}%`;
@@ -803,6 +860,9 @@ function tickClock() {
   $("#xp-label").textContent = `WORKDAY ${fmt(WORKDAY.start)} – ${fmt(WORKDAY.end)}`;
   $("#xp-fill").style.width = `${pct}%`;
 }
+
+// Saturday and Sunday have no workday: no progress, no free slots.
+const isWeekend = (d = new Date()) => d.getDay() === 0 || d.getDay() === 6;
 
 function segments(value, max, hot = false, n = 12) {
   const on = Math.round(Math.min(1, Math.max(0, value / max)) * n);
@@ -853,7 +913,10 @@ function renderWeather(w) {
       el("div", {},
         el("div", { class: "w-temp" }, w.temp, el("small", {}, w.unit)),
         el("div", { class: "w-desc" }, w.text),
-        el("div", { class: "w-loc" }, `FEELS ${w.feels_like}° · H ${w.high}° / L ${w.low}° · ☀ ${timeOf(w.sunrise)} ☾ ${timeOf(w.sunset)}`)),
+        // Each piece wraps as a whole (never "6:06" on one line and "PM" on the next).
+        el("div", { class: "w-loc" },
+          el("span", {}, `FEELS ${w.feels_like}°`), " · ", el("span", {}, `H ${w.high}° / L ${w.low}°`), " · ",
+          el("span", { title: "Sunrise" }, `☀ ${timeOf(w.sunrise)}`), " ", el("span", { title: "Sunset" }, `☾ ${timeOf(w.sunset)}`))),
       el("div", { class: "w-meters" },
         meter("Rain chance", `${w.rain_chance ?? 0}%`, w.rain_chance ?? 0, 100, false),
         meter("Humidity", `${w.humidity}%`, w.humidity, 100, false),
@@ -901,11 +964,31 @@ function renderStats(d) {
     tile.style.cursor = "pointer";
     tile.addEventListener("click", () => openTab("pulse"));
     $("#stats").append(tile);
+    balanceStats();
   }).catch(() => {});
+  balanceStats();
 }
+
+// The stat tiles sit in balanced rows: all on one row if they fit, else two even rows (3+3, 4+3), else
+// three, never a lone tile on a row of its own.
+const STAT_MIN_REM = 8.2;
+function balanceStats() {
+  const box = $("#stats");
+  const n = box.children.length;
+  if (!n || !box.clientWidth) return;
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  const gap = parseFloat(getComputedStyle(box).columnGap) || 0;
+  const fits = (cols) => (box.clientWidth - gap * (cols - 1)) / cols >= STAT_MIN_REM * rem;
+  let cols = [n, Math.ceil(n / 2), Math.ceil(n / 3)].find(fits) || Math.min(n, 2);
+  if (!fits(cols)) cols = Math.max(1, Math.min(n, 2));
+  box.style.setProperty("grid-template-columns", `repeat(${cols}, minmax(0, 1fr))`);
+  box.style.setProperty("grid-auto-flow", "row");
+}
+new ResizeObserver(() => balanceStats()).observe($("#stats"));
 
 // Open time today: inside the workday, from now on, between meetings, at least 30 minutes.
 function freeSlots(agenda, now = new Date()) {
+  if (isWeekend(now)) return [];
   const at = (h) => new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, Math.round(h * 60));
   const dayEnd = at(WORKDAY.end);
   let cursor = new Date(Math.max(at(WORKDAY.start), roundUp(now, 15)));
@@ -962,7 +1045,14 @@ function renderAgenda(agenda) {
   rows.push(...freeSlots(agenda, now).map((s) => ({ at: s.start, slot: true, node: slotRow(s) })));
   rows.sort((a, b) => a.at - b.at || (b.slot ? 1 : 0) - (a.slot ? 1 : 0));
   const nodes = rows.map((r) => r.node);
-  if (!agenda.length) nodes.unshift(el("li", { class: "empty" }, "No meetings today. Clear skies."));
+  const weekend = isWeekend(now);
+  if (weekend) {
+    nodes.unshift(el("li", { class: "weekend-row" },
+      el("div", { class: "time-col" }, now.toLocaleDateString([], { weekday: "short" }).toUpperCase()),
+      el("div", { class: "grow" },
+        el("div", { class: "slot-title" }, "Weekend"),
+        el("div", { class: "muted slot-hint" }, agenda.length ? "No work hours today. Meetings below are still on your calendar." : "No work hours and no meetings today."))));
+  } else if (!agenda.length) nodes.unshift(el("li", { class: "empty" }, "No meetings today. Clear skies."));
   fill($("#agenda"), nodes, "No meetings today. Clear skies.");
 }
 
@@ -1189,8 +1279,8 @@ function renderFollowups(f) {
       null, "No one owes you a reply."),
     fuGroup("Flagged", f.flagged, (m) => el("li", {},
       el("div", { class: "grow" }, el("div", { class: "title" }, m.subject, dueTag(m.due)),
-        el("div", { class: "muted src-line" }, srcTag("flagged"), `${m.sender_name} · ${when(m.received)}`)),
-      fuActions(m, { mute: m.sender_name }, viewMail(m.id),
+        el("div", { class: "muted src-line" }, srcTag("flagged"), `${fromLine(m.sender_name, m.sender)} · ${when(m.received)}`)),
+      fuActions(m, { mute: m.sender || m.sender_name }, viewMail(m.id),
         el("button", { class: "small", onclick: () => completeTask({ source: "outlook", id: m.id, subject: m.subject }) }, "Done"))),
       hiddenNote && `Hidden: ${hiddenNote} (of ${h.total} flagged)`, "No recent flags."),
     fuGroup("Unread from VIPs", f.unread_vip, (m) => el("li", { class: "unread" },
@@ -1461,7 +1551,7 @@ function launchEditDialog() {
 $("#launch-edit").addEventListener("click", () => launchEditDialog());
 document.addEventListener("keydown", (e) => {
   if (!e.altKey || e.ctrlKey || e.metaKey || !/^[1-9]$/.test(e.key)) return;
-  if ($("#dialog").open || $("#palette").classList.contains("open")) return;
+  if (modalOpen() || $("#palette").classList.contains("open")) return;
   const i = Number(e.key) - 1;
   if (launchItems[i]) { e.preventDefault(); openLaunch(i); }
 });
@@ -1613,8 +1703,12 @@ function paletteSources() {
     for (const m of agenda.filter((m) => new Date(m.end) > now)) add("Agenda", `Prep: ${m.subject}`, timeOf(m.start), () => prepDialog(m.id, m));
     for (const t of todayData.tasks.items) add("Tasks", t.subject, dueText(t.due), () => t.url ? openExternal(t.url) : guarded(() => api("/api/outlook/open", { id: t.id })));
     const f = todayData.followups.error ? {} : todayData.followups;
-    for (const m of [...(f.urgent_reply || []), ...(f.needs_reply || []), ...(f.teams_reply || []), ...(f.flagged || []), ...(f.unread_vip || [])])
+    const seenFu = new Set();  // a message can be in two groups (e.g. needs a reply and flagged): list it once
+    for (const m of [...(f.urgent_reply || []), ...(f.needs_reply || []), ...(f.teams_reply || []), ...(f.flagged || []), ...(f.unread_vip || [])]) {
+      if (!m || seenFu.has(m.id)) continue;
+      seenFu.add(m.id);
       add("Follow-ups", m.subject, m.sender_name, () => { openTab("mail"); showMail(m.id); });
+    }
   }
   for (const q of sqlInfo.queries || []) add("SQL", `Run query: ${q.name}`, q.connection, () => { openTab("sql"); $("#sql-query").value = q.name; renderParams(); });
   for (const m of pal.mail) add("Mail", m.subject, `${m.folder === "Sent" ? "to " + m.to : m.sender_name} · ${when(m.received)}`, () => { openTab("mail"); showMail(m.id); });
@@ -1645,7 +1739,7 @@ function renderPalette() {
     rows.push(el("li", { class: `item ${i === pal.active ? "active" : ""}`, onclick: () => runPalette(i), onmousemove: () => { if (pal.active !== i) { pal.active = i; renderPalette(); } } },
       el("span", { class: "label" }, item.label), el("span", { class: "hint" }, item.hint)));
   });
-  if (!rows.length) rows.push(el("li", { class: "group" }, q.length >= 3 ? "Searching mail…" : "No matches"));
+  if (!rows.length) rows.push(el("li", { class: "group" }, pal.searching ? "Searching mail…" : "No matches"));
   $("#palette-results").replaceChildren(...rows);
   $("#palette-results .item.active")?.scrollIntoView({ block: "nearest" });
 }
@@ -1653,20 +1747,23 @@ function renderPalette() {
 function searchMail(q) {
   clearTimeout(pal.timer);
   pal.mail = [];
-  if (q.length < 3) return;
   const seq = ++pal.seq;
+  pal.searching = q.length >= 3;
+  if (!pal.searching) return;
   pal.timer = setTimeout(async () => {
-    try {
-      const { mail } = await api(`/api/search?q=${encodeURIComponent(q)}`);
-      if (seq === pal.seq) { pal.mail = mail; renderPalette(); }
-    } catch { /* Outlook closed: commands still work */ }
+    let mail = [];
+    try { mail = (await api(`/api/search?q=${encodeURIComponent(q)}`)).mail || []; } catch { /* Outlook closed: commands still work */ }
+    if (seq !== pal.seq) return;
+    pal.mail = mail;
+    pal.searching = false;  // done (found, empty or failed): the list now says "No matches" if nothing fits
+    if ($("#palette").classList.contains("open")) renderPalette();
   }, 300);
 }
 
 function openPalette() {
   $("#palette").classList.add("open");
   $("#palette-input").value = "";
-  pal.active = 0; pal.mail = [];
+  pal.active = 0; pal.mail = []; pal.searching = false; pal.seq++;
   renderPalette();
   $("#palette-input").focus();
   if (!sqlInfo.queries?.length) api("/api/sql").then((d) => { sqlInfo = d; renderPalette(); }).catch(() => {});
@@ -1691,6 +1788,7 @@ $("#palette-input").addEventListener("keydown", (e) => {
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
+    if (modalOpen()) return;  // never open the palette behind a modal
     $("#palette").classList.contains("open") ? closePalette() : openPalette();
   }
 });

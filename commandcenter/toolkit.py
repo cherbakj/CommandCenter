@@ -14,7 +14,9 @@ Safety rules enforced here (the browser is never trusted):
     finalized after; SQLite triggers refuse deletes and edits of finalized rows.
   * The SQL password lives only in Windows Credential Manager (keyring service
     "CommandCenter-Toolkit", user "<username>@<server>"). It is never returned, logged or written.
-    Logi user passwords (a column in Logi.dbo.Users) are masked in the change log.
+    Logi user passwords (a column in Logi.dbo.Users) are masked in the change log, and are never sent
+    to the page in bulk: lists carry has_password; one user's password comes only from POST
+    /api/toolkit/logi/password on an explicit click, logged in toolkit_changes as action "reveal".
 """
 import asyncio
 import getpass
@@ -718,13 +720,49 @@ def logi_lookup(user_id: str):
                 c.close()
             except Exception:
                 pass
+    if "rows" in result.get("logi_users", {}):
+        result["logi_users"] = _without_passwords(result["logi_users"])
     return result
 
 
+def _without_passwords(res: dict) -> dict:
+    """Logi passwords never leave the server in bulk: each row gets has_password instead.
+    One user's password is sent only by logi_password(), on an explicit click, and that is logged."""
+    rows = []
+    for r in res["rows"]:
+        r = dict(r)
+        pw = r.pop("Password", None)
+        r["has_password"] = pw not in (None, "")
+        rows.append(r)
+    cols = [("has_password" if c == "Password" else c) for c in res.get("columns", [])]
+    return {**res, "rows": rows, "columns": cols}
+
+
 def logi_all():
-    users = _read("logi", f"SELECT [UserID], [Password], [EmailID], [FullName] FROM {full_name('logi_users')} ORDER BY [UserID]")
+    users = _read("logi", "SELECT [UserID], CAST(CASE WHEN [Password] IS NULL OR [Password] = '' THEN 0 ELSE 1 END AS bit)"
+                          f" AS [has_password], [EmailID], [FullName] FROM {full_name('logi_users')} ORDER BY [UserID]")
+    users["rows"] = [{**r, "has_password": bool(r.get("has_password"))} for r in users["rows"]]
     dash = _read("sys", f"SELECT [OPRID], [TREE_NAME], [TREE_NODE], [DEFAULT_TREE_NAME] FROM {full_name('logi_dash')} ORDER BY [OPRID]")
     return {"users": users, "dash": dash}
+
+
+def logi_password(user_id: str, read=None) -> dict:
+    """One Logi user's password, for an explicit Show / Copy click. Logged in toolkit_changes as action
+    "reveal" (who, when, which user; never the value)."""
+    s = settings()
+    _require_setup(s)
+    log_id = log_start("logi_users", "reveal", {"UserID": user_id}, None, None, None, s)
+    try:
+        res = (read or _read)("logi", f"SELECT [Password] FROM {full_name('logi_users', s)} WHERE [UserID] = ?", [user_id])
+        if len(res["rows"]) != 1:
+            raise ChangeRefused(f"Expected exactly 1 Logi user {user_id!r}, found {len(res['rows'])}")
+    except Exception as e:
+        log_finish(log_id, False, str(e) if isinstance(e, (ChangeRefused, NotConfigured)) else _clean_error(e))
+        raise
+    log_finish(log_id, True)
+    log.info("toolkit: revealed the Logi password of one user (change log id %s)", log_id)
+    pw = res["rows"][0].get("Password")
+    return {"user_id": user_id, "password": "" if pw is None else str(pw)}
 
 
 def customer_tree():
@@ -892,6 +930,12 @@ async def get_logi_all():
 @router.post("/logi/user")
 async def get_logi_user(user_id: str = Body(..., embed=True)):
     return await _run(logi_lookup, _text(user_id, "User ID", 128, True))
+
+
+@router.post("/logi/password")
+async def reveal_logi_password(user_id: str = Body(..., embed=True)):
+    """One user's password, on an explicit click (POST, so it needs X-CommandCenter + our Origin). Logged."""
+    return await _run(logi_password, _text(user_id, "User ID", 128, True))
 
 
 @router.post("/tree")

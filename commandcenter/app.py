@@ -35,6 +35,15 @@ def _load_feature_modules():
 FEATURE_MODULES = _load_feature_modules()
 
 
+def _mark_old_start_alerts_read():
+    """One-time clean-up (idempotent): the unread "Command Center / Started" alerts earlier versions raised."""
+    with db._lock:
+        n = db._db().execute("UPDATE alerts SET read = 1 WHERE source = 'Command Center' AND title = 'Started' AND read = 0").rowcount
+        db._db().commit()
+    if n:
+        log.info("Marked %d old 'Started' alerts read", n)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.prune_seen()
@@ -44,7 +53,16 @@ async def lifespan(app: FastAPI):
     for module in FEATURE_MODULES:
         for job in getattr(module, "background", []):
             tasks.append(asyncio.create_task(job()))
-    alerts.raise_alert("Command Center", "Started", "Watching Outlook and websites.", "low")
+    # A start is logged, not raised as an alert (each restart and test copy used to add an unread one).
+    log.info("Command Center started; watching Outlook and websites")
+    try:
+        _mark_old_start_alerts_read()
+    except Exception:
+        log.exception("Couldn't mark old 'Started' alerts read")
+    try:
+        await asyncio.to_thread(security.folder_alert)  # once per launch, if a folder above the app is unsafe
+    except Exception:
+        log.exception("Couldn't check the folders above the app")
     yield
     for t in tasks:
         t.cancel()
@@ -113,6 +131,8 @@ async def status():
                "workday": [t.get("workday_start", "08:00"), t.get("workday_end", "17:00")]},
         "desktop": hasattr(app.state, "show_window"),
         "config_path": str(config.CONFIG_PATH),
+        "folder_security": {k: v for k, v in (await asyncio.to_thread(security.folder_security)).items()
+                            if k in ("ok", "unsafe", "fix")},
     }
 
 
@@ -382,7 +402,51 @@ async def order_status():
 # ---- launch bar ----------------------------------------------------------------
 
 DEFAULT_LAUNCHER = [{"name": "Pulse", "url": "https://pulse.sonance.com"}, {"name": "Asana", "url": "https://app.asana.com"}]
-LAUNCH_TARGET = re.compile(r"^(https?://\S+|msteams:\S*|[A-Za-z]:\\.+|\\\\[^\\]+\\.+)$")
+# Hotbar targets are opened with os.startfile (ShellExecute), which runs programs and scripts as readily as
+# it opens documents. Only web links, Teams links, folders and these document types are allowed; macro-enabled
+# Office types (.docm, .xlsm, .pptm) and anything executable (.exe, .bat, .ps1, .lnk, .url, .js, .hta, .msi...)
+# are not. Checked when the hotbar is saved and again every time a slot is opened.
+SAFE_DOC_EXT = {".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".txt", ".png", ".jpg", ".jpeg", ".md"}
+# Network paths only to Sonance hosts: a plain NetBIOS name (no dots) or a name ending in .sonance.com.
+UNC_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,14}|(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+sonance\.com",
+                      re.IGNORECASE)
+LAUNCH_HELP = ("use a web address (https://...), a Teams link, a folder, or a document "
+               f"({' '.join(sorted(SAFE_DOC_EXT))}) on this PC or a Sonance server (\\\\server\\share\\...)")
+
+
+def launch_problem(url, opening: bool = False) -> str | None:
+    """None if the hotbar may open url, otherwise the reason it may not. opening=True also checks the file system."""
+    if not isinstance(url, str) or not url or len(url) > 2000 or any(ord(c) < 32 or c == '"' for c in url):
+        return LAUNCH_HELP
+    low = url.lower()
+    if low.startswith(("http://", "https://")):
+        parts = urllib.parse.urlsplit(url)
+        return None if parts.netloc and " " not in url else LAUNCH_HELP
+    if low.startswith("msteams:"):
+        return None if " " not in url else LAUNCH_HELP
+    if url.startswith("\\\\"):
+        parts = url[2:].rstrip("\\").split("\\")
+        if len(parts) < 2 or not parts[1] or not UNC_HOST.fullmatch(parts[0]):
+            return "network paths must be on a Sonance server (\\\\name\\share or \\\\name.sonance.com\\share)"
+        rest = parts[1:]
+    elif re.match(r"[A-Za-z]:\\", url):
+        rest = url[3:].rstrip("\\").split("\\") if len(url.rstrip("\\")) > 2 else []
+    else:
+        return LAUNCH_HELP
+    if any(c in url[2:] for c in '<>|*?:/') or any(p in ("", ".", "..") or p.endswith((".", " ")) or ".{" in p
+                                                  for p in rest):
+        return "that path isn't allowed"  # streams (:), wildcards, '..', trailing dots/spaces, shell-namespace folders
+    ext = os.path.splitext(rest[-1])[1].lower() if rest else ""
+    is_dir = None
+    if opening or not url.startswith("\\\\"):  # saving a network path doesn't contact the server
+        is_dir = os.path.isdir(url)
+    if is_dir:
+        return None
+    if ext and ext not in SAFE_DOC_EXT:
+        return f"{ext} files can't be opened from the hotbar (only folders and {' '.join(sorted(SAFE_DOC_EXT))})"
+    if opening and not (ext and os.path.isfile(url)):
+        return "that folder or document doesn't exist" if not os.path.exists(url) else "only folders and documents can be opened"
+    return None
 
 
 @app.get("/api/launcher")
@@ -394,9 +458,12 @@ async def get_launcher():
 async def save_launcher(items: list = Body(..., embed=True)):
     clean = []
     for i in items[:24]:
+        if not isinstance(i, dict):
+            raise HTTPException(400, "Each hotbar slot needs a name and a target")
         name, url = str(i.get("name", "")).strip()[:40], str(i.get("url", "")).strip()
-        if not name or not LAUNCH_TARGET.match(url):
-            raise HTTPException(400, f"{name or 'Link'}: use a web address (https://...) or a folder/file path (C:\\... or \\\\server\\share)")
+        problem = launch_problem(url) if name else "give it a name"
+        if problem:
+            raise HTTPException(400, f"{name or 'Link'}: {problem}")
         clean.append({"name": name, "url": url})
     db.kv_set("launcher", clean)
     return {"items": clean}
@@ -407,7 +474,11 @@ async def open_launcher(index: int = Body(..., embed=True)):
     items = db.kv_get("launcher", DEFAULT_LAUNCHER)
     if not 0 <= index < len(items):
         raise HTTPException(404, "No such launch button")
-    await asyncio.to_thread(os.startfile, items[index]["url"])
+    url = items[index].get("url") if isinstance(items[index], dict) else None
+    problem = await asyncio.to_thread(launch_problem, url, True)
+    if problem:
+        raise HTTPException(400, f"{items[index].get('name', 'That slot') if isinstance(items[index], dict) else 'That slot'}: {problem}")
+    await asyncio.to_thread(os.startfile, url)
     return {"ok": True}
 
 
@@ -483,9 +554,15 @@ async def get_projects():
 
 
 @app.post("/api/projects/launch")
-async def launch_project(path: str = Body(...), resume: bool = Body(False), prompt: str = Body("")):
+async def launch_project(path: str = Body(...), resume: bool = Body(False), prompt: str = Body(""),
+                         allow_unsafe: bool = Body(False)):
     from . import projects
-    await asyncio.to_thread(projects.launch, path, resume, prompt)
+    try:
+        await asyncio.to_thread(projects.launch, path, resume, prompt, allow_unsafe)
+    except projects.UnsafeFolder as e:
+        return JSONResponse({"error": str(e), "unsafe_folder": True}, status_code=409)
+    except ValueError as e:  # not a project / bad prompt: a 400, not a logged server error
+        return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True}
 
 

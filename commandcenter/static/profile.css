@@ -9,11 +9,21 @@
 
 .pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.4rem; }
 .pf-row { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
-.pf-field { display: flex; flex-direction: column; gap: .25rem; margin-bottom: .5rem; }
+.pf-field { display: flex; flex-direction: column; align-items: stretch; gap: .25rem; margin-bottom: .5rem; text-align: left; }
+.pf-field .field-label { text-align: left; }
 .pf-field input[type=color] { height: 2.4rem; padding: .15rem; cursor: pointer; }
-.pf-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .4rem; margin-bottom: .7rem; }
-.pf-preset { display: flex; align-items: center; gap: .5rem; text-transform: none; letter-spacing: 0; font: 600 .82rem var(--font-ui); color: var(--text); }
-.pf-preset.on { border-color: var(--accent); box-shadow: var(--glow); color: #fff; }
+.pf-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: .4rem; margin-bottom: .7rem; }
+.pf-preset {
+  display: flex; align-items: center; gap: .5rem; text-transform: none; letter-spacing: 0; font: 600 .82rem/1.2 var(--font-ui);
+  color: var(--text); white-space: normal; text-align: left; min-height: 2.6rem; border-width: 2px; border-color: rgb(176 205 189 / .3);
+}
+/* The selected theme: thick accent border, tint and a check mark. */
+.pf-preset.on { border-color: var(--accent); background: rgb(var(--accent-rgb) / .18); box-shadow: var(--glow), inset 0 0 0 1px var(--accent); color: #fff; }
+.pf-preset.on::after { content: "✓"; margin-left: auto; padding-left: .3rem; font: 900 1rem var(--font-ui); color: var(--accent); }
+.pf-actions.pf-confirm { align-items: center; padding: .55rem .7rem; border: 1px solid var(--amber); background: rgb(var(--amber-rgb) / .08); }
+.pf-confirm-text { flex: 1 1 16rem; font-weight: 600; color: var(--text); }
+button.danger-solid { color: #fff; background: #c8102e; border-color: var(--red); }
+button.danger-solid:hover { background: #e0213f; color: #fff; box-shadow: 0 0 .6rem rgb(var(--red-rgb) / .6); }
 .pf-sw { display: inline-flex; flex-shrink: 0; }
 .pf-sw i { width: .8rem; height: 1.2rem; display: block; }
 .pf-scale { display: flex; align-items: center; gap: .6rem; }

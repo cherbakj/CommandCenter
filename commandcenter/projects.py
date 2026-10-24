@@ -62,10 +62,19 @@ def claude_path() -> str | None:
     return bundled_claude()
 
 
+# A repo's own config can name programs that git runs for status/log (core.fsmonitor, hooks), so they are
+# turned off for every call: listing projects must never run code from a project folder.
+# --no-optional-locks: reads never take the index lock or rewrite the index.
+# -c values also reach child git processes (submodules) through GIT_CONFIG_PARAMETERS.
+GIT_SAFE = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=NUL", "-c", "core.untrackedCache=false",
+            "--no-optional-locks"]
+
+
 def _git(path, *args) -> str:
     try:
-        out = subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True, timeout=5,
-                             creationflags=NO_WINDOW, encoding="utf-8", errors="replace")
+        # List arguments, no shell.
+        out = subprocess.run(["git", *GIT_SAFE, "-C", str(path), *args], capture_output=True, text=True, timeout=5,
+                             creationflags=NO_WINDOW, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
         return out.stdout.strip() if out.returncode == 0 else ""
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -82,11 +91,65 @@ def _summary(path: Path) -> str:
     return ""
 
 
+def _has_local_filters(path) -> bool:
+    """A filter driver in the repo's own config (filter.<name>.clean / .process) is a command git status may
+    run on the repo's files. Reading config runs nothing; when there is one, status is skipped for that repo."""
+    return bool(_git(path, "config", "--local", "--includes", "--name-only", "--get-regexp", r"^filter\."))
+
+
+def _changed_files(path) -> int | None:
+    if _has_local_filters(path):
+        return None
+    out = _git(path, "status", "--porcelain", "--ignore-submodules=all")
+    return len([l for l in out.splitlines() if l.strip()])
+
+
+# Windows Terminal treats ";" as its command separator and '"' ends an argument, so a folder with either in
+# its name or path is never listed, launched or opened (Windows already forbids '"' in file names).
+UNSAFE_PATH_CHARS = (";", '"')
+
+
+def _bad_chars(path) -> bool:
+    return any(c in str(path) for c in UNSAFE_PATH_CHARS)
+
+
+UNSAFE_MESSAGE = ("Other accounts on this PC can modify this folder, so Claude hooks or settings there could run "
+                  "code as you. Fix its permissions, or confirm that you want to start anyway.")
+
+
+class UnsafeFolder(ValueError):
+    pass
+
+
+def writable_by_others(path) -> bool:
+    """True if an account other than you, SYSTEM, Administrators or TrustedInstaller can change the project
+    folder, its .claude or .git folder, or the files there that Claude Code or git act on. Read-only check."""
+    from . import security
+    p = Path(path)
+    targets = [p, p / ".claude", p / ".git", p / ".claude" / "settings.json", p / ".claude" / "settings.local.json",
+               p / ".mcp.json", p / "CLAUDE.md", p / ".git" / "config", p / ".git" / "hooks"]
+    for t in targets:
+        if t is not p and not os.path.lexists(t):
+            continue
+        try:
+            if security.writable_by(t):
+                return True
+        except Exception:
+            return True  # its permissions can't be read: treat as unsafe
+    return False
+
+
+def check_safe(path, allow_unsafe=False):
+    """Raises UnsafeFolder unless the folder is private to you, or the request explicitly allows it."""
+    if allow_unsafe is not True and writable_by_others(path):
+        raise UnsafeFolder(UNSAFE_MESSAGE)
+
+
 def describe(path: Path) -> dict:
     is_git = (path / ".git").exists()
     last = _git(path, "log", "-1", "--format=%s\x1f%cI") if is_git else ""
     subject, _, when = last.partition("\x1f")
-    dirty = len([l for l in _git(path, "status", "--porcelain").splitlines() if l.strip()]) if is_git else 0
+    dirty = _changed_files(path) if is_git else 0
     try:
         modified = datetime.fromtimestamp(max((p.stat().st_mtime for p in path.iterdir()), default=path.stat().st_mtime))
     except OSError:
@@ -97,6 +160,7 @@ def describe(path: Path) -> dict:
         "last_commit": subject, "last_commit_at": when[:19] if when else None, "changed_files": dirty,
         "modified": modified.isoformat(timespec="minutes") if modified else None,
         "summary": _summary(path), "has_claude_md": (path / "CLAUDE.md").exists(),
+        "writable_by_others": writable_by_others(path),
     }
 
 
@@ -111,6 +175,8 @@ def _candidates() -> list[Path]:
     found += [p for p in extras() if p.is_dir()]
     out, seen = [], set()
     for p in found:
+        if _bad_chars(p):
+            continue
         try:
             key = os.path.normcase(str(p.resolve()))
         except OSError:
@@ -134,7 +200,7 @@ def _known(path) -> Path:
     paths are refused before touching the file system, because resolving a network path contacts that host.
     """
     bad = ValueError("That folder isn't one of your projects")
-    if not isinstance(path, str) or not path or len(path) > 400 or "\x00" in path:
+    if not isinstance(path, str) or not path or len(path) > 400 or "\x00" in path or _bad_chars(path):
         raise bad
     if path.startswith(("\\", "/")) or not re.match(r"[A-Za-z]:[\\/]", path):
         raise bad
@@ -151,14 +217,15 @@ def _known(path) -> Path:
         raise bad
     in_root = not p.name.startswith(".") and any(p.parent == r.resolve() for r in roots() if r.is_dir())
     is_extra = any(p == e.resolve() for e in extras() if e.is_dir())
-    if not (in_root or is_extra):
+    if not (in_root or is_extra) or _bad_chars(p):
         raise bad
     return p
 
 
-def launch(path: str, resume=False, prompt=""):
+def launch(path: str, resume=False, prompt="", allow_unsafe=False):
     """Open Claude Code in a new Windows Terminal window (outside Command Center)."""
     p = _known(path)
+    check_safe(p, allow_unsafe)
     exe = claude_path()
     if not exe:
         raise ValueError("Couldn't find Claude Code. Install it, or set projects.claude_path in config.yaml")
@@ -173,8 +240,11 @@ def launch(path: str, resume=False, prompt=""):
         args.append(prompt)
     wt = shutil.which("wt")
     if wt:
-        # Windows Terminal treats ";" as a command separator, so escape it inside arguments.
-        cmd = [wt, "-w", "new", "--title", f"Claude: {p.name}", "-d", str(p)] + [a.replace(";", "\\;") for a in args]
+        # Windows Terminal treats ";" as a command separator, so it is escaped inside every argument
+        # (_known already refuses folders containing one; this is the second line of defense).
+        def esc(a):
+            return a.replace(";", "\\;")
+        cmd = [wt, "-w", "new", "--title", esc(f"Claude: {p.name}"), "-d", esc(str(p))] + [esc(a) for a in args]
         subprocess.Popen(cmd, creationflags=subprocess.DETACHED_PROCESS, close_fds=True)
     else:
         subprocess.Popen(args, cwd=str(p), creationflags=subprocess.CREATE_NEW_CONSOLE, close_fds=True)

@@ -100,26 +100,17 @@ outlook:
 #   logged_in_selector: optional; element only visible when logged in, so an expired
 #                       session raises a "login needed" alert instead of a false change
 # ---------------------------------------------------------------------------
-websites:
-  - name: Example public page
-    url: https://example.com
-    profile: public
-    selector: p
-    alert_on: change
-    interval_minutes: 30
-    enabled: false
-
-  - name: Example login portal
-    url: https://portal.example.com/orders
-    profile: vendor
-    selector: "#open-orders-count"
-    regex: '(\d+)'
-    alert_on: above
-    threshold: 10
-    logged_in_selector: "#account-menu"
-    interval_minutes: 15
-    priority: high
-    enabled: false
+websites: []          # no monitors. To add one: remove the [] and uncomment the example below
+#  - name: Open orders on the vendor portal
+#    url: https://portal.example.com/orders
+#    profile: vendor                    # run.cmd login vendor https://portal.example.com
+#    selector: "#open-orders-count"
+#    regex: '(\d+)'
+#    alert_on: above
+#    threshold: 10
+#    logged_in_selector: "#account-menu"
+#    interval_minutes: 15
+#    priority: high
 
 # ---------------------------------------------------------------------------
 # SQL Server (over VPN). Passwords are stored in Windows Credential Manager - set them
@@ -221,7 +212,6 @@ security:
   unlock_on_start: true                # Windows Hello (or your Windows password if Hello isn't set up)
                                        # the first time the window opens after the app starts.
                                        # No idle re-lock: lock Windows (Win+L) when you walk away.
-  same_user_check: true                # refuse connections from processes of other Windows accounts
 
 # ---------------------------------------------------------------------------
 # VS Code tab: the real VS Code (web) with the Claude Code extension, embedded.

@@ -221,7 +221,7 @@ def _overlay_web_bundles(commit: str, target: Path):
                 if not (target / "extensions" / parts[2]).is_dir():
                     continue  # only extensions the server build has
                 dest = (target / "/".join(parts[1:])).resolve()
-                if not str(dest).startswith(str(root)) or dest.exists():
+                if not dest.is_relative_to(root) or dest == root or dest.exists():
                     continue
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with t.extractfile(m) as src, open(dest, "wb") as out:
@@ -264,12 +264,14 @@ def _ensure_build() -> Path:
     _set("downloading", "Unpacking the VS Code web server", progress=None)
     with zipfile.ZipFile(archive) as z:
         # Extract in place (renaming a freshly unpacked folder is refused here, likely the virus scanner).
+        root = target.resolve()
         for item in z.infolist():
             name = item.filename.split("/", 1)[1] if "/" in item.filename else ""
             if not name:
                 continue
             dest = (target / name).resolve()
-            if not str(dest).startswith(str(target.resolve())):
+            # Path containment, not a string prefix: C:\...\<commit>-evil also starts with C:\...\<commit>.
+            if not dest.is_relative_to(root) or dest == root:
                 raise RuntimeError("Unsafe path in the VS Code server archive")
             if item.is_dir():
                 dest.mkdir(parents=True, exist_ok=True)
@@ -279,11 +281,95 @@ def _ensure_build() -> Path:
                     shutil.copyfileobj(src, out)
     archive.unlink(missing_ok=True)
     _overlay_web_bundles(commit, target)
+    _set("installing", "Checking the Microsoft signatures of the VS Code server's programs")
+    verify_build_signatures(target)  # raises (and the build is never marked complete) if any program isn't signed
     (target / ".cc-complete").write_text(commit, encoding="utf-8")
     for old in builds_dir().iterdir():  # keep only the current build
         if old != target and old.is_dir() and re.fullmatch(r"[0-9a-f]{40}", old.name):
             shutil.rmtree(old, ignore_errors=True)
     return target
+
+
+# ---- Authenticode check of the build's programs ----------------------------------------------
+# The download is checked against Microsoft's published SHA-256, but that only proves the archive matches what
+# the update service said. Before anything in a build runs, every program in it (node.exe and the .exe/.node/.dll
+# files node loads) must carry a valid Authenticode signature from Microsoft (a few bundled GitHub tools are
+# signed by GitHub, Inc., a Microsoft company). Checked after every download and once per launch for a build
+# already on disk; results are cached per file (path, size, modified time) so a restart in the same launch is fast.
+
+SIGNED_TYPES = (".exe", ".node", ".dll")
+TRUSTED_SIGNERS = {"Microsoft Corporation", "GitHub, Inc."}
+_sig_cache: dict[tuple[str, int, int], bool] = {}
+_SIG_SCRIPT = ("$ErrorActionPreference='Stop'; $env:CC_SIG_FILES -split \"`n\" | Where-Object { $_ } | ForEach-Object { "
+               "$s = Get-AuthenticodeSignature -LiteralPath $_; "
+               "[pscustomobject]@{ Path = $_; Status = [string]$s.Status; "
+               "Subject = $(if ($s.SignerCertificate) { $s.SignerCertificate.Subject } else { '' }) } } | ConvertTo-Json -Compress")
+
+
+def _signer_org(subject: str) -> str:
+    """O= of a certificate subject such as 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond'."""
+    m = re.search(r'(?:^|,\s*)O=("(?:[^"]|"")*"|[^,]*)', subject or "")
+    if not m:
+        return ""
+    value = m.group(1).strip()
+    return value[1:-1].replace('""', '"') if value.startswith('"') else value
+
+
+def _check_signatures(files: list[Path]) -> dict[str, tuple[str, str]]:
+    """{path: (status, signer subject)} from Windows' own Authenticode check. Inline PowerShell (no .ps1 file),
+    list arguments, no console window; the paths go in through an environment variable, never the command text."""
+    ps = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    found = {}
+    chunks, chunk, size = [], [], 0
+    for f in files:  # environment variables are limited to 32767 characters
+        if chunk and size + len(str(f)) > 20000:
+            chunks.append(chunk)
+            chunk, size = [], 0
+        chunk.append(str(f))
+        size += len(str(f)) + 1
+    if chunk:
+        chunks.append(chunk)
+    for chunk in chunks:
+        env = {**os.environ, "CC_SIG_FILES": "\n".join(chunk)}
+        out = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-Command", _SIG_SCRIPT],
+                             capture_output=True, text=True, timeout=300, creationflags=NO_WINDOW, env=env,
+                             stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace")
+        if out.returncode != 0 or not out.stdout.strip():
+            raise RuntimeError(f"Couldn't check the VS Code server's signatures: {(out.stderr or out.stdout).strip()[:200]}")
+        rows = json.loads(out.stdout)
+        for r in rows if isinstance(rows, list) else [rows]:
+            found[os.path.normcase(r["Path"])] = (r.get("Status") or "", r.get("Subject") or "")
+    return found
+
+
+def verify_build_signatures(build: Path):
+    """Raises RuntimeError unless node.exe and every .exe/.node/.dll in the build is validly signed by Microsoft
+    (node.exe) or a trusted signer (the rest)."""
+    node = build / "node.exe"
+    if not node.is_file():
+        raise RuntimeError("The VS Code server build has no node.exe")
+    files = sorted({node, *(f for f in build.rglob("*") if f.suffix.lower() in SIGNED_TYPES and f.is_file())})
+    keys = {}
+    for f in files:
+        st = f.stat()
+        keys[f] = (os.path.normcase(str(f)), st.st_size, st.st_mtime_ns)
+    todo = [f for f in files if not _sig_cache.get(keys[f])]
+    if todo:
+        results = _check_signatures(todo)
+        bad = []
+        for f in todo:
+            status, subject = results.get(os.path.normcase(str(f)), ("Missing", ""))
+            org = _signer_org(subject)
+            ok = status == "Valid" and (org == "Microsoft Corporation" if f == node else org in TRUSTED_SIGNERS)
+            if ok:
+                _sig_cache[keys[f]] = True
+            else:
+                bad.append(f"{f.relative_to(build)} ({status or 'no signature'}{', ' + org if org else ''})")
+        if bad:
+            log.warning("VS Code server build %s failed the signature check: %s", build.name, "; ".join(bad[:10]))
+            raise RuntimeError("The VS Code server's programs aren't all signed by Microsoft, so it won't be started: "
+                               + "; ".join(bad[:5]) + (" ..." if len(bad) > 5 else ""))
+    _note(f"Signatures checked: {len(files)} programs signed by Microsoft")
 
 
 def _seed_machine_settings():
@@ -511,6 +597,8 @@ def _start_worker():
     try:
         server_data_dir().mkdir(parents=True, exist_ok=True)
         build = _ensure_build()
+        _set("installing", "Checking the Microsoft signatures of the VS Code server's programs")
+        verify_build_signatures(build)  # also for a build that was already on disk (cached per file)
         _seed_machine_settings()
         _ensure_extensions(build)
         if S.stopping:
@@ -642,9 +730,13 @@ async def post_stop():
 
 
 @router.get("/api/vscode/url")
-async def get_url(request: Request, folder: str):
+async def get_url(request: Request, folder: str, allow_unsafe: bool = False):
     _no_cross_site(request)
     path = await asyncio.to_thread(_project_folder, folder)
+    # VS Code and the Claude Code extension run tasks, settings, hooks and MCP servers from the folder.
+    if not allow_unsafe and await asyncio.to_thread(projects.writable_by_others, path):
+        return JSONResponse({"error": projects.UNSAFE_MESSAGE, "unsafe_folder": True}, status_code=409,
+                            headers={"Cache-Control": "no-store"})
     with S.lock:
         if S.status != "ready" or not S.port or not S.token:
             raise HTTPException(409, "VS Code web isn't running. Start it first.")

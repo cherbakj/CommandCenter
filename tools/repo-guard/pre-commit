@@ -1,0 +1,3 @@
+#!/bin/sh
+# Command Center repo guard: local-only hook (not pushed). See tools/repo-guard in Command Center.
+exec sh "$(git rev-parse --git-common-dir)/hooks/command-center-guard.sh" staged

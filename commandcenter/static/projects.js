@@ -48,6 +48,23 @@
     const findSession = (path) => { for (const [k, s] of state.sessions) if (samePath(k, path)) return s; return null; };
     const projectFor = (path) => state.projects.find((p) => samePath(p.path, path));
 
+    // Folders other Windows accounts can change (server: projects.writable_by_others). Claude Code runs hooks,
+    // MCP servers and settings from the project, so starting it there needs an explicit confirmation, which is
+    // then sent as allow_unsafe / unsafe=1 (the server refuses without it).
+    const UNSAFE_TEXT = "Other accounts on this PC can modify this folder — Claude hooks/settings there could run code as you. Start anyway?";
+    const unsafeNote = () => el("div", { class: "pj-unsafe", role: "alert" }, "⚠ Other accounts on this PC can modify this folder. Claude hooks/settings there could run code as you.");
+    // undefined: folder is private (no question asked); true: confirmed; false: cancelled.
+    async function confirmUnsafe(path) {
+      const p = projectFor(path);
+      if (!p || !p.writable_by_others) return undefined;
+      return CC.confirmDialog("Folder isn't private", UNSAFE_TEXT, "Start anyway");
+    }
+    async function launchWindow(path) {
+      const ok = await confirmUnsafe(path);
+      if (ok === false) return;
+      await guarded(() => api("/api/projects/launch", { path, resume: false, prompt: "", allow_unsafe: ok === true }));
+    }
+
     // ---- vendored xterm, loaded on first use ------------------------------------------
 
     let xtermReady = null;
@@ -144,10 +161,11 @@
       return s;
     }
 
-    function connect(s, { resume = false, attach = false } = {}) {
+    function connect(s, { resume = false, attach = false, unsafe = false } = {}) {
       clearTimeout(s.timer);
       const dims = s.term.cols && s.term.rows ? { cols: s.term.cols, rows: s.term.rows } : { cols: 120, rows: 30 };
       const q = new URLSearchParams({ path: s.path, resume: resume ? "1" : "0", attach: attach ? "1" : "0", cols: dims.cols, rows: dims.rows });
+      if (unsafe && !attach) q.set("unsafe", "1");
       const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/claude?${q}`);
       ws.binaryType = "arraybuffer";
       s.ws = ws;
@@ -200,6 +218,7 @@
           break;
         case "error":
           s.alive = false; s.ended = true;
+          if (msg.code === "unsafe_folder") { const p = projectFor(s.path); if (p) p.writable_by_others = true; }
           s.term.write(`\r\n\x1b[38;2;255;92;122m${String(msg.message || "Error").replace(/[\x00-\x1f\x7f]/g, " ")}\x1b[0m\r\n`);
           render();
           break;
@@ -214,16 +233,21 @@
       const p = projectFor(path);
       let s = findSession(path);
       if (s && (s.alive || (s.ws && !s.started))) { activate(s.path); return; }
-      if (s) dropSession(s.path, true);
       if (state.serverSessions.filter((x) => x.alive).length >= 6 && !state.serverSessions.some((x) => x.alive && samePath(x.path, path))) {
         CC.showMessage("Too many sessions", "6 Claude sessions are already running. End one first.");
         return;
       }
+      const running = state.serverSessions.some((x) => x.alive && samePath(x.path, path));
+      const unsafe = running ? undefined : await confirmUnsafe(path);
+      if (unsafe === false) return;
+      s = findSession(path);  // the dialog was open for a while
+      if (s && (s.alive || (s.ws && !s.started))) { activate(s.path); return; }
+      if (s) dropSession(s.path, true);
       s = createTerminal(p ? p.path : path, p ? p.name : path.split(/[\\/]/).pop());
       state.sessions.set(s.path, s);
       activate(s.path);
       s.alive = true;
-      connect(s, { resume });
+      connect(s, { resume, unsafe: unsafe === true });
       setTimeout(refreshSessions, 1500);
     }
 
@@ -356,13 +380,15 @@
     function projectCard(p) {
       const live = state.serverSessions.find((x) => samePath(x.path, p.path) && x.alive);
       const isActive = samePath(state.active, p.path);
-      return el("li", { class: `pj-card${isActive ? " selected" : ""}${live ? " live" : ""}`, title: p.path },
+      return el("li", { class: `pj-card${isActive ? " selected" : ""}${live ? " live" : ""}${p.writable_by_others ? " unsafe" : ""}`, title: p.path },
         el("div", { class: "pj-card-main" },
           el("div", { class: "pj-card-top" },
             el("span", { class: "title pj-name" }, p.name),
             live && el("span", { class: "tag live" }, "live"),
             p.branch && el("span", { class: "chip pj-branch", title: "Git branch" }, "⎇ ", p.branch),
-            p.git && p.changed_files > 0 && el("span", { class: "tag pj-dirty", title: `${p.changed_files} changed file(s)` }, `${p.changed_files} changed`)),
+            p.git && p.changed_files > 0 && el("span", { class: "tag pj-dirty", title: `${p.changed_files} changed file(s)` }, `${p.changed_files} changed`),
+            p.writable_by_others && el("span", { class: "tag pj-unsafe-tag", title: "Other accounts on this PC can modify this folder" }, "not private")),
+          p.writable_by_others && unsafeNote(),
           p.last_commit
             ? el("div", { class: "pj-commit", title: p.last_commit }, el("span", { class: "pj-commit-msg" }, p.last_commit), el("span", { class: "pj-when" }, ago(p.last_commit_at)))
             : el("div", { class: "pj-commit muted" }, p.git ? "No commits yet" : "Not a git repo", p.modified && el("span", { class: "pj-when" }, `edited ${ago(p.modified)}`)),
@@ -370,7 +396,7 @@
         el("div", { class: "pj-actions" },
           el("button", { class: "small primary", title: "Open Claude Code here, inside Command Center", onclick: () => openSession(p.path) }, live ? "Show" : "Claude"),
           !live && el("button", { class: "small", title: "Continue the most recent conversation in this folder (claude --continue)", onclick: () => openSession(p.path, { resume: true }) }, "Resume last"),
-          el("button", { class: "small alt", title: "Open Claude in a separate Windows Terminal window", onclick: () => guarded(() => api("/api/projects/launch", { path: p.path, resume: false, prompt: "" })) }, "New window"),
+          el("button", { class: "small alt", title: "Open Claude in a separate Windows Terminal window", onclick: () => launchWindow(p.path) }, "New window"),
           el("button", { class: "small subtle", title: "Open the folder in Explorer", onclick: () => guarded(() => api("/api/projects/folder", { path: p.path })) }, "Folder")));
     }
 
@@ -416,10 +442,11 @@
     let emptyKey = "";
     function renderEmpty(ap) {
       const live = ap && state.serverSessions.some((x) => x.alive && samePath(x.path, ap.path));
-      const key = `${ap ? ap.path + "|" + ap.name : ""}|${state.checked}|${live}|${!!state.claude || !state.loaded}`;
+      const unsafe = !!(ap && projectFor(ap.path) && projectFor(ap.path).writable_by_others);
+      const key = `${ap ? ap.path + "|" + ap.name : ""}|${state.checked}|${live}|${!!state.claude || !state.loaded}|${unsafe}`;
       if (key === emptyKey) return;
       emptyKey = key;
-      const mark = el("div", { class: "pj-empty-mark" }, "◢◤");
+      const mark = el("img", { class: "pj-empty-mark", src: "/static/jc-logo.svg", alt: "" });
       if (!ap) {
         ui.empty.replaceChildren(mark,
           el("div", { class: "pj-empty-title" }, "Choose what you're working on"),
@@ -434,11 +461,12 @@
       ui.empty.replaceChildren(mark,
         el("div", { class: "pj-empty-title" }, `Claude isn't running in ${ap.name}`),
         el("div", { class: "pj-empty-path muted" }, ap.path),
+        ...(unsafe ? [unsafeNote()] : []),  // replaceChildren would render a bare `false` as text
         el("div", { class: "pj-start-row" },
           el("button", { type: "button", class: "primary pj-start", onclick: () => openSession(ap.path) }, `Start Claude in ${ap.name}`),
           el("button", { type: "button", title: "Continue the most recent conversation in this folder (claude --continue)", onclick: () => openSession(ap.path, { resume: true }) }, "Resume last"),
           el("button", { type: "button", class: "alt", title: "Open Claude in a separate Windows Terminal window",
-            onclick: () => guarded(() => api("/api/projects/launch", { path: ap.path, resume: false, prompt: "" })) }, "New window")),
+            onclick: () => launchWindow(ap.path) }, "New window")),
         el("div", { class: "muted" }, "Sessions keep running when you switch tabs or close the window; End session stops them."),
         KEYS());
     }
@@ -458,7 +486,7 @@
         ui.path = el("span", { class: "pj-path muted" });
         ui.restart = el("button", { class: "small primary", hidden: true, onclick: () => state.active && openSession(state.active) }, "Start again");
         ui.window = el("button", { class: "small alt", hidden: true, title: "Open Claude for this project in a separate Windows Terminal window",
-          onclick: () => state.active && guarded(() => api("/api/projects/launch", { path: state.active, resume: false, prompt: "" })) }, "New window");
+          onclick: () => state.active && launchWindow(state.active) }, "New window");
         ui.end = el("button", { class: "small subtle", hidden: true, onclick: () => {
           const s = findSession(state.active);
           if (!s) return;

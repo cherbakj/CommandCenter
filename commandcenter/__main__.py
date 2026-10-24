@@ -40,7 +40,10 @@ def main():
     args = parser.parse_args()
 
     config.load()
-    handlers = [logging.FileHandler(config.DATA_DIR / "commandcenter.log", encoding="utf-8")]
+    from logging.handlers import RotatingFileHandler
+    # ~5 MB per file, 3 old files kept (commandcenter.log.1 .. .3)
+    handlers = [RotatingFileHandler(config.DATA_DIR / "commandcenter.log", maxBytes=5 * 1024 * 1024, backupCount=3,
+                                    encoding="utf-8")]
     if sys.stderr:  # pythonw has no console
         handlers.append(logging.StreamHandler())
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)

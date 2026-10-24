@@ -11,6 +11,7 @@
   document.head.append(link);
 
   let profile = null, presets = {};
+  let panelClose = null;  // aborts the open panel's "close" listener when the panel is rebuilt
   const avatar = el("button", { class: "pf-avatar", title: "Profile and appearance", "aria-label": "Profile and appearance", onclick: () => openPanel() }, "JC");
 
   const rgb = (hex) => { const n = parseInt(hex.slice(1), 16); return `${n >> 16} ${(n >> 8) & 255} ${n & 255}`; };
@@ -65,10 +66,11 @@
 
     const swatches = el("div", { class: "pf-presets" }, [...Object.entries(presets), ["custom", { label: "Custom" }]].map(([key, pr]) => {
       const b = el("button", { type: "button", class: `pf-preset ${draft.preset === key ? "on" : ""}`, "data-key": key,
+        "aria-pressed": String(draft.preset === key), title: pr.label,
         onclick: () => {
           draft.preset = key;
           if (pr.accent) { draft.accent = pr.accent; draft.accent2 = pr.accent2; accent.value = pr.accent; accent2.value = pr.accent2; }
-          swatches.querySelectorAll(".pf-preset").forEach((x) => x.classList.toggle("on", x.dataset.key === key));
+          markPreset(key);
           preview();
         } },
         el("span", { class: "pf-sw" }, el("i", {}), el("i", {})), pr.label);
@@ -77,10 +79,13 @@
       c.style.background = pr.accent2 || draft.accent2;
       return b;
     }));
-    const markCustom = () => {
-      draft.preset = "custom";
-      swatches.querySelectorAll(".pf-preset").forEach((x) => x.classList.toggle("on", x.dataset.key === "custom"));
-    };
+    function markPreset(key) {
+      swatches.querySelectorAll(".pf-preset").forEach((x) => {
+        x.classList.toggle("on", x.dataset.key === key);
+        x.setAttribute("aria-pressed", String(x.dataset.key === key));
+      });
+    }
+    const markCustom = () => { draft.preset = "custom"; markPreset("custom"); };
     accent.addEventListener("input", () => { draft.accent = accent.value; markCustom(); preview(); });
     accent2.addEventListener("input", () => { draft.accent2 = accent2.value; markCustom(); preview(); });
     scale.addEventListener("input", () => { draft.text_scale = Number(scale.value); scaleOut.textContent = `${scale.value}%`; preview(); });
@@ -91,7 +96,9 @@
 
     const dialog = document.querySelector("#dialog");
     let saved = false;
-    dialog.addEventListener("close", () => { if (!saved) apply(profile); }, { once: true });  // cancel = revert preview
+    panelClose?.abort();
+    panelClose = new AbortController();
+    dialog.addEventListener("close", () => { if (!saved) apply(profile); }, { once: true, signal: panelClose.signal });  // cancel = revert preview
 
     const save = () => guarded(async () => {
       try {
@@ -102,10 +109,29 @@
       apply(profile);
       dialog.close();
     });
-    const reset = () => guarded(async () => {
-      if (!await CC.confirmDialog("Reset appearance", "Go back to the default Neon Green look?", "Reset")) return;
-      profile = (await api("/api/profile/reset", {})).profile;
+    // The reset confirm sits inside the panel (a separate dialog would replace the panel, and cancelling
+    // it would close everything). After a reset the panel reopens with the default values.
+    const buttons = () => [
+      el("button", { type: "button", class: "subtle", onclick: askReset }, "Reset to default"),
+      el("button", { value: "cancel", class: "subtle" }, "Cancel"),
+      el("button", { type: "button", class: "primary", onclick: save }, "Save profile")];
+    const row = el("div", { class: "row pf-actions" }, buttons());
+    function askReset() {
+      const keep = el("button", { type: "button", class: "subtle", onclick: () => { row.classList.remove("pf-confirm"); row.replaceChildren(...buttons()); } }, "Keep my look");
+      row.classList.add("pf-confirm");
+      row.replaceChildren(
+        el("span", { class: "pf-confirm-text", role: "alert" }, "Reset colors, text size and effects to the default Neon Green look?"),
+        keep,
+        el("button", { type: "button", class: "danger-solid", onclick: doReset }, "Reset"));
+      keep.focus();
+    }
+    const doReset = () => guarded(async () => {
+      try {
+        profile = (await api("/api/profile/reset", {})).profile;
+      } catch (e) { err.textContent = e.message; err.hidden = false; return; }
+      saved = true;
       apply(profile);
+      openPanel();  // same dialog, rebuilt with the reset values
     });
 
     CC.wideDialog(
@@ -123,11 +149,7 @@
           el("div", { class: "pf-toggles" }, toggle("glow", "Glow effects"), toggle("scanlines", "Scanlines"), toggle("grid", "Background grid"),
             toggle("animations", "Animations"), toggle("splash", "Launch animation")),
           el("p", { class: "muted" }, "Changes preview live. Saved only on this PC."))),
-      err,
-      el("div", { class: "row" },
-        el("button", { type: "button", class: "subtle", onclick: reset }, "Reset to default"),
-        el("button", { value: "cancel", class: "subtle" }, "Cancel"),
-        el("button", { type: "button", class: "primary", onclick: save }, "Save profile")));
+      err, row);
   }
 
   CC.addPaletteSource(() => [{ group: "Commands", label: "Profile and appearance", hint: "colors, text size, effects", run: openPanel }]);

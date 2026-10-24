@@ -71,8 +71,9 @@ def raise_alert(source: str, title: str, body: str = "", priority: str = "normal
     """priority: low | normal | high. action: optional dict the dashboard turns into a button.
     In focus mode only high-priority alerts pop up; everything still lands in the feed."""
     settings = config.section("alerts", {})
-    db.add_alert(source, title, body, priority, action)
-    log.info("[%s] %s: %s", priority, source, title)
+    alert_id = db.add_alert(source, title, body, priority, action)
+    # Titles and bodies can be email subjects, names or ticket text: the log gets only the id, source and priority.
+    log.info("Alert %s raised (source=%s, priority=%s)", alert_id, source, priority)
     if priority != "high" and focus_state()["active"]:
         return
     if settings.get("toast", True) and priority != "low":

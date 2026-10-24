@@ -16,7 +16,12 @@
 
     const BUSY = ["downloading", "installing", "starting"];
     const LABELS = { stopped: "Stopped", downloading: "Downloading", installing: "Installing", starting: "Starting", ready: "Running", error: "Error" };
-    const state = { projects: [], status: { status: "stopped" }, folder: null, openFolder: null, timer: null, section: null };
+    const state = { projects: [], status: { status: "stopped" }, folder: null, openFolder: null, timer: null, section: null,
+      unsafeOk: new Set() };  // folders other accounts can modify that Joe confirmed opening (this page load only)
+    // Same rule as the Claude tab: VS Code and the Claude Code extension run tasks, hooks, settings and MCP
+    // servers from the folder, so a folder other Windows accounts can change needs an explicit confirmation,
+    // sent as allow_unsafe (the server refuses without it).
+    const UNSAFE_TEXT = "Other accounts on this PC can modify this folder — Claude hooks/settings there could run code as you. Open it anyway?";
     const ui = {};
 
     const store = {
@@ -41,13 +46,15 @@
       ui.chip = el("span", { class: "chip vsc-state" }, ui.dot, "Stopped");
       ui.reload = el("button", { class: "small subtle", title: "Reload the VS Code page", onclick: () => reloadFrame() }, "Reload");
       ui.where = el("span", { class: "vsc-where muted" });
+      ui.warn = el("span", { class: "vsc-unsafe", role: "alert", hidden: true, title: "Claude hooks/settings in this folder could run code as you" },
+        "⚠ Other accounts on this PC can modify this folder");
       ui.stage = el("div", { class: "vsc-stage" });
       ui.frameWrap = el("div", { class: "vsc-frame-wrap" }, ui.stage);
 
       section.append(el("div", { class: "panel vsc-panel" },
         el("div", { class: "panel-head vsc-head" },
           el("span", { class: "panel-label" }, "VS.CODE // WEB"),
-          ui.select, ui.open, ui.where,
+          ui.select, ui.open, ui.warn, ui.where,
           el("span", { class: "spacer" }),
           ui.chip, ui.reload, ui.power),
         ui.frameWrap));
@@ -56,11 +63,21 @@
 
     const samePath = (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase();
     const known = (path) => state.projects.find((p) => samePath(p.path, path));
+    const isUnsafe = (path) => !!(known(path) && known(path).writable_by_others);
+
+    // true when the folder may be opened (private, or confirmed once on this page), false if Joe cancelled.
+    async function confirmUnsafe(folder) {
+      const key = String(folder || "").toLowerCase();
+      if (!isUnsafe(folder) || state.unsafeOk.has(key)) return true;
+      if (!(await CC.confirmDialog("Folder isn't private", UNSAFE_TEXT, "Open anyway"))) return false;
+      state.unsafeOk.add(key);
+      return true;
+    }
 
     function fillProjects() {
       // Default: the global "Working on:" project, then the last one opened here.
       const active = CC.activeProject?.path;
-      const want = state.folder || (active && known(active) ? active : store.get("cc.vscode.folder"));
+      const want = state.folder || (active && known(active) ? active : state.cleared ? null : store.get("cc.vscode.folder"));
       const opts = state.projects.map((p) => el("option", { value: p.path, title: p.path }, p.name));
       ui.select.replaceChildren(el("option", { value: "" }, state.projects.length ? "Choose a project…" : "No projects found"), ...opts);
       const hit = known(want);
@@ -71,8 +88,16 @@
     // Follow the global project selector. Never starts the server; if VS Code is already showing a
     // project, it switches to the new one.
     document.addEventListener("cc:project", (e) => {
-      const hit = known(e.detail?.path);
+      if (!e.detail || !e.detail.path) {  // WORKING ON cleared: clear the picker too (an open VS Code page stays)
+        state.folder = null;
+        state.cleared = true;  // and don't bring the last folder back when the list reloads
+        if (ui.select) ui.select.value = "";
+        updateButtons();
+        return;
+      }
+      const hit = known(e.detail.path);
       if (!hit) return;
+      state.cleared = false;
       state.folder = hit.path;
       if (ui.select) ui.select.value = hit.path;
       store.set("cc.vscode.folder", hit.path);
@@ -87,6 +112,7 @@
       ui.open.disabled = !state.folder || BUSY.includes(s);
       ui.open.textContent = s === "ready" ? "Open in VS Code" : "Start + open";
       ui.reload.hidden = !ui.frame;
+      ui.warn.hidden = !isUnsafe(state.folder);
       ui.chip.lastChild.textContent = LABELS[s] || s;
       ui.dot.className = "dot" + (s === "ready" ? " ok" : "");
       ui.chip.classList.toggle("bad", s === "error");
@@ -174,6 +200,7 @@
 
     async function openSelected() {
       if (!state.folder) return;
+      if (!(await confirmUnsafe(state.folder))) return;
       const s = state.status.status;
       if (s === "ready") return openFolder(state.folder);
       state.pendingOpen = state.folder;
@@ -184,7 +211,21 @@
     }
 
     async function openFolder(folder) {
-      const r = await api(`/api/vscode/url?folder=${encodeURIComponent(folder)}`);
+      if (!(await confirmUnsafe(folder))) return;
+      const allow = state.unsafeOk.has(String(folder).toLowerCase());
+      let r;
+      try {
+        r = await api(`/api/vscode/url?folder=${encodeURIComponent(folder)}${allow ? "&allow_unsafe=true" : ""}`);
+      } catch (e) {
+        // The list was out of date: the server found the folder isn't private. Ask, then try once more.
+        if (allow || !/Other accounts on this PC/.test(e.message)) throw e;
+        const p = known(folder);
+        if (p) p.writable_by_others = true;
+        updateButtons();
+        if (!(await CC.confirmDialog("Folder isn't private", UNSAFE_TEXT, "Open anyway"))) return;
+        state.unsafeOk.add(String(folder).toLowerCase());
+        r = await api(`/api/vscode/url?folder=${encodeURIComponent(folder)}&allow_unsafe=true`);
+      }
       if (!ui.frame) {
         ui.frame = el("iframe", {
           class: "vsc-frame", title: "VS Code", referrerpolicy: "no-referrer",

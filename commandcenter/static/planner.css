@@ -3,11 +3,11 @@
 .pl-toolbar { flex-wrap: wrap; }
 .pl-legend { display: inline-flex; flex-wrap: wrap; gap: .2rem; margin-left: .6rem; }
 .pl-note:empty { display: none; }
-.pl-grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); }
-@container (min-width: 2300px) { .pl-grid { grid-template-columns: repeat(10, minmax(0, 1fr)); } }
-@container (min-width: 1200px) and (max-width: 2299px) { .pl-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+/* Day columns are never narrower than ~17rem: fewer columns (more rows) in a narrow pane. */
+.pl-grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); }
 
 .pl-day {
+  container-type: inline-size;
   display: flex; flex-direction: column; gap: .5rem; min-width: 0; padding: .7rem .75rem .8rem;
   background: var(--panel); border: 1px solid var(--line);
   clip-path: polygon(0 0, calc(100% - .7rem) 0, 100% .7rem, 100% 100%, 0 100%);
@@ -25,6 +25,14 @@
 .pl-block-label { font: 700 .66rem var(--font-ui); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: .2rem; }
 .pl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .3rem; }
 .pl-list li { display: grid; grid-template-columns: 4.3rem minmax(0, 1fr); gap: .1rem .45rem; padding: .35rem .4rem; background: rgb(0 0 0 / .3); border-left: 3px solid var(--line-strong); }
+.pl-list li.no-time { grid-template-columns: minmax(0, 1fr); }
+.pl-list li.no-time .pl-acts { grid-column: 1; }
+/* Narrow day card: the time sits on its own small line above the title, so titles get the full width. */
+@container (max-width: 21rem) {
+  .pl-list li { grid-template-columns: minmax(0, 1fr); }
+  .pl-list li .pl-acts { grid-column: 1; }
+  .pl-time { padding-top: 0; }
+}
 .pl-time { font: 600 .78rem var(--font-mono); color: var(--accent-2); padding-top: .1rem; }
 .pl-body { min-width: 0; }
 .pl-title { font-weight: 600; font-size: .92rem; color: #f3fbf5; overflow-wrap: anywhere; }
@@ -35,7 +43,13 @@
 .pl-mtg.tentative { border-left-style: dashed !important; }
 .pl-item { border-left-color: var(--amber) !important; }
 .pl-item.overdue { border-left-color: var(--red) !important; }
-.pl-item .pl-time { color: var(--amber); font-size: .72rem; }
+.pl-item .pl-time { color: var(--amber); }
+.pl-due {
+  display: inline-block; margin-right: .4rem; padding: 0 .35rem; font: 700 .64rem/1.5 var(--font-ui); letter-spacing: .06em;
+  text-transform: uppercase; white-space: nowrap; color: var(--amber); border: 1px dashed rgb(var(--amber-rgb) / .6); vertical-align: .08rem;
+}
+.pl-due.late { color: var(--red); border-color: rgb(var(--red-rgb) / .7); }
+.pl-wkd { margin-left: .4rem; padding: 0 .3rem; font: 700 .6rem var(--font-ui); letter-spacing: .1em; color: var(--muted); border: 1px solid var(--line-soft); vertical-align: .1rem; }
 .pl-personal { border-left-color: var(--hot) !important; cursor: pointer; }
 .pl-personal:hover, .pl-personal:focus-visible { background: rgb(var(--hot-rgb) / .1) !important; }
 .pl-personal .pl-time { color: var(--hot); }

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Command Center repo guard: local-only hook (not pushed). Checks every commit about to be pushed
+# that isn't already on a remote, including commits made with --no-verify.
+zero=0000000000000000000000000000000000000000
+commits=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue          # deleting a remote branch
+    commits="$commits $(git rev-list "$local_sha" --not --remotes)"
+done
+[ -z "$(echo $commits)" ] && exit 0
+exec sh "$(git rev-parse --git-common-dir)/hooks/command-center-guard.sh" commits $commits
