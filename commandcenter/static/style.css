@@ -105,7 +105,7 @@ nav button.active { color: var(--on-accent); background: var(--accent); box-shad
 .win-btn[aria-pressed="true"] { color: var(--accent-2); border-color: rgb(var(--accent-2-rgb) / .6); }
 .restart-overlay { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: rgb(2 4 6 / .88); backdrop-filter: blur(4px); }
 .restart-box { display: flex; flex-direction: column; align-items: center; gap: .8rem; font: 700 1.2rem var(--font-ui); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
-.restart-mark { font: 900 3rem var(--font-display); text-shadow: var(--glow); animation: blink 1s steps(2) infinite; }
+.restart-mark { width: 4rem; height: 4rem; filter: drop-shadow(0 0 .8rem rgb(var(--accent-rgb) / .6)); animation: blink 1s steps(2) infinite; }
 .status { display: flex; gap: .5rem; font: 600 .74rem var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .status > span { border: 1px solid var(--line); padding: .25rem .55rem; background: rgb(var(--accent-rgb) / .03); white-space: nowrap; }
 .dot { display: inline-block; width: .45rem; height: .45rem; margin-right: .4rem; background: var(--muted); transform: rotate(45deg); }

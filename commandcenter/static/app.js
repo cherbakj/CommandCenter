@@ -1857,7 +1857,7 @@ $("#win-lock").addEventListener("click", async () => {
 $("#win-restart").addEventListener("click", async () => {
   if (!await confirmDialog("Restart Command Center?", "The app closes and opens again. Claude sessions and the VS Code server stop.", "Restart")) return;
   const overlay = el("div", { class: "restart-overlay", role: "status", "aria-live": "assertive" },
-    el("div", { class: "restart-box" }, el("div", { class: "restart-mark" }, "◢◤"), el("div", {}, "Restarting…")));
+    el("div", { class: "restart-box" }, el("img", { class: "restart-mark", src: "/static/jc-logo.svg", alt: "" }), el("div", {}, "Restarting…")));
   document.body.append(overlay);
   try { await api("/api/app/restart", {}); } catch (e) { overlay.remove(); showMessage("Restart", e.message); }
 });
