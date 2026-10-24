@@ -40,6 +40,59 @@ def unmute(sender):
     db.kv_set("followups:muted", [m for m in muted() if m != sender.strip().lower()])
 
 
+# ---- snooze and no-reply reminders -------------------------------------------
+
+def snoozes() -> dict:
+    return db.kv_get("snoozes", {})
+
+
+def snooze(item_id, until, info):
+    s = snoozes()
+    s[item_id] = {"until": until, **{k: info.get(k, "") for k in ("subject", "who", "kind")}}
+    db.kv_set("snoozes", s)
+
+
+def unsnooze(item_id):
+    s = snoozes()
+    s.pop(item_id, None)
+    db.kv_set("snoozes", s)
+
+
+def reply_watches() -> list[dict]:
+    return db.kv_get("reply_watches", [])
+
+
+def watch_for_reply(info, days, entry_id):
+    """Remind me in `days` days if nobody has answered this thread by then."""
+    now = datetime.now()
+    watches = [w for w in reply_watches() if w["conversation"] != info["conversation"]]
+    watches.append({"conversation": info["conversation"], "subject": info["subject"], "to": info["to"],
+                    "id": entry_id, "since": now.isoformat(timespec="seconds"),
+                    "due": (now + timedelta(days=float(days))).isoformat(timespec="seconds")})
+    db.kv_set("reply_watches", watches)
+
+
+async def _check_snoozes_and_reminders():
+    now = datetime.now().isoformat(timespec="seconds")
+    s = snoozes()
+    for item_id, info in list(s.items()):
+        if info["until"] <= now:
+            s.pop(item_id)
+            alerts.raise_alert("Snooze", f"Back from snooze: {info['subject']}", info.get("who", ""), "normal",
+                               {"type": "mail", "id": item_id} if info.get("kind") != "task" else {"type": "today"})
+    db.kv_set("snoozes", s)
+
+    keep = []
+    for w in reply_watches():
+        if w["due"] > now:
+            keep.append(w)
+            continue
+        if not await outlook.call(outlook.conversation_replied, w["conversation"], w["since"]):
+            alerts.raise_alert("Follow-up", f"No reply yet: {w['subject']}", f"To {w['to'][:80]}", "normal",
+                               {"type": "mail", "id": w["id"]})
+    db.kv_set("reply_watches", keep)
+
+
 def _vip_senders() -> list[str]:
     senders = []
     for rule in config.section("outlook", {}).get("rules") or []:
@@ -67,7 +120,9 @@ async def _followups(todo, refresh=False) -> dict:
             cfg.get("min_wait_hours", 4), _vip_senders())
         _followup_cache["at"] = time.time()
     raw = _followup_cache["data"]
-    hidden_ids, mutes = set(dismissed()), muted()
+    now = datetime.now().isoformat(timespec="seconds")
+    hidden_ids = set(dismissed()) | {i for i, v in snoozes().items() if v["until"] > now}
+    mutes = muted()
     out = {k: [i for i in v if _keep(i, cfg, hidden_ids, mutes)] for k, v in raw.items()}
 
     # Flagged mail: skip automated senders and old flags; overdue first, then newest.
@@ -112,6 +167,8 @@ async def build(refresh=False) -> dict:
             asana_state["error"] = asana_rows["error"]
         else:
             tasks += asana_rows
+    snoozed_now = {i for i, v in snoozes().items() if v["until"] > datetime.now().isoformat(timespec="seconds")}
+    tasks = [t for t in tasks if t["id"] not in snoozed_now]
     tasks.sort(key=lambda t: (t["due"] is None, t["due"] or "", t["subject"].lower()))
 
     return {
@@ -120,6 +177,8 @@ async def build(refresh=False) -> dict:
         "agenda": agenda,
         "tasks": {"items": tasks, "asana": asana_state, "error": todo.get("error")},
         "followups": followups,
+        "snoozed": len(snoozes()),
+        "reply_watches": len(reply_watches()),
     }
 
 
@@ -174,6 +233,12 @@ async def _wrapup(now):
 async def briefing_loop():
     """Morning briefing at today.briefing_time and end-of-day wrap-up at today.wrapup_time, once each per day."""
     while True:
+        try:
+            await _check_snoozes_and_reminders()
+        except outlook.OutlookClosed:
+            pass
+        except Exception:
+            log.exception("Snooze/reminder check failed")
         try:
             cfg = config.section("today", {})
             now = datetime.now()

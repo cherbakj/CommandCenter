@@ -81,7 +81,7 @@ outlook:
       keywords: ["urgent", "asap", "PO#"]
       priority: normal
   meetings:
-    remind_minutes: [10, 1]             # pop-ups this many minutes before a meeting
+    remind_minutes: [10, 1]             # pop-ups this many minutes before a meeting (the first one has a Prep button)
 
 # ---------------------------------------------------------------------------
 # Websites - read a value from a page and alert when it changes.
@@ -130,8 +130,18 @@ sql:
       # auth: windows                   # use this instead of username for Windows login
       trust_server_certificate: true    # typical for internal servers
   queries:
-    - name: Example - find by ID
+    - name: Find order                 # used by order lookups (see orders: below)
       connection: main
-      description: Replace with a real table and column
-      sql: SELECT TOP 50 * FROM dbo.YourTable WHERE Id = ?
-      params: [ID]
+      description: Order status by order number - replace table/columns with your real ones
+      sql: SELECT TOP 20 * FROM dbo.YourOrdersTable WHERE OrderNumber = ?
+      params: [Order number]
+
+# ---------------------------------------------------------------------------
+# Order lookups: copy an order number anywhere (or open an email that mentions one)
+# and Command Center looks it up with the saved query above.
+# ---------------------------------------------------------------------------
+orders:
+  watch_clipboard: true
+  lookup_query: Find order
+  # pattern: a custom regex for your order numbers (default: 7-10 digits, with or without "Order #")
+  summary_columns: []                  # e.g. [Status, ShipDate, Total]; empty = first 4 columns

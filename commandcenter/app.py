@@ -1,7 +1,9 @@
 """FastAPI app: JSON API + the dashboard page. Listens on 127.0.0.1 only."""
 import asyncio
+import importlib
 import logging
 import os
+import re
 import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,18 +12,37 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import alerts, config, db, today
+from . import alerts, config, db, orders, today
 from .connectors import asana, outlook, sql, teams, web
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 
 
+def _load_feature_modules():
+    """Optional feature modules (each in its own file) that add API routes and background jobs."""
+    found = []
+    for name in ("security", "toolkit", "pulse", "terminal", "vscode"):
+        try:
+            found.append(importlib.import_module(f".{name}", __package__))
+        except ModuleNotFoundError as e:
+            if e.name != f"{__package__}.{name}":
+                raise  # a real import error inside the module
+    return found
+
+
+FEATURE_MODULES = _load_feature_modules()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.prune_seen()
     tasks = [asyncio.create_task(outlook.watch_loop()), asyncio.create_task(web.watch_loop()),
-             asyncio.create_task(today.briefing_loop()), asyncio.create_task(teams.watch_loop())]
+             asyncio.create_task(today.briefing_loop()), asyncio.create_task(teams.watch_loop()),
+             asyncio.create_task(orders.clipboard_loop())]
+    for module in FEATURE_MODULES:
+        for job in getattr(module, "background", []):
+            tasks.append(asyncio.create_task(job()))
     alerts.raise_alert("Command Center", "Started", "Watching Outlook and websites.", "low")
     yield
     for t in tasks:
@@ -223,8 +244,11 @@ async def mail_item(id: str):
 
 
 @app.post("/api/mail/reply")
-async def mail_reply(id: str = Body(...), text: str = Body(...), reply_all: bool = Body(False), send: bool = Body(True)):
-    await outlook.call(outlook.reply, id, text, reply_all, send)
+async def mail_reply(id: str = Body(...), text: str = Body(...), reply_all: bool = Body(False), send: bool = Body(True),
+                     remind_days: float = Body(0)):
+    info = await outlook.call(outlook.reply, id, text, reply_all, send)
+    if send and remind_days > 0:
+        today.watch_for_reply(info, remind_days, id)
     return {"ok": True}
 
 
@@ -249,6 +273,91 @@ async def outlook_open(id: str = Body(..., embed=True)):
 @app.get("/api/meetings")
 async def meetings(hours: int = 24):
     return {"meetings": await outlook.call(outlook.upcoming_meetings, min(hours, 24 * 14))}
+
+
+@app.get("/api/meetings/prep")
+async def meeting_prep(id: str):
+    return await outlook.call(outlook.meeting_prep, id)
+
+
+@app.post("/api/calendar/block")
+async def calendar_block(subject: str = Body(...), start: str = Body(...), minutes: int = Body(60), notes: str = Body("")):
+    if not 5 <= minutes <= 600:
+        raise HTTPException(400, "Pick a length between 5 minutes and 10 hours")
+    return {"ok": True, "id": await outlook.call(outlook.create_block, subject, start, minutes, notes)}
+
+
+# ---- snooze / reminders --------------------------------------------------------
+
+@app.get("/api/snoozes")
+async def get_snoozes():
+    return {"snoozes": today.snoozes(), "reply_watches": today.reply_watches()}
+
+
+@app.post("/api/snooze")
+async def snooze(id: str = Body(...), until: str = Body(...), subject: str = Body(""), who: str = Body(""), kind: str = Body("mail")):
+    today.snooze(id, until, {"subject": subject, "who": who, "kind": kind})
+    return {"ok": True}
+
+
+@app.post("/api/unsnooze")
+async def unsnooze(id: str = Body(..., embed=True)):
+    today.unsnooze(id)
+    return {"ok": True}
+
+
+@app.post("/api/reply-watch")
+async def reply_watch(id: str = Body(...), days: float = Body(2)):
+    info = await outlook.call(outlook.conversation_of, id)
+    today.watch_for_reply(info, days, id)
+    return {"ok": True}
+
+
+# ---- orders --------------------------------------------------------------------
+
+@app.get("/api/orders/lookup")
+async def order_lookup(number: str):
+    if not number.isdigit():
+        raise HTTPException(400, "Order numbers are digits only")
+    return await asyncio.to_thread(orders.lookup, number)
+
+
+@app.get("/api/orders/status")
+async def order_status():
+    return {"problem": await asyncio.to_thread(orders.ready),
+            "pattern": orders.settings().get("pattern", orders.DEFAULT_PATTERN)}
+
+
+# ---- launch bar ----------------------------------------------------------------
+
+DEFAULT_LAUNCHER = [{"name": "Pulse", "url": "https://pulse.sonance.com"}, {"name": "Asana", "url": "https://app.asana.com"}]
+LAUNCH_TARGET = re.compile(r"^(https?://\S+|msteams:\S*|[A-Za-z]:\\.+|\\\\[^\\]+\\.+)$")
+
+
+@app.get("/api/launcher")
+async def get_launcher():
+    return {"items": db.kv_get("launcher", DEFAULT_LAUNCHER)}
+
+
+@app.post("/api/launcher")
+async def save_launcher(items: list = Body(..., embed=True)):
+    clean = []
+    for i in items[:24]:
+        name, url = str(i.get("name", "")).strip()[:40], str(i.get("url", "")).strip()
+        if not name or not LAUNCH_TARGET.match(url):
+            raise HTTPException(400, f"{name or 'Link'}: use a web address (https://...) or a folder/file path (C:\\... or \\\\server\\share)")
+        clean.append({"name": name, "url": url})
+    db.kv_set("launcher", clean)
+    return {"items": clean}
+
+
+@app.post("/api/launcher/open")
+async def open_launcher(index: int = Body(..., embed=True)):
+    items = db.kv_get("launcher", DEFAULT_LAUNCHER)
+    if not 0 <= index < len(items):
+        raise HTTPException(404, "No such launch button")
+    await asyncio.to_thread(os.startfile, items[index]["url"])
+    return {"ok": True}
 
 
 # ---- websites ----------------------------------------------------------------
@@ -311,3 +420,37 @@ async def sql_tables(connection: str):
 @app.get("/api/sql/preview")
 async def sql_preview(connection: str, table: str):
     return await asyncio.to_thread(sql.preview, connection, table)
+
+
+# ---- projects (Claude Code) ------------------------------------------------------
+
+@app.get("/api/projects")
+async def get_projects():
+    from . import projects
+    return {"projects": await asyncio.to_thread(projects.list_projects), "claude": await asyncio.to_thread(projects.claude_path),
+            "roots": [str(r) for r in projects.roots()]}
+
+
+@app.post("/api/projects/launch")
+async def launch_project(path: str = Body(...), resume: bool = Body(False), prompt: str = Body("")):
+    from . import projects
+    await asyncio.to_thread(projects.launch, path, resume, prompt)
+    return {"ok": True}
+
+
+@app.post("/api/projects/folder")
+async def open_project_folder(path: str = Body(..., embed=True)):
+    from . import projects
+    await asyncio.to_thread(projects.open_folder, path)
+    return {"ok": True}
+
+
+@app.post("/api/projects/new")
+async def new_project(name: str = Body(..., embed=True)):
+    from . import projects
+    return await asyncio.to_thread(projects.create, name)
+
+
+for _module in FEATURE_MODULES:
+    if hasattr(_module, "router"):
+        app.include_router(_module.router)

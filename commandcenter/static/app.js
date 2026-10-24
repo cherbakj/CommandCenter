@@ -69,13 +69,14 @@ function confirmDialog(title, text, okLabel = "OK") {
 // ---- tabs --------------------------------------------------------------------
 
 const loaders = {};
-document.querySelectorAll("nav button").forEach((b) =>
-  b.addEventListener("click", () => {
-    document.querySelectorAll("nav button, .tab").forEach((x) => x.classList.remove("active"));
-    b.classList.add("active");
-    $(`#tab-${b.dataset.tab}`).classList.add("active");
-    loaders[b.dataset.tab]?.();
-  }));
+document.querySelector("nav").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tab]");
+  if (!b) return;
+  document.querySelectorAll("nav button, .tab").forEach((x) => x.classList.remove("active"));
+  b.classList.add("active");
+  $(`#tab-${b.dataset.tab}`).classList.add("active");
+  loaders[b.dataset.tab]?.();
+});
 
 function openTab(name) { document.querySelector(`nav button[data-tab="${name}"]`).click(); }
 
@@ -675,9 +676,14 @@ $("#teams-send").addEventListener("click", () => openTeamsChat($("#teams-to").va
 
 const pal = { items: [], active: 0, mail: [], seq: 0, timer: null };
 
+const extraPaletteSources = [];
+
 function paletteSources() {
   const out = [];
   const add = (group, label, hint, run) => out.push({ group, label, hint: hint || "", run });
+  for (const source of extraPaletteSources) {
+    try { for (const i of source() || []) add(i.group || "Commands", i.label, i.hint, i.run); } catch { /* module not ready */ }
+  }
   const tabs = { today: "Today", alerts: "Alerts", mail: "Mail", calendar: "Calendar", teams: "Teams", websites: "Websites", sql: "SQL" };
   for (const [k, v] of Object.entries(tabs)) add("Commands", `Go to ${v}`, "tab", () => openTab(k));
   add("Commands", "New task", "Outlook or Asana", () => newTaskDialog());
@@ -806,3 +812,28 @@ async function refresh() {
 tickClock();
 refresh().then(() => loaders.today());
 setInterval(refresh, 5000);
+
+
+// ---- plug-in API for feature modules (static/<module>.js) ----------------------
+// A module adds its own tab and palette entries without editing this file:
+//   CC.registerTab({ id: "toolkit", label: "Toolkit", render(section) {...}, onShow() {...} })
+//   CC.addPaletteSource(() => [{ group: "Toolkit", label: "...", hint: "...", run() {...} }])
+window.CC = {
+  $, el, api, guarded, fill, when, timeOf, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
+  get todayData() { return todayData; },
+  registerTab({ id, label, render, onShow, before }) {
+    if (document.querySelector(`#tab-${id}`)) return;
+    const nav = document.querySelector("nav");
+    const button = el("button", { "data-tab": id }, label);
+    const ref = before ? nav.querySelector(`button[data-tab="${before}"]`) : null;
+    ref ? nav.insertBefore(button, ref) : nav.append(button);
+    const section = el("section", { id: `tab-${id}`, class: "tab" });
+    document.querySelector("main").append(section);
+    render?.(section);
+    if (onShow) loaders[id] = onShow;
+  },
+  addPaletteSource(fn) { extraPaletteSources.push(fn); },
+  wideDialog(...content) { $("#dialog").classList.add("wide"); showDialog(...content); },
+};
+$("#dialog").addEventListener("close", () => $("#dialog").classList.remove("wide"));
+document.dispatchEvent(new Event("cc:ready"));

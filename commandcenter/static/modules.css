@@ -1,0 +1,2 @@
+/* Styles shared by feature modules. Each module may also add its own <module>.css via a <link> it injects. */
+dialog.wide { width: min(64rem, 94vw); }

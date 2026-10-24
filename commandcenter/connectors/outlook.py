@@ -28,6 +28,8 @@ OL_FOLDER_TODO = 28
 OL_MAIL = 43
 OL_TASK = 48
 OL_TASK_ITEM = 3
+OL_APPOINTMENT_ITEM = 1
+OL_BUSY = 2
 OL_MARK_NO_DATE = 4
 OL_FLAG_COMPLETE = 1
 OL_IMPORTANCE_HIGH = 2
@@ -217,7 +219,8 @@ def _meetings(start, end) -> list[dict]:
 
 # ---- actions -----------------------------------------------------------------
 
-def reply(entry_id, text, reply_all=False, send=True):
+def reply(entry_id, text, reply_all=False, send=True) -> dict:
+    """Returns the conversation and recipients, so a no-reply reminder can watch the thread."""
     item = _ns().GetItemFromID(entry_id)
     msg = item.ReplyAll() if reply_all else item.Reply()
     if msg.BodyFormat == OL_FORMAT_HTML:
@@ -225,10 +228,88 @@ def reply(entry_id, text, reply_all=False, send=True):
         msg.HTMLBody = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + snippet, msg.HTMLBody, count=1, flags=re.I)
     else:
         msg.Body = text + "\n\n" + msg.Body
+    info = {"conversation": msg.ConversationID, "subject": msg.Subject or "", "to": msg.To or ""}
     if send:
         msg.Send()
     else:
         msg.Display(False)
+    return info
+
+
+def conversation_of(entry_id) -> dict:
+    item = _ns().GetItemFromID(entry_id)
+    return {"conversation": item.ConversationID, "subject": item.Subject or "", "to": item.To or ""}
+
+
+def conversation_replied(conversation_id, since_iso) -> bool:
+    """True if anything arrived in the inbox for this conversation after `since_iso`."""
+    since = datetime.fromisoformat(since_iso)
+    for item in _iter_inbox(2000):
+        if _local_time(item.ReceivedTime) < since:
+            return False
+        if item.ConversationID == conversation_id:
+            return True
+    return False
+
+
+def create_block(subject, start_iso, minutes, notes="") -> str:
+    """Books time on your calendar (shown as busy, 5-minute reminder)."""
+    appt = _ns().Application.CreateItem(OL_APPOINTMENT_ITEM)
+    appt.Subject = subject
+    appt.Start = datetime.fromisoformat(start_iso)
+    appt.Duration = int(minutes)
+    appt.BusyStatus = OL_BUSY
+    appt.ReminderSet = True
+    appt.ReminderMinutesBeforeStart = 5
+    if notes:
+        appt.Body = notes
+    appt.Save()
+    return appt.EntryID
+
+
+RESPONSES = {0: "none", 1: "organizer", 2: "tentative", 3: "accepted", 4: "declined", 5: "no response"}
+
+
+def _agenda_text(body) -> str:
+    # Drop the Teams join boilerplate that Outlook appends to meeting bodies.
+    body = re.split(r"_{10,}|Microsoft Teams (?:meeting|Need help)|Join on your computer", body or "", maxsplit=1)[0]
+    return re.sub(r"\n{3,}", "\n\n", body).strip()[:800]
+
+
+def meeting_prep(entry_id, days=21) -> dict:
+    """Attendees, the meeting's own notes, and recent mail with the attendees."""
+    item = _ns().GetItemFromID(entry_id)
+    _, me_smtp = _me()
+    attendees = []
+    for r in item.Recipients:
+        if r.Type == 3:  # room / resource
+            continue
+        email = ""
+        try:
+            entry = r.AddressEntry
+            user = entry.GetExchangeUser() if entry else None
+            email = (user.PrimarySmtpAddress if user else r.Address) or ""
+        except pywintypes.com_error:
+            email = r.Address or ""
+        key = (email or r.Name or "").lower()
+        if email.lower() == me_smtp or any((a["email"] or a["name"]).lower() == key for a in attendees):
+            continue
+        attendees.append({"name": r.Name or email, "email": email, "optional": r.Type == 2,
+                          "response": RESPONSES.get(r.MeetingResponseStatus, "none")})
+
+    recent = []
+    names = [a["name"].replace("'", "''") for a in attendees if a["name"]][:8]
+    if names:
+        since = (datetime.now() - timedelta(days=days)).strftime("%m/%d/%Y %I:%M %p")
+        who_in = " OR ".join(f'"urn:schemas:httpmail:fromname" LIKE \'%{n}%\'' for n in names)
+        who_out = " OR ".join(f'"urn:schemas:httpmail:displayto" LIKE \'%{n}%\'' for n in names)
+        recent = (_mail_rows(OL_FOLDER_INBOX, f'@SQL=("urn:schemas:httpmail:datereceived" >= \'{since}\') AND ({who_in})', "ReceivedTime", 8)
+                  + _mail_rows(OL_FOLDER_SENT, f'@SQL=("urn:schemas:httpmail:date" >= \'{since}\') AND ({who_out})', "SentOn", 8))
+        recent = sorted(recent, key=lambda m: m["received"] or "", reverse=True)[:10]
+    link = TEAMS_LINK.search(item.Body or "")
+    return {"id": entry_id, "subject": item.Subject or "(no subject)", "organizer": item.Organizer or "",
+            "location": item.Location or "", "join_url": link.group(0) if link else None,
+            "agenda": _agenda_text(item.Body), "attendees": attendees, "recent_mail": recent}
 
 
 def set_read(entry_id, read=True):
@@ -473,7 +554,7 @@ async def watch_loop():
                 )
             for m, minutes in await call(scan_meetings):
                 when = "now" if minutes == 0 else f"in {minutes} min"
-                action = {"type": "meeting", "id": m["id"], "join_url": m["join_url"]}
+                action = {"type": "meeting", "id": m["id"], "join_url": m["join_url"], "prep": True}
                 alerts.raise_alert("Calendar", f"{m['subject']} starts {when}", m["location"], "high", action)
             db.kv_set("outlook:status", {"ok": True, "checked": db.now()})
         except Exception as e:

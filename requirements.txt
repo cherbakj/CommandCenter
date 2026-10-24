@@ -9,3 +9,4 @@ windows-toasts
 pystray
 pillow
 pywebview
+pywinpty

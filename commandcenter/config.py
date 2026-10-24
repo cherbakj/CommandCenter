@@ -1,4 +1,5 @@
 """Loads config.yaml (created from config.example.yaml on first run)."""
+import os
 import shutil
 from pathlib import Path
 
@@ -18,6 +19,8 @@ def load() -> dict:
         shutil.copy(EXAMPLE_PATH, CONFIG_PATH)
     with open(CONFIG_PATH, encoding="utf-8") as f:
         _config = yaml.safe_load(f) or {}
+    if os.environ.get("CC_PORT"):  # lets a second copy (tests) run beside the real one
+        _config.setdefault("server", {})["port"] = int(os.environ["CC_PORT"])
     DATA_DIR.mkdir(exist_ok=True)
     return _config
 
