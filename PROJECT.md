@@ -38,7 +38,7 @@ setting in it has a comment. Click **Reload config** in the dashboard afterwards
 - **Outlook watchdog:** if Outlook is closed it's restarted (`outlook.auto_start`). The app never Dispatches a hidden Outlook (`_ns()` only attaches to a running one).
 - **Teams tab:** unread count from a background browser on Teams web (profile `teams`, read from the page title), the missed-activity emails, and "Open chat in Teams" through `msteams:` deep links (opened with `/api/open` → `os.startfile`). Chat buttons also appear on emails and needs-reply follow-ups. Polling only starts after you log in on the Teams tab.
 - **Layout:** fluid rem sizing (root font scales with the window). Three columns that fill the screen with no page scroll at ≥2200px wide and ≥2:1 aspect (the user's 34" ultrawide). Two columns on standard monitors, one on narrow. Lists use container queries so buttons wrap below the text in narrow columns.
-- **Theme:** dark HUD with neon green accent (`ui.accent` in config; any hex), cyan secondary.
+- **Theme:** dark HUD with neon green accent (`ui.accent` in config; any hex), cyan secondary. Fonts for legibility: Orbitron only for big numbers and the logo, Chakra Petch for labels, buttons and nav, Exo 2 for reading text, JetBrains Mono for data.
 
 ## How each connection works
 | Source | How | Notes |
@@ -63,7 +63,7 @@ setting in it has a comment. Click **Reload config** in the dashboard afterwards
 - Cylance blocks `.ps1` files, so nothing here uses PowerShell scripts. Run everything through `run.cmd` or `.venv\Scripts\python.exe`.
 - Outlook COM calls must stay on one thread. Always go through `outlook.call()`.
 - For bulk Outlook reads, use `_table_rows()` (Folder.GetTable). Walking Items took 38 s for this mailbox. The To-Do folder ignores GetTable filters, so filter in Python.
-- The UI uses a dark HUD theme: Orbitron, Rajdhani and JetBrains Mono from Google Fonts, falling back to system fonts when offline.
+- Fonts come from Google Fonts (Orbitron, Chakra Petch, Exo 2, JetBrains Mono) and fall back to Segoe UI / Consolas when offline.
 
 ## Ideas for later
 - SQL watches: run a saved query on a schedule and alert when it returns rows
