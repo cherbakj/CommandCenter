@@ -35,6 +35,27 @@
         el("button", { class: "small subtle", title: "Open in Outlook", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open")));
   }
 
+  // An event from an overlay calendar (Google / iCloud), drawn in that calendar's color.
+  function overlayTag(name, color) {
+    const tag = el("span", { class: "src pl-ovl-tag", title: `${name}: read-only overlay calendar` }, name);
+    tag.style.color = color;
+    return tag;
+  }
+
+  function overlayRow(e) {
+    const now = new Date();
+    const live = !e.all_day && new Date(e.start) <= now && now < new Date(e.end);
+    const li = el("li", { class: `pl-ovl ${live ? "live" : ""} ${!e.all_day && new Date(e.end) <= now ? "past" : ""}` },
+      el("div", { class: "pl-time" }, e.all_day ? "All day" : clock(e.start)),
+      el("div", { class: "pl-body" },
+        el("div", { class: "pl-title" }, e.title),
+        el("div", { class: "muted src-line" }, overlayTag(e.calendar, e.color),
+          [e.all_day ? "" : `until ${clock(e.end)}`, e.location].filter(Boolean).join(" · "))));
+    li.style.borderLeftColor = e.color;
+    li.style.setProperty("--ovl", e.color);
+    return li;
+  }
+
   const ITEM_LABEL = { task: "Due", flag: "Due",  // the source tag already says To Do / Flagged
     snooze: "Snooze ends", "reply-watch": "Reply check" };
   const shortDay = (iso) => dayDate(iso).toLocaleDateString([], { month: "short", day: "numeric" });
@@ -81,7 +102,14 @@
     const date = dayDate(d.date);
     const isToday = d.date === isoDay(new Date());
     const weekend = [0, 6].includes(date.getDay());
-    const meetings = [...d.meetings].sort((a, b) => (b.all_day - a.all_day) || a.start.localeCompare(b.start));
+    // Outlook meetings and overlay-calendar events share one timeline, all-day items first.
+    const overlays = d.overlays || [];
+    const meetings = [...d.meetings.map((m) => ({ m })), ...overlays.map((e) => ({ e }))]
+      .sort((a, b) => {
+        const x = a.m || a.e, y = b.m || b.e;
+        return (y.all_day - x.all_day) || x.start.localeCompare(y.start);
+      })
+      .map((row) => (row.m ? meetingRow(row.m) : overlayRow(row.e)));
     const block = (label, rows, cls) => rows.length ? el("div", { class: `pl-block ${cls}` }, el("div", { class: "pl-block-label" }, label), el("ul", { class: "pl-list" }, rows)) : null;
     return el("article", { class: `pl-day ${isToday ? "today" : ""} ${weekend ? "weekend" : ""}` },
       el("header", { class: "pl-day-head" },
@@ -91,10 +119,11 @@
           el("div", { class: "pl-date" }, date.toLocaleDateString([], { month: "short", day: "numeric" }))),
         el("div", { class: "pl-counts" },
           d.meetings.length ? el("span", { class: "chip", title: "Outlook meetings" }, `${d.meetings.length} mtg`) : null,
+          overlays.length ? el("span", { class: "chip pl-chip-ovl", title: "Events from your other calendars" }, `${overlays.length} other`) : null,
           d.items.length ? el("span", { class: "chip pl-chip-fu", title: "Follow-ups" }, `${d.items.length} f/u`) : null),
         el("button", { class: "icon subtle", title: "Add a personal entry (stays on this PC)", "aria-label": `Add personal entry on ${d.date}`,
           onclick: () => personalDialog({ day: d.date, all_day: true }) }, "+")),
-      block("Outlook", meetings.map(meetingRow), "pl-b-mtg"),
+      block(overlays.length ? "Calendar" : "Outlook", meetings, "pl-b-mtg"),
       block("Follow-ups", d.items.map(itemRow), "pl-b-fu"),
       block("Personal", d.personal.map(personalRow), "pl-b-personal"),
       !meetings.length && !d.items.length && !d.personal.length ? el("div", { class: "pl-free" }, weekend ? "Weekend" : "Open day") : null);
@@ -141,14 +170,94 @@
     title.focus();
   }
 
+  // ---- overlay calendars (Google / iCloud iCal links) ----------------------------------------------
+  let calendars = [], palette = [];
+  let legendCals;
+
+  function renderLegend() {
+    legendCals.replaceChildren(...calendars.map((c) => {
+      const chip = el("button", { type: "button", class: `pl-cal-chip ${c.enabled ? "" : "off"}`, "aria-pressed": String(!!c.enabled),
+        title: `${c.enabled ? "Hide" : "Show"} ${c.name}${c.error ? ` (problem: ${c.error})` : ""}`,
+        onclick: () => guarded(async () => { await api("/api/feeds/update", { id: c.id, enabled: !c.enabled }); await load(); }) },
+        el("i", {}), c.name, c.error ? el("span", { class: "pl-cal-warn" }, "!") : null);
+      chip.querySelector("i").style.background = c.color;
+      return chip;
+    }));
+  }
+
+  function calendarsDialog() {
+    const name = el("input", { id: "cal-name", placeholder: "e.g. Family (Google), Kids (iCloud)", maxlength: "40" });
+    const color = el("input", { id: "cal-color", type: "color", value: palette[calendars.length % (palette.length || 1)] || "#ff9f43" });
+    const url = el("input", { id: "cal-url", type: "password", placeholder: "Paste the private iCal link (https://… or webcal://…)", autocomplete: "off", spellcheck: "false" });
+    const err = el("p", { class: "err", hidden: true });
+    const list = el("ul", { class: "list pl-cal-list" });
+    const fill = () => list.replaceChildren(...(calendars.length ? calendars.map((c) => {
+      const swatch = el("input", { type: "color", value: c.color, title: "Change color", "aria-label": `Color for ${c.name}` });
+      swatch.addEventListener("change", () => guarded(async () => { await api("/api/feeds/update", { id: c.id, color: swatch.value }); await refreshList(); }));
+      const on = el("input", { type: "checkbox", title: "Show on the calendar", "aria-label": `Show ${c.name}` });
+      on.checked = !!c.enabled;
+      on.addEventListener("change", () => guarded(async () => { await api("/api/feeds/update", { id: c.id, enabled: on.checked }); await refreshList(); }));
+      return el("li", {},
+        swatch,
+        el("div", { class: "grow" },
+          el("div", { class: "title" }, c.name, el("span", { class: "tag" }, c.kind)),
+          el("div", { class: c.error ? "err" : "muted" }, c.error || (c.count != null ? `${c.count} upcoming event(s) · checked ${c.fetched ? CC.when(c.fetched) : "—"}` : "Not checked yet"))),
+        el("label", { class: "pl-check" }, on, "Show"),
+        el("button", { type: "button", class: "small subtle", onclick: () => guarded(async () => {
+          if (!await CC.confirmDialog("Remove calendar", `Remove "${c.name}" from Command Center? (Nothing changes in the calendar itself.)`, "Remove")) return calendarsDialog();
+          await api("/api/feeds/delete", { id: c.id });
+          await refreshList(true);
+          calendarsDialog();
+        }) }, "Remove"));
+    }) : [el("li", { class: "empty" }, "No overlay calendars yet. Add one below.")]));
+    const refreshList = async (silent) => {
+      const data = await api("/api/feeds");
+      calendars = data.feeds; palette = data.colors;
+      fill(); renderLegend();
+      if (!silent) load();
+    };
+    const add = () => guarded(async () => {
+      err.hidden = true;
+      if (!name.value.trim() || !url.value.trim()) { err.textContent = "Enter a name and paste the calendar's iCal link."; err.hidden = false; return; }
+      try {
+        const r = await api("/api/feeds", { name: name.value, url: url.value, color: color.value });
+        url.value = ""; name.value = "";
+        CC.showMessage("Calendar added", `${r.feed.name} is on your calendar (${r.upcoming} event(s) in the next two weeks).`);
+        await refreshList(true);
+        load();
+      } catch (e) { err.textContent = e.message; err.hidden = false; }
+    });
+    fill();
+    CC.wideDialog(el("h3", {}, "Overlay calendars"),
+      el("p", { class: "muted" }, "Read-only: Command Center only reads these calendars. Nothing is added to them or copied to Outlook. Links are kept in Windows Credential Manager; events stay in memory."),
+      list,
+      el("div", { class: "panel-label gap" }, "Add a calendar"),
+      el("div", { class: "pl-cal-add" },
+        el("label", { class: "field-label", for: "cal-name" }, "Name"), name,
+        el("label", { class: "field-label", for: "cal-color" }, "Color"), color,
+        el("label", { class: "field-label", for: "cal-url" }, "Private iCal link"), url),
+      el("details", { class: "pl-help" },
+        el("summary", {}, "Where do I find the link?"),
+        el("p", {}, el("b", {}, "Google Calendar (Gmail): "), "On a computer open calendar.google.com → Settings (gear) → under \"Settings for my calendars\" pick the calendar → Integrate calendar → copy \"Secret address in iCal format\". Repeat for each calendar you want (e.g. family calendars Skylight shows)."),
+        el("p", {}, el("b", {}, "iCloud: "), "In the Calendar app (iPhone: Calendars → ⓘ next to the calendar) turn on \"Public Calendar\" and copy the link (starts with webcal://). Note: anyone with that link can view the calendar, so keep it private."),
+        el("p", {}, el("b", {}, "Skylight: "), "Skylight shows calendars that live in Google or iCloud. Add those same calendars here.")),
+      err,
+      el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Close"),
+        el("button", { type: "button", class: "primary", onclick: add }, "Add calendar")));
+    name.focus();
+  }
+
   function render(section) {
     note = el("div", { class: "muted pl-note" });
     grid = el("div", { class: "pl-grid" }, el("div", { class: "muted" }, "Loading the next 10 days…"));
+    legendCals = el("span", { class: "pl-legend pl-legend-cals" });
     section.replaceChildren(
       el("div", { class: "toolbar pl-toolbar" },
         el("span", { class: "panel-label" }, `Next ${DAYS} days`),
         el("span", { class: "pl-legend" }, CC.srcTag("calendar"), CC.srcTag("meeting"), CC.srcTag("todo"), CC.srcTag("flagged"), personalTag()),
+        legendCals,
         el("span", { class: "spacer" }),
+        el("button", { class: "small alt", onclick: calendarsDialog }, "Calendars"),
         el("button", { class: "small", onclick: () => personalDialog({ day: isoDay(new Date()), all_day: true }) }, "+ Personal"),
         el("button", { class: "small", onclick: () => load() }, "↻ Refresh")),
       note, grid);
@@ -157,8 +266,12 @@
   async function load() {
     if (!grid) return;
     await guarded(async () => {
-      const data = await api(`/api/planner?days=${DAYS}`);
-      note.textContent = data.outlook_error ? `Outlook: ${data.outlook_error}` : "";
+      const [data, cals] = await Promise.all([api(`/api/planner?days=${DAYS}`), api("/api/feeds")]);
+      calendars = cals.feeds; palette = cals.colors;
+      renderLegend();
+      const problems = (data.calendars || []).filter((c) => c.error)
+        .map((c) => `${(calendars.find((x) => x.id === c.id) || {}).name || "Calendar"}: ${c.error}`);
+      note.textContent = [data.outlook_error ? `Outlook: ${data.outlook_error}` : "", ...problems].filter(Boolean).join(" · ");
       grid.replaceChildren(...data.days.map(dayCard));
     });
   }
@@ -174,6 +287,7 @@
   CC.addPaletteSource(() => [
     { group: "Commands", label: "Add personal calendar entry", hint: "private, this PC only", run: () => personalDialog({ day: isoDay(new Date()), all_day: true }) },
     { group: "Commands", label: "Calendar: next 10 days", hint: "", run: () => CC.openTab("calendar") },
+    { group: "Commands", label: "Add a Google / iCloud calendar", hint: "read-only overlay", run: () => { CC.openTab("calendar"); calendarsDialog(); } },
   ]);
   document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", mount, { once: true }) : mount();
 })();

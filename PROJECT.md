@@ -37,6 +37,7 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
   - **VIP unread.**
   - **Actions:** Snooze, Dismiss, Mute, Mark urgent. No-reply reminders, and urgent escalation after `urgent_escalate_hours`.
 - **Source tags:** every item shows where it came from (Outlook / Sent / Flagged / Teams / Calendar / To Do / Asana / Pulse / SQL / Website / Personal), with the sender address.
+- **Overlay calendars (`feeds.py`):** read-only iCal feeds (Google Calendar "Secret address in iCal format", iCloud public calendar links; Skylight's source calendars), color-coded on the 10-day calendar with a legend to show/hide each. Manage via Calendar > Calendars. Links are stored only in Credential Manager (`CommandCenter-Calendars`); https only, public hosts only, 10 MB cap, events cached in memory for 15 min, never written to Outlook or disk.
 - **Calendar (`planner.py`):**
   - Outlook meetings for the next 10 days, including all-day events.
   - Dated follow-ups: tasks, flags due, snoozes, reply checks.
@@ -75,7 +76,7 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - **Dev bypass:** `CC_DEV_NO_AUTH=1` works in `serve` mode only and logs a warning.
 
 ## Code layout
-- `commandcenter/app.py`: core routes. Auto-loads the feature modules security, toolkit, pulse, terminal, vscode, planner and profile (each exposes `router` and optionally `background`).
+- `commandcenter/app.py`: core routes. Auto-loads the feature modules security, toolkit, pulse, terminal, vscode, planner, profile and feeds (each exposes `router` and optionally `background`).
 - `commandcenter/connectors/`: outlook, web, sql, asana, weather, teams. `people.py` handles internal domains and urgent people.
 - `commandcenter/static/`:
   - Core UI: `app.js`, `style.css`, `index.html`.

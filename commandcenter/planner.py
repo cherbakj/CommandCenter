@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 import win32crypt
 from fastapi import APIRouter, Body, HTTPException
 
-from . import db, today
+from . import db, feeds, today
 from .connectors import asana, outlook
 
 router = APIRouter(prefix="/api/planner")
@@ -128,17 +128,23 @@ async def planner(days: int = 10):
         meetings, outlook_error = [], str(e).splitlines()[0] if str(e) else "Outlook unavailable"
     dated = await _dated_items(first, last)
     personal = await asyncio.to_thread(personal_between, first, last)
+    overlays, overlay_status = await feeds.events_between(first, last)
+
+    def on_day(ev, d):  # an all-day event's end is exclusive (midnight of the next day)
+        end_day = (datetime.fromisoformat(ev["end"]) - timedelta(minutes=1)).date().isoformat() if ev["all_day"] else ev["end"][:10]
+        return ev["start"][:10] <= d <= max(end_day, ev["start"][:10])
+
     out = []
     for i in range(days):
         d = (first + timedelta(days=i)).isoformat()
         out.append({
             "date": d,
-            "meetings": [m for m in meetings if m["start"][:10] <= d <= (m["end"][:10] if not m["all_day"] else
-                         (datetime.fromisoformat(m["end"]) - timedelta(minutes=1)).date().isoformat())],
+            "meetings": [m for m in meetings if on_day(m, d)],
+            "overlays": sorted((e for e in overlays if on_day(e, d)), key=lambda e: (not e["all_day"], e["start"])),
             "items": [x for x in dated if x["day"] == d],
             "personal": [p for p in personal if p["day"] == d],
         })
-    return {"days": out, "outlook_error": outlook_error}
+    return {"days": out, "outlook_error": outlook_error, "calendars": overlay_status}
 
 
 @router.post("/personal")
