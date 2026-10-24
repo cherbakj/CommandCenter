@@ -1,6 +1,7 @@
 """Current weather by zip code. zippopotam.us turns the zip into coordinates and Open-Meteo
 supplies the forecast. Both are free and need no key."""
 import json
+import re
 import time
 import urllib.request
 from datetime import datetime
@@ -50,16 +51,42 @@ def _location(zip_code, country) -> dict:
     return loc
 
 
-def current() -> dict:
+def locations() -> list[dict]:
+    """The places the weather panel can switch between: today.zip first, then today.weather_locations."""
     cfg = config.section("today", {})
-    zip_code = str(cfg.get("zip", "")).strip()
+    home = str(cfg.get("zip", "")).strip()
+    known = db.kv_get(f"weather:loc:{cfg.get('country', 'us')}:{home}") or {}
+    places = [{"name": known.get("name", "Home").split(",")[0], "zip": home}] if home else []
+    for p in cfg.get("weather_locations") or []:
+        z = str(p.get("zip", "")).strip()
+        if re.fullmatch(r"\d{5}", z) and z not in [x["zip"] for x in places]:
+            places.append({"name": str(p.get("name") or z)[:30], "zip": z})
+    return places
+
+
+def selected_zip() -> str:
+    zips = [p["zip"] for p in locations()]
+    chosen = db.kv_get("weather:selected")
+    return chosen if chosen in zips else (zips[0] if zips else "")
+
+
+def select(zip_code: str):
+    if zip_code not in [p["zip"] for p in locations()]:
+        raise ValueError("Pick one of the configured weather locations")
+    db.kv_set("weather:selected", zip_code)
+
+
+def current(zip_code: str | None = None) -> dict:
+    cfg = config.section("today", {})
+    zip_code = zip_code or selected_zip()
     if not zip_code:
         raise ValueError("Set today.zip in config.yaml")
     country = cfg.get("country", "us")
     units = cfg.get("units", "fahrenheit")
     cache_key = (zip_code, country, units)
-    if _cache.get("key") == cache_key and time.time() - _cache["at"] < CACHE_SECONDS:
-        return _cache["data"]
+    cached = _cache.get(cache_key)
+    if cached and time.time() - cached["at"] < CACHE_SECONDS:
+        return cached["data"]
 
     loc = _location(zip_code, country)
     wind = "mph" if units == "fahrenheit" else "kmh"
@@ -90,6 +117,7 @@ def current() -> dict:
         "rain_chance": daily["precipitation_probability_max"][0],
         "sunrise": daily["sunrise"][0], "sunset": daily["sunset"][0],
         "hours": hours,
+        "locations": locations(), "selected": zip_code,
     }
-    _cache.update(key=cache_key, at=time.time(), data=data)
+    _cache[cache_key] = {"at": time.time(), "data": data}
     return data

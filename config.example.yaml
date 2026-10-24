@@ -15,7 +15,9 @@ browser:
 # Today tab: weather, agenda, tasks, follow-ups
 # ---------------------------------------------------------------------------
 today:
-  zip: "92630"
+  zip: "92630"              # Lake Forest (home)
+  weather_locations:       # extra places the weather panel can switch to
+    - {name: San Clemente, zip: "92673"}
   country: us
   units: fahrenheit        # or celsius
   briefing_time: "07:30"   # morning pop-up summary of your day; "" to turn off
@@ -38,6 +40,10 @@ followups:
   awaiting_reply_days: 7   # sent mail with no answer, looking back this many days
   min_wait_hours: 4        # give people this long before it counts as "no reply"
   needs_reply_days: 5      # mail sent to you that you haven't replied to
+  needs_reply_scope: internal          # internal = only coworkers (internal_domains); all = anyone
+  internal_domains: ["sonance.com"]
+  urgent_people: []                    # names or emails; also editable in the app (Follow-ups > Urgent people)
+  urgent_escalate_hours: 4             # one high-priority reminder if an urgent message is still unanswered
   flagged_days: 30         # flagged mail older than this (and not due) is hidden
   ignore_subjects:         # regular expressions; matching mail never shows as a follow-up
     - "^Junk:"
@@ -128,7 +134,7 @@ sql:
       database: YourDatabase
       username: your_sql_login
       # auth: windows                   # use this instead of username for Windows login
-      trust_server_certificate: true    # typical for internal servers
+      trust_server_certificate: false   # verify the server (this PC trusts Sonance's corp CAs)
   queries:
     - name: Find order                 # used by order lookups (see orders: below)
       connection: main
@@ -145,3 +151,87 @@ orders:
   lookup_query: Find order
   # pattern: a custom regex for your order numbers (default: 7-10 digits, with or without "Order #")
   summary_columns: []                  # e.g. [Status, ShipDate, Total]; empty = first 4 columns
+
+# ---------------------------------------------------------------------------
+# Projects tab: your code folders, each with an embedded Claude Code terminal.
+# A project is any direct sub-folder of a root, plus each folder listed under extra.
+# Nothing outside these locations can be opened. %USERPROFILE% and ~ are expanded.
+# ---------------------------------------------------------------------------
+projects:
+  roots:
+    - C:\Sonance\internal
+    - '%USERPROFILE%\source'
+  extra:                               # single project folders that aren't under a root
+    - '%USERPROFILE%\Desktop\Cherbak''s Toolkit'
+  # claude_path: C:\path\to\claude.exe # default: claude on PATH, else the copy inside the VS Code extension
+
+# ---------------------------------------------------------------------------
+# Pulse feedback tickets (pulse.sonance.com), read-only. Command Center reads the
+# data_reviews table in Pulse's Supabase Postgres as a dedicated read-only login
+# (commandcenter_ro) that can only SELECT the ticket columns. Connect it on the Pulse
+# tab: the password goes to Windows Credential Manager (CommandCenter-Pulse) only.
+# host/port/database/user are saved by the setup card; values here are just defaults.
+# ---------------------------------------------------------------------------
+pulse:
+  enabled: true
+  url: https://pulse.sonance.com       # ticket links: <url>/feedback?ticket=<number>
+  poll_minutes: 2
+  me: [joec@sonance.com, Joe.Cherbak]  # your Pulse names: tickets you filed/closed count as yours
+  high_priority_types: [Bug, DataIssue]  # Pulse has no priority field; these types are "high"
+  recent_days: 7                       # resolved tickets stay visible to the poller this long
+  alert_new: true                      # alert when a new ticket lands on you
+  alert_changes: true                  # alert when one of yours changes status or priority
+  # host: aws-0-us-west-1.pooler.supabase.com   # Supabase > Connect > Session pooler
+  # port: 5432
+  # database: postgres
+  # user: commandcenter_ro.<project ref>
+  # ssl_root_cert: system              # or the path of Supabase's CA .crt (Database settings > SSL)
+
+# ---------------------------------------------------------------------------
+# Toolkit tab (formerly "Cherbak's Toolkit"): EDI ship mapping, SPS carrier lookup,
+# Logi users and the customer tree. It EDITS LIVE PRODUCTION DATA over a SQL login.
+# The password is never stored here: enter it on Toolkit > Connection and it goes to
+# Windows Credential Manager (service "CommandCenter-Toolkit", user "<username>@<server>").
+# Values entered on Toolkit > Connection override the ones below.
+# Every change is confirmed in the UI and logged to data/commandcenter.db (toolkit_changes).
+# ---------------------------------------------------------------------------
+toolkit:
+  server: YOURSERVER.example.com       # SQL Server host (VPN must be up)
+  username: your_sql_login             # SQL login (not Windows auth)
+  driver: ODBC Driver 18 for SQL Server   # or ODBC Driver 17 for SQL Server
+  encrypt: true                        # Driver 18 encrypts by default...
+  trust_server_certificate: false      # verify the server certificate (this PC trusts Sonance's corp CAs)
+  databases:
+    staging: FS92STG                   # sps.SHIPPING_ACCOUNT / SHIPPING_METHOD, sps.document, customer tree
+    logi: Logi                         # dbo.Users, dbo.Roles, dbo.Rights
+    sys: FS92SYS                       # customer tree access table
+  shipping_schema: sps
+  dash_table: PS_ZZ_DASH_USERS_2025    # customer tree access table in the sys database
+  tree:                                # dashBoard.rsTreeStructureByUser(user, tree, setid, as_of)
+    user: DANA1
+    tree: DI_CUST_ROLLUP
+    setid: IT
+    as_of: 12/31/2026
+
+# ---------------------------------------------------------------------------
+# Security. The app only answers this Windows account on this PC (127.0.0.1, same-user check,
+# per-launch session cookie). These switches are here in case you need them; leave them on.
+# ---------------------------------------------------------------------------
+security:
+  unlock_on_start: true                # Windows Hello (or your Windows password if Hello isn't set up)
+                                       # the first time the window opens after the app starts.
+                                       # No idle re-lock: lock Windows (Win+L) when you walk away.
+  same_user_check: true                # refuse connections from processes of other Windows accounts
+
+# ---------------------------------------------------------------------------
+# VS Code tab: the real VS Code (web) with the Claude Code extension, embedded.
+# Starts only when you press Start; runs on 127.0.0.1 with a new secret token each time.
+# Its server, settings and extensions live in data/vscode (separate from desktop VS Code).
+# Every setting below is optional - the defaults work.
+# ---------------------------------------------------------------------------
+vscode:
+  extensions: [anthropic.claude-code]  # installed into web VS Code on first start (Marketplace, or your desktop copy offline)
+  # port: 37150                        # fixed port; default is a random free one, picked once and reused
+                                       # (VS Code web keeps settings and folder trust per port)
+  # install_dir: C:\Users\you\AppData\Local\Programs\Microsoft VS Code   # desktop VS Code, used to match its version
+  # commit: <40-char commit>           # pin a specific VS Code build instead of matching desktop VS Code

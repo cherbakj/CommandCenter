@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="JC">
+  <!-- JC monogram: angular J (green) and C (cyan) on a 32-unit grid, angled corners -->
+  <polygon fill="#39ff14" points="4,4 15,4 15,8 12.5,8 12.5,23 8,28 2.5,28 2.5,24 6.5,24 8.5,22 8.5,8 4,8"/>
+  <polygon fill="#00e5ff" points="29.5,4 20.5,4 16.5,8 16.5,24 20.5,28 29.5,28 29.5,24 22.5,24 20.5,22 20.5,10 22.5,8 29.5,8"/>
+</svg>

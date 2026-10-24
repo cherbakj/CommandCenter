@@ -45,10 +45,39 @@ async function guarded(fn) {
   try { await fn(); } catch (e) { showMessage("Error", e.message); }
 }
 
+// Like guarded(), but shows the error inside the open dialog (keeps what the user typed).
+async function guardedIn(errBox, fn) {
+  errBox.textContent = "";
+  try { await fn(); } catch (e) { errBox.textContent = e.message; }
+}
+
+const pad2 = (n) => String(n).padStart(2, "0");
+// Local time as "YYYY-MM-DDTHH:MM:SS" (what the backend expects: no timezone suffix).
+const localIso = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`;
+const localInput = (d) => localIso(d).slice(0, 16);  // value for <input type="datetime-local">
+const roundUp = (d, minutes) => { const ms = minutes * 60000; return new Date(Math.ceil(d.getTime() / ms) * ms); };
+const dayTime = (d) => d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const duration = (mins) => mins >= 60 ? `${Math.floor(mins / 60)}h${mins % 60 ? " " + (mins % 60) + "m" : ""}` : `${mins}m`;
+
+// Opens a web / Teams link through Windows (one tab stop, works the same in the desktop window and a browser).
+function linkButton(url, label, cls = "small") {
+  return el("button", { type: "button", class: cls, onclick: () => openExternal(url) }, label);
+}
+
+// Short, non-blocking confirmation in the corner.
+function toast(text) {
+  let box = $("#toast");
+  if (!box) { box = el("div", { id: "toast", role: "status", "aria-live": "polite" }); document.body.append(box); }
+  box.textContent = text;
+  box.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => box.classList.remove("show"), 3500);
+}
+
 // ---- dialog ------------------------------------------------------------------
 
 function showDialog(...content) {
-  $("#dialog-body").replaceChildren(...content);
+  $("#dialog-body").replaceChildren(...content.flat().filter((c) => c !== null && c !== undefined && c !== false && c !== ""));
   if (!$("#dialog").open) $("#dialog").showModal();
 }
 
@@ -68,17 +97,242 @@ function confirmDialog(title, text, okLabel = "OK") {
 
 // ---- tabs --------------------------------------------------------------------
 
+// Two panes: COMMS (left: messaging and alerts) and WORK (right: Claude, VS Code, tools). Each pane has its
+// own active tab and its own nav group in the header. Below SPLIT_MIN_WIDTH (or when Joe picks "Single")
+// only one pane is shown at a time and the app behaves like a single tabbed page.
+
 const loaders = {};
-document.querySelector("nav").addEventListener("click", (e) => {
+
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* storage blocked */ } },
+};
+
+const SPLIT_MIN_WIDTH = 1600;
+const SPLIT_DEFAULT = 0.44;
+const PANE_OF = {
+  today: "comms", alerts: "comms", mail: "comms", calendar: "comms", teams: "comms",
+  projects: "work", vscode: "work", toolkit: "work", sql: "work", pulse: "work", websites: "work",
+};
+const TAB_ORDER = { comms: ["today", "alerts", "mail", "calendar", "teams"], work: ["projects", "vscode", "toolkit", "sql", "pulse", "websites"] };
+const TAB_ID = /^[a-z0-9_-]{1,40}$/i;
+
+const layout = (() => {
+  let saved = {};
+  try { saved = JSON.parse(store.get("cc.layout.tabs") || "{}") || {}; } catch { saved = {}; }
+  const pick = (v, d) => (typeof v === "string" && TAB_ID.test(v) ? v : d);
+  return {
+    split: false,
+    active: { comms: pick(saved.comms, "today"), work: pick(saved.work, "projects") },
+    shown: saved.shown === "work" ? "work" : "comms",   // the pane shown in single mode
+    visible: new Set(),
+    ready: false,
+  };
+})();
+
+const navButton = (id) => document.querySelector(`.nav-group button[data-tab="${CSS.escape(id)}"]`);
+const paneOf = (id) => navButton(id)?.closest(".nav-group")?.dataset.pane || PANE_OF[id] || null;
+const tabsIn = (pane) => [...document.querySelectorAll(`#pane-${pane} .pane-body > section.tab`)].map((s) => s.id.slice(4));
+
+function saveLayoutTabs() {
+  store.set("cc.layout.tabs", JSON.stringify({ comms: layout.active.comms, work: layout.active.work, shown: layout.shown }));
+}
+
+function wantSplit() {
+  return window.innerWidth >= SPLIT_MIN_WIDTH && store.get("cc.layout.mode") !== "single";
+}
+
+// Puts the classes in line with the layout state. Returns the tabs that just became visible.
+function applyLayout() {
+  layout.split = wantSplit();
+  const main = $("#workspace");
+  main.classList.toggle("ws-split", layout.split);
+  main.classList.toggle("ws-single", !layout.split);
+  document.body.classList.toggle("split-view", layout.split);
+  const nowVisible = new Set();
+  for (const pane of ["comms", "work"]) {
+    const ids = tabsIn(pane);
+    if (!ids.includes(layout.active[pane])) layout.active[pane] = ids[0] || layout.active[pane];
+    const show = layout.split || layout.shown === pane;
+    $(`#pane-${pane}`).classList.toggle("shown", show);
+    for (const id of ids) {
+      const on = show && id === layout.active[pane];
+      $(`#tab-${id}`).classList.toggle("active", on);
+      navButton(id)?.classList.toggle("active", on);
+      navButton(id)?.setAttribute("aria-current", on ? "page" : "false");
+      if (on) nowVisible.add(id);
+    }
+  }
+  const fresh = [...nowVisible].filter((id) => !layout.visible.has(id));
+  layout.visible = nowVisible;
+  const toggle = $("#layout-toggle");
+  toggle.hidden = window.innerWidth < SPLIT_MIN_WIDTH;
+  toggle.textContent = layout.split ? "◧ Split" : "▭ Single";
+  toggle.setAttribute("aria-pressed", String(layout.split));
+  toggle.title = layout.split ? "Two panes: COMMS left, WORK right. Click for a single pane." : "One pane at a time. Click to show COMMS and WORK side by side.";
+  if (layout.split) applySplit();
+  document.dispatchEvent(new CustomEvent("cc:layout", { detail: { split: layout.split } }));
+  return fresh;
+}
+
+function runLoaders(ids) { for (const id of ids) loaders[id]?.(); }
+
+function openTab(name) {
+  const pane = paneOf(name);
+  if (!pane || !$(`#tab-${name}`)) return;
+  layout.active[pane] = name;
+  layout.shown = pane;
+  saveLayoutTabs();
+  const fresh = applyLayout();
+  runLoaders(new Set([name, ...fresh]));  // the clicked tab always reloads, as before
+}
+
+document.querySelector(".navs").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-tab]");
-  if (!b) return;
-  document.querySelectorAll("nav button, .tab").forEach((x) => x.classList.remove("active"));
-  b.classList.add("active");
-  $(`#tab-${b.dataset.tab}`).classList.add("active");
-  loaders[b.dataset.tab]?.();
+  if (b) openTab(b.dataset.tab);
 });
 
-function openTab(name) { document.querySelector(`nav button[data-tab="${name}"]`).click(); }
+$("#layout-toggle").addEventListener("click", () => {
+  store.set("cc.layout.mode", layout.split ? "single" : "split");
+  runLoaders(applyLayout());
+});
+
+window.addEventListener("resize", () => {
+  if (!layout.ready) return;
+  if (wantSplit() !== layout.split || $("#layout-toggle").hidden !== (window.innerWidth < SPLIT_MIN_WIDTH)) runLoaders(applyLayout());
+  else if (layout.split) applySplit();
+});
+
+// The nav groups stay on the header row while they fit; when they don't (big text size, narrow window)
+// they move to a second header row instead of scrolling out of sight.
+let headerFrame = 0;
+function fitHeader() {
+  cancelAnimationFrame(headerFrame);
+  headerFrame = requestAnimationFrame(() => {
+    const h = document.querySelector("header"), n = document.querySelector(".navs");
+    h.classList.remove("nav-wrap");
+    if (n.scrollWidth > n.clientWidth + 1) h.classList.add("nav-wrap");
+  });
+}
+(() => {
+  const ro = new ResizeObserver(fitHeader);
+  ro.observe(document.querySelector("header"));
+  document.querySelectorAll(".nav-group").forEach((n) => ro.observe(n));
+})();
+
+// ---- splitter between the panes ------------------------------------------------
+
+let splitFrac = (() => { const v = parseFloat(store.get("cc.layout.split")); return v >= 0.1 && v <= 0.9 ? v : SPLIT_DEFAULT; })();
+
+function splitBounds() {
+  const main = $("#workspace");
+  const w = main.clientWidth;
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  const sw = $("#splitter").offsetWidth || 8;
+  const minL = Math.min(28 * rem, w * 0.4), minR = Math.min(34 * rem, w * 0.45);
+  return { w, sw, minL, maxL: Math.max(minL, w - sw - minR) };
+}
+
+function applySplit() {
+  const { w, minL, maxL } = splitBounds();
+  if (!w) return;
+  const left = Math.round(Math.max(minL, Math.min(maxL, splitFrac * w)));
+  $("#workspace").style.setProperty("--left", `${left}px`);
+  const sp = $("#splitter");
+  sp.setAttribute("aria-valuemin", String(Math.round((minL / w) * 100)));
+  sp.setAttribute("aria-valuemax", String(Math.round((maxL / w) * 100)));
+  sp.setAttribute("aria-valuenow", String(Math.round((left / w) * 100)));
+  sp.setAttribute("aria-valuetext", `COMMS ${Math.round((left / w) * 100)}%, WORK ${100 - Math.round((left / w) * 100)}%`);
+}
+
+function setSplit(frac, save = true) {
+  const { w, minL, maxL } = splitBounds();
+  if (!w) return;
+  splitFrac = Math.max(minL, Math.min(maxL, frac * w)) / w;
+  applySplit();
+  if (save) store.set("cc.layout.split", splitFrac.toFixed(4));
+}
+
+(() => {
+  const sp = $("#splitter");
+  let drag = null, frame = 0;
+  sp.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    sp.setPointerCapture(e.pointerId);
+    const r = $("#workspace").getBoundingClientRect();
+    drag = { id: e.pointerId, left: r.left, w: r.width, offset: e.clientX - sp.getBoundingClientRect().left };
+    document.body.classList.add("resizing");
+    sp.focus({ preventScroll: true });
+  });
+  sp.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const x = e.clientX;
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => setSplit((x - drag.offset - drag.left) / drag.w, false));
+  });
+  const end = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag = null;
+    document.body.classList.remove("resizing");
+    store.set("cc.layout.split", splitFrac.toFixed(4));
+  };
+  sp.addEventListener("pointerup", end);
+  sp.addEventListener("pointercancel", end);
+  sp.addEventListener("lostpointercapture", end);
+  sp.addEventListener("dblclick", () => setSplit(SPLIT_DEFAULT));
+  sp.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    const map = { ArrowLeft: splitFrac - step, ArrowRight: splitFrac + step, Home: 0, End: 1, Enter: SPLIT_DEFAULT };
+    if (!(e.key in map)) return;
+    e.preventDefault();
+    setSplit(map[e.key]);
+  });
+  new ResizeObserver(() => { if (layout.split) applySplit(); }).observe($("#workspace"));
+})();
+
+// ---- "Working on" project (right pane) ----------------------------------------
+
+const proj = { list: [], path: store.get("cc.activeProject") || "" };
+const samePath = (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase();
+const baseName = (p) => String(p || "").split(/[\\/]/).filter(Boolean).pop() || String(p || "");
+
+function activeProject() {
+  if (!proj.path) return null;
+  const p = proj.list.find((x) => samePath(x.path, proj.path));
+  return { path: p ? p.path : proj.path, name: p ? p.name : baseName(proj.path) };
+}
+
+function renderProjectSelect() {
+  const sel = $("#project-select");
+  const opts = proj.list.map((p) => el("option", { value: p.path, title: p.path }, p.name));
+  if (proj.path && !proj.list.some((p) => samePath(p.path, proj.path))) {
+    opts.unshift(el("option", { value: proj.path, title: proj.path }, `${baseName(proj.path)} (not in list)`));
+  }
+  sel.replaceChildren(el("option", { value: "" }, proj.list.length ? "Choose a project…" : "No projects found"), ...opts);
+  const cur = activeProject();
+  sel.value = cur ? cur.path : "";
+  $("#project-path").textContent = cur ? cur.path : "Pick the project Claude and VS Code work in";
+  $("#project-path").title = cur ? cur.path : "";
+}
+
+function setActiveProject(path) {
+  path = String(path || "");
+  if (samePath(path, proj.path)) return;
+  proj.path = path;
+  store.set("cc.activeProject", path || null);
+  renderProjectSelect();
+  const cur = activeProject();
+  document.dispatchEvent(new CustomEvent("cc:project", { detail: cur ? { path: cur.path, name: cur.name } : { path: "", name: "" } }));
+}
+
+async function loadProjectList() {
+  try { proj.list = ((await api("/api/projects")).projects || []).filter((p) => p && p.path); } catch { /* keep the old list */ }
+  renderProjectSelect();
+}
+
+$("#project-select").addEventListener("change", (e) => setActiveProject(e.target.value));
+$("#project-refresh").addEventListener("click", loadProjectList);
 
 // ---- alerts ------------------------------------------------------------------
 
@@ -87,26 +341,45 @@ function alertAction(a) {
   if (!act) return null;
   if (act.type === "today") return el("button", { class: "small", onclick: () => openTab("today") }, "Open Today");
   if (act.type === "mail") return el("button", { class: "small", onclick: () => { openTab("mail"); showMail(act.id); } }, "View mail");
-  if (act.type === "url") return el("a", { href: act.url, target: "_blank", rel: "noopener" }, el("button", { class: "small" }, "Open site"));
+  if (act.type === "url") return linkButton(act.url, "Open site");
   if (act.type === "meeting") return [
-    act.join_url && el("a", { href: act.join_url, target: "_blank", rel: "noopener" }, el("button", { class: "small primary" }, "Join")),
+    act.join_url && linkButton(act.join_url, "Join", "small primary"),
+    act.prep && el("button", { class: "small alt", onclick: () => prepDialog(act.id) }, "Prep"),
     el("button", { class: "small", onclick: () => guarded(() => api("/api/outlook/open", { id: act.id })) }, "Open"),
   ];
+  if (act.type === "order" && act.number) return el("button", { class: "small alt", onclick: () => orderDialog(String(act.number)) }, "Show order");
   return null;
+}
+
+function alertRow(a, compact = false) {
+  return el("li", { class: a.read ? "" : "unread" },
+    el("span", { class: `prio ${a.priority}` }),
+    el("div", { class: "grow" },
+      el("div", { class: "title" }, a.title),
+      a.body && el("div", { class: compact ? "fu-preview" : "" }, a.body),
+      el("div", { class: "muted src-line" }, srcTag(alertSource(a), a.source), `${a.source} · ${when(a.ts)}`)),
+    el("div", { class: "actions" }, alertAction(a),
+      !a.read && el("button", { class: "small subtle", title: "Mark read", "aria-label": `Mark "${a.title}" read`,
+        onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); loadTodayAlerts(); }) }, "✓")));
 }
 
 loaders.alerts = () => guarded(async () => {
   const { alerts } = await api(`/api/alerts?unread_only=${$("#alerts-unread").checked}`);
-  fill($("#alerts-list"), alerts.map((a) => el("li", { class: a.read ? "" : "unread" },
-    el("span", { class: `prio ${a.priority}` }),
-    el("div", { class: "grow" },
-      el("div", { class: "title" }, a.title),
-      a.body && el("div", {}, a.body),
-      el("div", { class: "muted" }, `${a.source} · ${when(a.ts)}`)),
-    el("div", { class: "actions" }, alertAction(a),
-      !a.read && el("button", { class: "small subtle", onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); }) }, "✓")),
-  )), "No alerts yet");
+  fill($("#alerts-list"), alerts.map((a) => alertRow(a)), "No alerts yet");
 });
+
+// The newest alerts, on Today (unread first, then by time).
+async function loadTodayAlerts() {
+  try {
+    const { alerts, unread } = await api("/api/alerts?unread_only=false");
+    const rows = alerts.slice(0, 40).sort((a, b) => (a.read ? 1 : 0) - (b.read ? 1 : 0)).slice(0, 12);
+    fill($("#today-alerts"), rows.map((a) => alertRow(a, true)), "No alerts yet");
+    $("#today-alerts-count").textContent = unread ? `${unread} UNREAD` : "ALL READ";
+  } catch (e) {
+    fill($("#today-alerts"), [el("li", { class: "err" }, e.message)], "");
+  }
+}
+$("#today-alerts-all").addEventListener("click", () => openTab("alerts"));
 
 $("#alerts-unread").addEventListener("change", loaders.alerts);
 $("#alerts-readall").addEventListener("click", () => guarded(async () => { await api("/api/alerts/read", {}); refresh(); }));
@@ -119,6 +392,28 @@ $("#reload").addEventListener("click", () => guarded(async () => { await api("/a
 
 let selectedMail = null;
 
+// ---- sourcing: every item says where it came from ----------------------------
+const SOURCES = {
+  outlook: ["Outlook", "Outlook email"], sent: ["Sent", "Outlook Sent Items"], flagged: ["Flagged", "Outlook flagged email"],
+  teams: ["Teams", "Microsoft Teams (from Teams' missed-activity email in Outlook)"], calendar: ["Calendar", "Outlook calendar"],
+  meeting: ["Teams mtg", "Outlook calendar · Teams meeting"], todo: ["To Do", "Outlook Tasks / Microsoft To Do"],
+  asana: ["Asana", "Asana"], pulse: ["Pulse", "Pulse (pulse.sonance.com)"], sql: ["SQL", "SQL Server"],
+  website: ["Website", "Website monitor"], system: ["System", "Command Center"],
+};
+function srcTag(kind, detail = "") {
+  const [label, where] = SOURCES[kind] || SOURCES.system;
+  return el("span", { class: `src src-${SOURCES[kind] ? kind : "system"}`, title: detail ? `${where} · ${detail}` : where }, label);
+}
+// "Name <email>" as the visible sender line, so the origin of every message is explicit.
+const fromLine = (name, email) => (email && name && !name.includes(email) ? `${name} <${email}>` : name || email || "");
+const ALERT_SOURCES = { Outlook: "outlook", Calendar: "calendar", Teams: "teams", Pulse: "pulse", Website: "website",
+  Order: "sql", Toolkit: "sql", Snooze: "outlook", "Follow-up": "sent", Urgent: "outlook" };
+function alertSource(a) {
+  if (a.source === "Urgent" && /teams/i.test(a.title)) return "teams";
+  if (a.source === "Outlook" && /teams message/i.test(a.title)) return "teams";
+  return ALERT_SOURCES[a.source] || "system";
+}
+
 loaders.mail = () => guarded(async () => {
   const { mail } = await api(`/api/mail?unread_only=${$("#mail-unread").checked}`);
   fill($("#mail-list"), mail.map((m) => el("li", {
@@ -128,7 +423,7 @@ loaders.mail = () => guarded(async () => {
     },
     el("div", { class: "grow" },
       el("div", { class: "title" }, m.high_importance ? "❗ " : "", m.flagged ? el("span", { class: "flag" }, "⚑ ") : "", m.subject),
-      el("div", {}, m.sender_name),
+      el("div", { class: "src-line" }, srcTag("outlook", "Inbox"), fromLine(m.sender_name, m.sender)),
       el("div", { class: "muted" }, when(m.received), " · ", m.preview.slice(0, 120))),
   )), "No mail");
 });
@@ -156,24 +451,118 @@ async function showMail(id) {
         el("button", { onclick: () => act("/api/mail/read", { id, read: m.unread }) }, m.unread ? "Mark read" : "Mark unread"),
         el("button", { onclick: () => act("/api/mail/flag", { id, flagged: !m.flagged }) }, m.flagged ? "Clear flag" : "Flag"),
         el("button", { onclick: () => newTaskDialog({ subject: m.subject, notes: `From ${m.sender_name} <${m.sender}>, ${when(m.received)}` }) }, "+ Task"),
+        el("button", { onclick: () => snoozeDialog({ id, subject: m.subject, who: m.sender_name, kind: "mail" }) }, "Snooze"),
         m.sender && el("button", { class: "alt", onclick: () => openTeamsChat(m.sender, "") }, "Chat in Teams"),
         el("button", { onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook")),
+      orderChips,
       el("pre", {}, m.body),
     );
     document.querySelectorAll("#mail-list li").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));
+    renderOrderChips(orderChips, `${m.subject}\n${m.body}`, id);
   });
 }
 
+// ---- order numbers ---------------------------------------------------------------
+
+const orderChips = el("div", { class: "order-chips" });
+let orderInfo = null, orderInfoAt = 0;
+
+async function orderStatus() {
+  if (!orderInfo || Date.now() - orderInfoAt > 60000) {
+    orderInfo = await api("/api/orders/status");
+    orderInfoAt = Date.now();
+  }
+  return orderInfo;
+}
+
+// The pattern comes from config.yaml as a Python regex. Most syntax is the same in JS; translate the rest.
+function pyRegex(src) {
+  let s = String(src || ""), flags = "gi";
+  const inline = /^\(\?([aiLmsux]+)\)/.exec(s);
+  if (inline) {
+    s = s.slice(inline[0].length);
+    if (inline[1].includes("s")) flags += "s";
+    if (inline[1].includes("m")) flags += "m";
+  }
+  s = s.replace(/\(\?P<(\w+)>/g, "(?<$1>").replace(/\(\?P=(\w+)\)/g, "\\k<$1>").replace(/\\A/g, "^").replace(/\\Z/g, "$");
+  try { return new RegExp(s, flags); } catch { return null; }
+}
+
+function findOrders(text, re) {
+  const out = [];
+  // Digits inside links (tracking ids, safelinks) are never order numbers.
+  const plain = String(text).slice(0, 200000).replace(/\b(?:https?:\/\/|www\.)\S+/gi, " ");
+  for (const m of plain.matchAll(re)) {
+    const n = m[1] ?? m[0];
+    if (n && !out.includes(n)) out.push(n);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+async function renderOrderChips(box, text, mailId) {
+  box.replaceChildren();
+  let info;
+  try { info = await orderStatus(); } catch { return; }
+  const re = pyRegex(info.pattern);
+  if (!re || selectedMail !== mailId) return;
+  box.replaceChildren(...findOrders(text, re).map((n) =>
+    el("button", { type: "button", class: "order-chip", title: `Look up order ${n} in SQL`, onclick: () => orderDialog(n) },
+      el("span", { class: "k" }, "Order"), el("b", {}, n), el("span", { class: "go" }, "→ Look up"))));
+}
+
+async function orderDialog(number) {
+  const d = $("#dialog");
+  d.classList.add("wide");
+  const close = el("div", { class: "row" }, el("button", {}, "Close"));
+  showDialog(el("h3", {}, `Order ${number}`), el("p", { class: "muted" }, "Looking it up…"));
+  let info;
+  try { info = await orderStatus(); } catch (e) { showDialog(el("h3", {}, `Order ${number}`), el("p", { class: "err" }, e.message), close); return; }
+  if (info.problem) {
+    showDialog(el("h3", {}, `Order ${number}`),
+      el("p", {}, "Order lookup isn't set up yet."), el("p", { class: "setup" }, info.problem),
+      el("div", { class: "row" },
+        el("button", { type: "button", class: "primary", onclick: () => { d.close(); openTab("sql"); } }, "Go to SQL tab"),
+        el("button", {}, "Close")));
+    return;
+  }
+  try {
+    const r = await api(`/api/orders/lookup?number=${encodeURIComponent(number)}`);
+    if (!d.open) return;
+    if (r.error) throw new Error(r.error);
+    showDialog(el("h3", {}, `Order ${r.number}`),
+      el("div", { class: "muted" }, `${r.query} · ${r.rows.length} row(s)${r.truncated ? " (first 1000)" : ""} · ${r.seconds}s`),
+      r.rows.length
+        ? el("div", { class: "table-wrap dialog-table" }, el("table", {},
+            el("thead", {}, el("tr", {}, r.columns.map((c) => el("th", {}, c)))),
+            el("tbody", {}, r.rows.map((row) => el("tr", {}, row.map((v) => el("td", { title: v ?? "" }, v ?? "NULL")))))))
+        : el("p", {}, `No order found for ${r.number}.`),
+      close);
+  } catch (e) {
+    if (d.open) showDialog(el("h3", {}, `Order ${number}`), el("p", { class: "err" }, e.message), close);
+  }
+}
+
 function replyDialog(m, replyAll) {
-  const text = el("textarea", { placeholder: "Your reply…" });
-  const send = async (sendNow) => guarded(async () => {
-    if (!text.value.trim()) return;
-    await api("/api/mail/reply", { id: m.id, text: text.value, reply_all: replyAll, send: sendNow });
+  const text = el("textarea", { placeholder: "Your reply…", "aria-label": "Reply text" });
+  const remind = el("select", { id: "remind-days" },
+    [0, 1, 2, 3, 5].map((n) => el("option", { value: n }, n ? `${n} day${n > 1 ? "s" : ""}` : "Don't remind me")));
+  const err = el("div", { class: "err", role: "alert" });
+  const send = async (sendNow) => guardedIn(err, async () => {
+    if (!text.value.trim()) { text.focus(); return; }
+    const days = sendNow ? Number(remind.value) : 0;
+    await api("/api/mail/reply", { id: m.id, text: text.value, reply_all: replyAll, send: sendNow, remind_days: days });
     $("#dialog").close();
-    showMessage(sendNow ? "Sent" : "Draft opened", sendNow ? "Your reply was sent from Outlook." : "Review and send it in Outlook.");
+    showMessage(sendNow ? "Sent" : "Draft opened", sendNow
+      ? `Your reply was sent from Outlook.${days ? ` If nobody replies within ${days} day${days > 1 ? "s" : ""}, you'll get an alert.` : ""}`
+      : "Review and send it in Outlook.");
   });
   showDialog(
     el("h3", {}, `${replyAll ? "Reply all" : "Reply"}: ${m.subject}`), text,
+    el("div", { class: "inline-field" },
+      el("label", { for: "remind-days" }, "Remind me if no reply in"), remind,
+      el("span", { class: "muted" }, "(when sent from here)")),
+    err,
     el("div", { class: "row" },
       el("button", { value: "cancel" }, "Cancel"),
       el("button", { type: "button", onclick: () => send(false) }, "Open draft in Outlook"),
@@ -186,19 +575,105 @@ $("#mail-refresh").addEventListener("click", loaders.mail);
 
 // ---- calendar ----------------------------------------------------------------
 
+let calMeetings = [];
+
 loaders.calendar = () => guarded(async () => {
   const { meetings } = await api("/api/meetings?hours=24");
+  calMeetings = meetings;
   fill($("#cal-list"), meetings.map((m) => el("li", {},
     el("div", { class: "grow" },
       el("div", { class: "title" }, m.subject),
       el("div", {}, `${when(m.start)} – ${new Date(m.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`),
-      el("div", { class: "muted" }, [m.location, m.organizer].filter(Boolean).join(" · "))),
+      el("div", { class: "muted src-line" }, srcTag(m.join_url ? "meeting" : "calendar"), [m.location, m.organizer && `organizer ${m.organizer}`].filter(Boolean).join(" · "))),
     el("div", { class: "actions" },
-      m.join_url && el("a", { href: m.join_url, target: "_blank", rel: "noopener" }, el("button", { class: "small primary" }, "Join")),
+      m.join_url && linkButton(m.join_url, "Join", "small primary"),
+      el("button", { class: "small alt", onclick: () => prepDialog(m.id, m) }, "Prep"),
       el("button", { class: "small", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open")),
   )), "Nothing in the next 24 hours");
 });
-$("#cal-refresh").addEventListener("click", loaders.calendar);
+
+// ---- meeting prep ------------------------------------------------------------------
+
+const RESPONSE = {
+  accepted: ["yes", "✓", "Accepted"], organizer: ["yes", "★", "Organizer"], tentative: ["maybe", "?", "Tentative"],
+  declined: ["no", "✕", "Declined"], "no response": ["none", "…", "No response"], none: ["none", "…", "No response"],
+};
+
+function followupsInvolving(attendees) {
+  const f = todayData && todayData.followups && !todayData.followups.error ? todayData.followups : {};
+  const keys = attendees.flatMap((a) => [a.email, a.name]).filter((k) => k && k.length >= 4).map((k) => k.toLowerCase());
+  const hit = (...vals) => vals.some((v) => { const s = String(v || "").toLowerCase(); return s && keys.some((k) => s.includes(k)); });
+  return [
+    ["Needs your reply", f.needs_reply, (m) => hit(m.sender, m.sender_name), (m) => m.sender_name],
+    ["Awaiting their reply", f.awaiting_reply, (m) => hit(m.to), (m) => `to ${m.to}`],
+    ["Flagged", f.flagged, (m) => hit(m.sender, m.sender_name), (m) => m.sender_name],
+    ["Unread from VIPs", f.unread_vip, (m) => hit(m.sender, m.sender_name), (m) => m.sender_name],
+  ].flatMap(([group, items, match, who]) => (items || []).filter(match).map((m) => ({ group, who: who(m), ...m })));
+}
+
+async function prepDialog(id, meta) {
+  const d = $("#dialog");
+  d.classList.add("wide");
+  showDialog(el("h3", {}, "Meeting prep"), el("p", { class: "muted" }, "Gathering attendees and recent mail…"));
+  let p;
+  try { p = await api(`/api/meetings/prep?id=${encodeURIComponent(id)}`); } catch (e) {
+    showDialog(el("h3", {}, "Meeting prep"), el("p", { class: "err" }, e.message), el("div", { class: "row" }, el("button", {}, "Close")));
+    return;
+  }
+  if (!d.open) return;
+  meta = meta || (Array.isArray(todayData?.agenda) ? todayData.agenda : []).concat(calMeetings).find((m) => m.id === id);
+  const now = new Date();
+  let timeText = "";
+  if (meta?.start) {
+    const s = new Date(meta.start), e = new Date(meta.end);
+    const mins = Math.round((s - now) / 60000);
+    timeText = `${s.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} · ${timeOf(meta.start)} – ${timeOf(meta.end)}` +
+      (s <= now && now < e ? " · live now" : mins > 0 && mins < 24 * 60 ? ` · in ${duration(mins)}` : e <= now ? " · ended" : "");
+  }
+  const counts = {};
+  for (const a of p.attendees) { const r = RESPONSE[a.response] || RESPONSE.none; counts[r[2]] = (counts[r[2]] || 0) + 1; }
+  const viewMailFromDialog = (mid) => el("button", { type: "button", class: "small", onclick: () => { d.close(); openTab("mail"); showMail(mid); } }, "View");
+  const related = followupsInvolving(p.attendees);
+  const section = (title, ...body) => el("section", { class: "prep-sec" }, el("h4", {}, title), ...body);
+
+  showDialog(
+    el("div", { class: "prep-head" },
+      el("div", { class: "grow" },
+        el("div", { class: "panel-label" }, "MEETING PREP"),
+        el("h3", { class: "prep-title" }, p.subject),
+        el("div", { class: "prep-meta" },
+          timeText && el("span", {}, el("b", {}, "When "), timeText),
+          p.location && el("span", {}, el("b", {}, "Where "), p.location),
+          p.organizer && el("span", {}, el("b", {}, "Organizer "), p.organizer))),
+      el("div", { class: "actions" },
+        p.join_url && linkButton(p.join_url, "Join", "primary"),
+        el("button", { type: "button", onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook"))),
+    el("div", { class: "prep-grid" },
+      el("div", {},
+        section(`Attendees (${p.attendees.length})`,
+          el("div", { class: "prep-counts muted" }, Object.entries(counts).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(" · ") || "Just you"),
+          el("div", { class: "att-list" }, p.attendees.map((a) => {
+            const [cls, sym, label] = RESPONSE[a.response] || RESPONSE.none;
+            return el("span", { class: `att ${cls}`, title: `${a.email || a.name} · ${label}${a.optional ? " · optional" : ""}` },
+              el("i", { "aria-hidden": "true" }, sym), a.name, a.optional && el("small", {}, "opt"),
+              el("span", { class: "sr-only" }, ` (${label}${a.optional ? ", optional" : ""})`));
+          }))),
+        section(`Open follow-ups with them (${related.length})`,
+          related.length ? el("ul", { class: "list" }, related.map((m) => el("li", {},
+            el("div", { class: "grow" }, el("div", { class: "title" }, m.subject), el("div", { class: "muted" }, `${m.group} · ${m.who}`)),
+            el("div", { class: "actions" }, viewMailFromDialog(m.id)))))
+            : el("p", { class: "muted" }, "Nothing open with these people."))),
+      el("div", {},
+        section(`Recent emails (${p.recent_mail.length})`,
+          p.recent_mail.length ? el("ul", { class: "list" }, p.recent_mail.map((m) => el("li", {},
+            el("div", { class: "grow" }, el("div", { class: "title" }, m.subject),
+              el("div", { class: "muted" }, `${m.folder === "Sent" ? "You → " + m.to : m.sender_name} · ${when(m.received)}`)),
+            el("div", { class: "actions" }, viewMailFromDialog(m.id)))))
+            : el("p", { class: "muted" }, "No mail with these attendees in the last 3 weeks.")),
+        section("Meeting notes", el("pre", { class: "prep-notes" }, p.agenda || "No notes in the invite.")))),
+    el("div", { class: "row" }, el("button", {}, "Close")));
+}
+$("#cal-refresh")?.addEventListener("click", () => loaders.calendar());
 
 // ---- websites ----------------------------------------------------------------
 
@@ -219,7 +694,7 @@ loaders.websites = () => guarded(async () => {
       el("div", { class: "actions" },
         el("button", { class: "small", onclick: (e) => checkSite(e.target, m.name) }, "Check now"),
         el("button", { class: "small", onclick: () => loginSite(m) }, "Log in"),
-        el("a", { href: m.url, target: "_blank", rel: "noopener" }, el("button", { class: "small subtle" }, "Open"))));
+        linkButton(m.url, "Open", "small subtle")));
   }), "No monitors in config.yaml");
 });
 
@@ -338,14 +813,41 @@ function meter(label, valueText, value, max, hot) {
   return el("div", {}, el("div", { class: "meter-head" }, el("span", {}, label), el("b", {}, valueText)), segments(value, max, hot));
 }
 
+// Segmented "Lake Forest | San Clemente" switch; the choice is stored on the server.
+function weatherToggle(w) {
+  const locs = Array.isArray(w.locations) ? w.locations.filter((l) => l && /^\d{5}$/.test(String(l.zip))) : [];
+  if (locs.length < 2) return null;
+  const current = String(w.selected || w.zip || "");
+  return el("div", { class: "seg weather-seg", role: "group", "aria-label": "Weather location" },
+    locs.map((l) => el("button", {
+      type: "button", class: `seg-btn${String(l.zip) === current ? " on" : ""}`, "aria-pressed": String(String(l.zip) === current),
+      title: `Weather for ${l.name} ${l.zip}`,
+      onclick: (e) => selectWeather(String(l.zip), e.currentTarget),
+    }, l.name)));
+}
+
+async function selectWeather(zip, button) {
+  if (button) button.disabled = true;
+  try {
+    const w = await api("/api/weather/select", { zip });
+    if (todayData) todayData.weather = w;
+    renderWeather(w);
+  } catch (e) {
+    toast(`Weather: ${e.message}`);
+    if (button) button.disabled = false;
+  }
+}
+
 function renderWeather(w) {
   const panel = $("#weather");
   if (w.error) {
-    panel.replaceChildren(el("div", { class: "panel-label" }, "ENV.WEATHER"), el("p", { class: "err" }, w.error));
+    panel.replaceChildren(el("div", { class: "panel-head weather-head" }, el("span", { class: "panel-label" }, "ENV.WEATHER"), el("span", { class: "spacer" }), weatherToggle(w)),
+      el("p", { class: "err" }, w.error));
     return;
   }
   panel.replaceChildren(
-    el("div", { class: "panel-label" }, `ENV.WEATHER // ${w.location} ${w.zip}`),
+    el("div", { class: "panel-head weather-head" },
+      el("span", { class: "panel-label" }, `ENV.WEATHER // ${w.location} ${w.zip}`), el("span", { class: "spacer" }), weatherToggle(w)),
     el("div", { class: "weather-main" },
       el("div", { class: "w-icon" }, w.icon),
       el("div", {},
@@ -381,32 +883,87 @@ function renderStats(d) {
   const today = isoDate(new Date());
   const due = d.tasks.items.filter((t) => t.due && t.due <= today).length;
   const f = d.followups.error ? {} : d.followups;
-  const fu = ["needs_reply", "awaiting_reply", "flagged", "unread_vip"].reduce((n, k) => n + (f[k]?.length || 0), 0);
-  const stat = (n, label, color) => el("div", { class: "stat", style: `--c:${color}` }, el("div", { class: "n" }, n), el("div", { class: "l" }, label));
+  const fu = ["urgent_reply", "needs_reply", "teams_reply", "awaiting_reply", "flagged", "unread_vip"].reduce((n, k) => n + (f[k]?.length || 0), 0);
+  const urgent = (f.urgent_reply?.length || 0) + (f.teams_reply || []).filter((m) => m.urgent).length;
+  const stat = (n, label, color, cls = "") => el("div", { class: `stat ${cls}`, style: `--c:${color}` }, el("div", { class: "n" }, n), el("div", { class: "l" }, label));
   $("#stats").replaceChildren(
-    stat(left, "Meetings left today", "var(--cyan)"),
-    stat(due, "Tasks due / overdue", due ? "var(--amber)" : "var(--lime)"),
-    stat(f.needs_reply?.length || 0, "Need your reply", "var(--magenta)"),
-    stat(fu, "Follow-ups total", "var(--cyan)"),
-    stat(Math.max(0, lastUnread), "Unread alerts", lastUnread > 0 ? "var(--red)" : "var(--lime)"));
+    stat(urgent, "Urgent replies", urgent ? "var(--red)" : "var(--accent)", urgent ? "alarm" : ""),
+    stat(left, "Meetings left today", "var(--accent-2)"),
+    stat(due, "Tasks due / overdue", due ? "var(--amber)" : "var(--accent)"),
+    stat(f.needs_reply?.length || 0, "Need your reply", "var(--hot)"),
+    stat(fu, "Follow-ups total", "var(--accent-2)"),
+    stat(Math.max(0, lastUnread), "Unread alerts", lastUnread > 0 ? "var(--red)" : "var(--accent)"));
+  // Pulse tile appears once the Pulse connection is set up.
+  api("/api/pulse/summary").then((p) => {
+    if (!p.configured || p.error) return;
+    const tile = stat(p.open_mine, "Pulse tickets on you", p.high_priority ? "var(--red)" : p.open_mine ? "var(--amber)" : "var(--accent)");
+    tile.title = `${p.new_today} new today · ${p.high_priority} high priority · ${p.open_total} open`;
+    tile.style.cursor = "pointer";
+    tile.addEventListener("click", () => openTab("pulse"));
+    $("#stats").append(tile);
+  }).catch(() => {});
 }
+
+// Open time today: inside the workday, from now on, between meetings, at least 30 minutes.
+function freeSlots(agenda, now = new Date()) {
+  const at = (h) => new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, Math.round(h * 60));
+  const dayEnd = at(WORKDAY.end);
+  let cursor = new Date(Math.max(at(WORKDAY.start), roundUp(now, 15)));
+  const busy = (Array.isArray(agenda) ? agenda : []).map((m) => [new Date(m.start), new Date(m.end)])
+    .filter(([s, e]) => !isNaN(s) && !isNaN(e)).sort((a, b) => a[0] - b[0]);
+  const slots = [];
+  const push = (s, e) => { if (e - s >= 30 * 60000) slots.push({ start: s, end: e }); };
+  for (const [s, e] of busy) {
+    if (cursor >= dayEnd) break;
+    if (s > cursor) push(cursor, new Date(Math.min(s, dayEnd)));
+    if (e > cursor) cursor = e;
+  }
+  if (cursor < dayEnd) push(cursor, dayEnd);
+  return slots;
+}
+
+let dragTask = null;
+
+function slotRow(slot) {
+  const mins = Math.round((slot.end - slot.start) / 60000);
+  const drop = (e) => { e.preventDefault(); e.currentTarget.classList.remove("over"); const t = dragTask; endDrag(); if (t) scheduleDialog(t, slot); };
+  return el("li", {
+      class: "slot",
+      ondragover: (e) => { if (!dragTask) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; e.currentTarget.classList.add("over"); },
+      ondragleave: (e) => e.currentTarget.classList.remove("over"),
+      ondrop: drop,
+    },
+    el("div", { class: "time-col" }, timeOf(slot.start), el("div", { class: "muted" }, timeOf(slot.end))),
+    el("div", { class: "grow" },
+      el("div", { class: "slot-title" }, `Open · ${duration(mins)}`),
+      el("div", { class: "muted slot-hint" }, "Drop a task here to block time")));
+}
+
+function endDrag() { dragTask = null; document.body.classList.remove("drag-task"); }
 
 function renderAgenda(agenda) {
   if (agenda.error) { fill($("#agenda"), [el("li", { class: "err" }, agenda.error)], ""); return; }
   const now = new Date();
   $("#agenda-count").textContent = `${agenda.length} EVENT${agenda.length === 1 ? "" : "S"}`;
-  fill($("#agenda"), agenda.map((m) => {
+  const rows = agenda.map((m) => {
     const start = new Date(m.start), end = new Date(m.end);
     const live = start <= now && now < end;
-    return el("li", { class: live ? "now" : end <= now ? "past" : "" },
+    return { at: start, node: el("li", { class: live ? "now" : end <= now ? "past" : "" },
       el("div", { class: "time-col" }, timeOf(m.start), el("div", { class: "muted" }, timeOf(m.end))),
       el("div", { class: "grow" },
         el("div", { class: "title" }, m.subject, live && el("span", { class: "tag live" }, "Live")),
-        el("div", { class: "muted" }, [m.location, m.organizer].filter(Boolean).join(" · "))),
+        el("div", { class: "muted src-line" }, srcTag(m.join_url ? "meeting" : "calendar"), [m.location, m.organizer && `organizer ${m.organizer}`].filter(Boolean).join(" · "))),
       el("div", { class: "actions" },
-        m.join_url && end > now && el("a", { href: m.join_url, target: "_blank", rel: "noopener" }, el("button", { class: "small primary" }, "Join")),
-        el("button", { class: "small", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open")));
-  }), "No meetings today. Clear skies.");
+        m.join_url && end > now && linkButton(m.join_url, "Join", "small primary"),
+        end > now && el("button", { class: "small alt", title: "Attendees, recent mail and notes", onclick: () => prepDialog(m.id, m) }, "Prep"),
+        el("button", { class: "small", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open"))) };
+  });
+  // Ties go to the open slot first: a slot always ends where the next meeting starts.
+  rows.push(...freeSlots(agenda, now).map((s) => ({ at: s.start, slot: true, node: slotRow(s) })));
+  rows.sort((a, b) => a.at - b.at || (b.slot ? 1 : 0) - (a.slot ? 1 : 0));
+  const nodes = rows.map((r) => r.node);
+  if (!agenda.length) nodes.unshift(el("li", { class: "empty" }, "No meetings today. Clear skies."));
+  fill($("#agenda"), nodes, "No meetings today. Clear skies.");
 }
 
 function renderTasks(t) {
@@ -416,15 +973,157 @@ function renderTasks(t) {
   btn.className = `small ${asanaConnected ? "" : "subtle"}`;
   const notes = [t.error && `Outlook: ${t.error}`, t.asana.error && `Asana: ${t.asana.error}`].filter(Boolean);
   $("#tasks-note").replaceChildren(...notes.map((n) => el("div", { class: "err" }, n)));
-  fill($("#tasks"), t.items.map((task) => el("li", {},
-    el("button", { class: "check", title: "Mark complete", onclick: () => completeTask(task) }),
+  const today = isoDate(new Date());
+  fill($("#tasks"), t.items.map((task) => el("li", {
+      class: `task ${task.due && task.due < today ? "overdue" : task.due === today ? "due-today" : ""}`,
+      draggable: "true",
+      title: "Drag onto an open slot in the agenda to block time for it",
+      ondragstart: (e) => {
+        dragTask = task;
+        e.dataTransfer.effectAllowed = "copy";
+        e.dataTransfer.setData("text/plain", task.subject);
+        document.body.classList.add("drag-task");
+      },
+      ondragend: endDrag,
+    },
+    el("button", { class: "check", title: "Mark complete", "aria-label": `Mark "${task.subject}" complete`, onclick: () => completeTask(task) }),
     el("div", { class: "grow" },
-      el("div", { class: "title" }, task.subject, el("span", { class: `tag ${task.source}` }, task.source === "asana" ? "Asana" : "Outlook"), dueTag(task.due)),
+      el("div", { class: "title" }, task.subject, srcTag(task.source === "asana" ? "asana" : "todo", task.project || ""), dueTag(task.due)),
       el("div", { class: "muted" }, dueText(task.due), task.project ? ` · ${task.project}` : "")),
     el("div", { class: "actions" },
-      task.url ? el("a", { href: task.url, target: "_blank", rel: "noopener" }, el("button", { class: "small subtle" }, "Open"))
+      el("button", { class: "small", title: "Block time on your calendar for this", onclick: () => scheduleDialog(task) }, "Schedule"),
+      el("button", { class: "small subtle", onclick: () => snoozeDialog({ id: task.id, subject: task.subject, who: task.source === "asana" ? "Asana" : "Outlook", kind: "task" }) }, "Snooze"),
+      task.url ? linkButton(task.url, "Open", "small subtle")
                : el("button", { class: "small subtle", onclick: () => guarded(() => api("/api/outlook/open", { id: task.id })) }, "Open")),
   )), "No open tasks. Inbox zero energy.");
+}
+
+function scheduleDialog(task, slot) {
+  if (!slot) slot = todayData && freeSlots(todayData.agenda)[0];
+  const subject = el("input", { value: `Focus: ${task.subject}`, maxlength: "250", "aria-label": "Title" });
+  const start = el("input", { type: "datetime-local", step: "300", "aria-label": "Start", value: localInput(slot ? slot.start : roundUp(new Date(), 15)) });
+  const fits = slot ? (slot.end - slot.start) / 60000 : 120;
+  const pick = fits >= 60 ? 60 : [45, 30].find((m) => m <= fits) || 30;
+  const len = el("select", { "aria-label": "Length" }, [30, 45, 60, 90, 120].map((m) => el("option", { value: m, selected: m === pick }, duration(m))));
+  const hint = el("div", { class: "muted" });
+  const updateHint = () => {
+    hint.textContent = /focus/i.test(subject.value)
+      ? "“Focus” is in the title, so focus mode turns on during this block."
+      : "Tip: put “Focus” in the title to turn on focus mode during this block.";
+  };
+  subject.addEventListener("input", updateHint);
+  updateHint();
+  const err = el("div", { class: "err", role: "alert" });
+  const save = () => guardedIn(err, async () => {
+    if (!subject.value.trim()) { subject.focus(); throw new Error("Give the block a title."); }
+    const s = new Date(start.value);
+    if (isNaN(s)) throw new Error("Pick a start time.");
+    const minutes = Number(len.value);
+    await api("/api/calendar/block", {
+      subject: subject.value.trim(), start: localIso(s), minutes,
+      notes: `Time blocked for: ${task.subject}${task.url ? "\n" + task.url : ""}`,
+    });
+    $("#dialog").close();
+    showMessage("Time blocked", `“${subject.value.trim()}” is on your calendar: ${dayTime(s)} – ${timeOf(new Date(s.getTime() + minutes * 60000))}.`);
+    loaders.today();
+  });
+  showDialog(el("h3", {}, "Block time for a task"),
+    el("p", { class: "muted" }, task.subject),
+    el("label", { class: "field-label" }, "Title"), subject, hint,
+    el("div", { class: "two-col" },
+      el("div", {}, el("label", { class: "field-label" }, "Start"), start),
+      el("div", {}, el("label", { class: "field-label" }, "Length"), len)),
+    err,
+    el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Cancel"),
+      el("button", { type: "button", class: "primary", onclick: save }, "Add to calendar")));
+  subject.focus();
+}
+
+// ---- snooze + no-reply reminders --------------------------------------------------
+
+function snoozeTimes(now = new Date()) {
+  const day = (offset, h) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, h, 0, 0);
+  const tomorrow = day(1, 8);
+  const later = now.getHours() >= 17 ? tomorrow : roundUp(new Date(now.getTime() + 3 * 3600000), 5);
+  return { later, tomorrow, monday: day((8 - now.getDay()) % 7 || 7, 8) };
+}
+
+function snoozeDialog(item) {
+  const t = snoozeTimes();
+  const err = el("div", { class: "err", role: "alert" });
+  const custom = el("input", { type: "datetime-local", step: "300", value: localInput(t.tomorrow), "aria-label": "Snooze until" });
+  const go = (d) => guardedIn(err, async () => {
+    if (isNaN(d) || d <= new Date()) throw new Error("Pick a time in the future.");
+    await api("/api/snooze", { id: item.id, until: localIso(d), subject: item.subject || "", who: item.who || "", kind: item.kind });
+    $("#dialog").close();
+    toast(`Snoozed until ${dayTime(d)}`);
+    loaders.today();
+  });
+  const opt = (label, d) => el("button", { type: "button", class: "snooze-opt", onclick: () => go(d) }, el("b", {}, label), el("span", {}, dayTime(d)));
+  showDialog(el("h3", {}, "Snooze"),
+    el("p", { class: "muted" }, item.subject),
+    el("div", { class: "snooze-opts" },
+      opt(t.later === t.tomorrow ? "Later (tomorrow)" : "Later today", t.later),
+      opt("Tomorrow", t.tomorrow),
+      opt("Monday", t.monday)),
+    el("label", { class: "field-label" }, "Or pick a date and time"),
+    el("div", { class: "inline-field" }, custom, el("button", { type: "button", class: "primary", onclick: () => go(new Date(custom.value)) }, "Snooze")),
+    err,
+    el("p", { class: "muted" }, item.kind === "task" ? "The task is hidden from Today until then." : "It's hidden from follow-ups until then, and you get an alert when it's back."),
+    el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Cancel")));
+}
+
+function remindDialog(m) {
+  const err = el("div", { class: "err", role: "alert" });
+  const go = (days) => guardedIn(err, async () => {
+    await api("/api/reply-watch", { id: m.id, days });
+    $("#dialog").close();
+    toast(`You'll get an alert if there's no reply in ${days} day${days > 1 ? "s" : ""}.`);
+    loaders.today();
+  });
+  showDialog(el("h3", {}, "Remind me if no reply"),
+    el("p", { class: "muted" }, `${m.subject} · to ${m.to}`),
+    el("div", { class: "snooze-opts" }, [1, 2, 3, 5].map((d) =>
+      el("button", { type: "button", class: "snooze-opt", onclick: () => go(d) }, el("b", {}, `${d} day${d > 1 ? "s" : ""}`), el("span", {}, dayTime(new Date(Date.now() + d * 86400000)))))),
+    err,
+    el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Cancel")));
+}
+
+async function snoozedDialog() {
+  await guarded(async () => {
+    const { snoozes, reply_watches: watches } = await api("/api/snoozes");
+    const rows = Object.entries(snoozes || {}).sort((a, b) => String(a[1].until).localeCompare(String(b[1].until)));
+    const d = $("#dialog");
+    const unsnooze = (id) => guarded(async () => { await api("/api/unsnooze", { id }); await snoozedDialog(); loaders.today(); });
+    showDialog(el("h3", {}, `Snoozed (${rows.length})`),
+      rows.length ? el("ul", { class: "list dialog-list" }, rows.map(([id, s]) => el("li", {},
+        el("div", { class: "grow" },
+          el("div", { class: "title" }, s.subject || "(no subject)"),
+          el("div", { class: "muted" }, [s.kind === "task" ? "Task" : "Mail", s.who, `back ${dayTime(new Date(s.until))}`].filter(Boolean).join(" · "))),
+        el("div", { class: "actions" },
+          s.kind !== "task" && el("button", { type: "button", class: "small", onclick: () => { d.close(); openTab("mail"); showMail(id); } }, "View"),
+          el("button", { type: "button", class: "small primary", onclick: () => unsnooze(id) }, "Unsnooze")))))
+        : el("p", { class: "muted" }, "Nothing snoozed. Use Snooze on a follow-up, task or email."),
+      el("h3", { class: "gap" }, `No-reply reminders (${(watches || []).length})`),
+      watches?.length ? el("ul", { class: "list dialog-list" }, watches.map((w) => el("li", {},
+        el("div", { class: "grow" },
+          el("div", { class: "title" }, w.subject || "(no subject)"),
+          el("div", { class: "muted" }, `To ${String(w.to || "").slice(0, 80)} · alert ${dayTime(new Date(w.due))} if nobody replies`)),
+        el("div", { class: "actions" },
+          el("button", { type: "button", class: "small", onclick: () => { d.close(); openTab("mail"); showMail(w.id); } }, "View"),
+          el("button", { type: "button", class: "small subtle", onclick: () => guarded(async () => {
+            await api("/api/reply-watch/cancel", { conversation: w.conversation }); await snoozedDialog(); loaders.today();
+          }) }, "Cancel")))))
+        : el("p", { class: "muted" }, "None. Pick “Remind me if no reply” when you send a reply, or use Remind me on an awaiting-reply item."),
+      el("div", { class: "row" }, el("button", {}, "Close")));
+  });
+}
+
+function renderSnoozedButton(d) {
+  const n = d.snoozed || 0, w = d.reply_watches || 0;
+  const btn = $("#snoozed-btn");
+  btn.textContent = `Snoozed (${n})${w ? ` · Watching ${w}` : ""}`;
+  btn.title = `${n} snoozed · ${w} no-reply reminder${w === 1 ? "" : "s"}`;
 }
 
 async function completeTask(task) {
@@ -432,18 +1131,42 @@ async function completeTask(task) {
   await guarded(async () => { await api("/api/tasks/complete", { source: task.source, id: task.id }); loaders.today(); });
 }
 
-function fuGroup(title, items, render, note, empty) {
-  return el("div", { class: "fu-group" },
+function fuGroup(title, items, render, note, empty, cls = "") {
+  items = items || [];
+  return el("div", { class: `fu-group ${cls}` },
     el("h4", {}, title, el("span", { class: "chip" }, items.length)),
     el("ul", { class: "list" }, items.length ? items.map(render) : el("li", { class: "empty" }, empty)),
     note && el("div", { class: "fu-note" }, note));
 }
 
-const fuActions = (id, sender, ...buttons) => el("div", { class: "actions" }, ...buttons,
-  sender && el("button", { class: "icon subtle", title: `Mute ${sender}`, onclick: () => muteSender(sender) }, "Mute"),
-  el("button", { class: "icon subtle", title: "Dismiss", onclick: () => dismissFollowup(id) }, "✕"));
+// Every follow-up gets Snooze and Dismiss; Mute only where muting the sender makes sense.
+const fuActions = (m, { mute, who, kind = "mail" } = {}, ...buttons) => el("div", { class: "actions" }, ...buttons,
+  el("button", { class: "icon subtle", title: "Snooze", onclick: () => snoozeDialog({ id: m.id, subject: m.subject, who: who ?? m.sender_name, kind }) }, "Snooze"),
+  mute && el("button", { class: "icon subtle", title: `Mute ${mute}`, onclick: () => muteSender(mute) }, "Mute"),
+  el("button", { class: "icon subtle", title: "Dismiss", "aria-label": `Dismiss "${m.subject}"`, onclick: () => dismissFollowup(m.id) }, "✕"));
 
 const viewMail = (id) => el("button", { class: "small", onclick: () => { openTab("mail"); showMail(id); } }, "View");
+
+function replyRow(m, { urgent = false } = {}) {
+  return el("li", { class: `${m.unread ? "unread" : ""} ${urgent ? "sev-urgent" : ""}` },
+    el("div", { class: "grow" }, el("div", { class: "title" }, m.subject, urgent && el("span", { class: "tag urgent" }, "Urgent")),
+      el("div", { class: "muted src-line" }, srcTag("outlook", m.internal ? "internal sender" : "external sender"), `${fromLine(m.sender_name, m.sender)} · ${when(m.received)}`)),
+    fuActions(m, { mute: urgent ? null : m.sender || m.sender_name }, viewMail(m.id),
+      el("button", { class: "small primary", onclick: () => replyDialog(m, false) }, "Reply"),
+      m.sender && el("button", { class: "small alt", title: "Chat in Teams", onclick: () => openTeamsChat(m.sender, "") }, "Teams"),
+      !urgent && (m.sender || m.sender_name) && el("button", { class: "icon subtle", title: `Always treat ${m.sender_name || m.sender} as urgent`, onclick: () => markUrgent(m.sender || m.sender_name) }, "Mark urgent")));
+}
+
+function teamsRow(m) {
+  return el("li", { class: `${m.unread ? "unread" : ""} ${m.urgent ? "sev-urgent" : ""}` },
+    el("div", { class: "grow" },
+      el("div", { class: "title" }, m.from_name || m.subject, m.urgent && el("span", { class: "tag urgent" }, "Urgent")),
+      el("div", { class: "muted src-line" }, srcTag("teams", `notification from ${m.sender || "Teams"}`), [m.from_name ? m.subject : "", when(m.received)].filter(Boolean).join(" · ")),
+      m.preview && el("div", { class: "fu-preview" }, String(m.preview).slice(0, 160))),
+    fuActions(m, { who: m.from_name || m.sender_name },
+      el("button", { class: "small alt", onclick: () => openExternal("msteams:") }, "Open Teams"),
+      el("button", { class: "small", title: "Mark this Teams email read", onclick: () => guarded(async () => { await api("/api/mail/read", { id: m.id, read: true }); loaders.today(); }) }, "Done")));
+}
 
 function renderFollowups(f) {
   const box = $("#followups");
@@ -452,30 +1175,94 @@ function renderFollowups(f) {
   const hiddenNote = [h.more && `${h.more} more`, h.older && `${h.older} older`, h.automated && `${h.automated} automated`]
     .filter(Boolean).join(" · ");
   box.replaceChildren(
-    fuGroup("Needs your reply", f.needs_reply, (m) => el("li", { class: m.unread ? "unread" : "" },
-      el("div", { class: "grow" }, el("div", { class: "title" }, m.subject),
-        el("div", { class: "muted" }, `${m.sender_name} · ${when(m.received)}`)),
-      fuActions(m.id, m.sender || m.sender_name, viewMail(m.id),
-        el("button", { class: "small primary", onclick: () => replyDialog(m, false) }, "Reply"),
-        m.sender && el("button", { class: "small alt", title: "Chat in Teams", onclick: () => openTeamsChat(m.sender, "") }, "Teams"))),
-      null, "Nothing waiting on you."),
+    fuGroup("Urgent — reply needed", f.urgent_reply, (m) => replyRow(m, { urgent: true }),
+      null, "No urgent replies. Set who counts under Urgent people.", `urgent ${f.urgent_reply?.length ? "hot" : ""}`),
+    fuGroup("Needs your reply", f.needs_reply, (m) => replyRow(m), null, "Nothing waiting on you."),
+    fuGroup("Teams — reply needed", f.teams_reply, teamsRow, null, "No unread Teams messages.",
+      f.teams_reply?.some((m) => m.urgent) ? "hot" : ""),
     fuGroup("Awaiting their reply", f.awaiting_reply, (m) => el("li", {},
       el("div", { class: "grow" }, el("div", { class: "title" }, m.subject),
-        el("div", { class: "muted" }, `To ${m.to.slice(0, 60)} · sent ${when(m.sent)}`)),
-      fuActions(m.id, null,
-        el("button", { class: "small", title: "Opens a follow-up draft in Outlook", onclick: () => nudge(m) }, "Nudge"))),
+        el("div", { class: "muted src-line" }, srcTag("sent"), `To ${String(m.to || "").slice(0, 60)} · sent ${when(m.sent)}`)),
+      fuActions(m, { who: `to ${String(m.to || "").slice(0, 60)}` },
+        el("button", { class: "small", title: "Opens a follow-up draft in Outlook", onclick: () => nudge(m) }, "Nudge"),
+        el("button", { class: "small", title: "Alert me if nobody replies", onclick: () => remindDialog(m) }, "Remind me"))),
       null, "No one owes you a reply."),
     fuGroup("Flagged", f.flagged, (m) => el("li", {},
       el("div", { class: "grow" }, el("div", { class: "title" }, m.subject, dueTag(m.due)),
-        el("div", { class: "muted" }, `${m.sender_name} · ${when(m.received)}`)),
-      fuActions(m.id, m.sender_name, viewMail(m.id),
+        el("div", { class: "muted src-line" }, srcTag("flagged"), `${m.sender_name} · ${when(m.received)}`)),
+      fuActions(m, { mute: m.sender_name }, viewMail(m.id),
         el("button", { class: "small", onclick: () => completeTask({ source: "outlook", id: m.id, subject: m.subject }) }, "Done"))),
       hiddenNote && `Hidden: ${hiddenNote} (of ${h.total} flagged)`, "No recent flags."),
     fuGroup("Unread from VIPs", f.unread_vip, (m) => el("li", { class: "unread" },
       el("div", { class: "grow" }, el("div", { class: "title" }, m.subject),
-        el("div", { class: "muted" }, `${m.sender_name} · ${when(m.received)}`)),
-      fuActions(m.id, m.sender || m.sender_name, viewMail(m.id))),
+        el("div", { class: "muted src-line" }, srcTag("outlook", "VIP sender"), `${fromLine(m.sender_name, m.sender)} · ${when(m.received)}`)),
+      fuActions(m, { mute: m.sender || m.sender_name }, viewMail(m.id))),
       null, "No unread VIP mail."));
+}
+
+// ---- urgent people ---------------------------------------------------------------
+
+const lowerSet = (list) => new Set((list || []).map((p) => String(p).toLowerCase()));
+
+async function markUrgent(who) {
+  await guarded(async () => {
+    const u = await api("/api/followups/urgent");
+    const locked = lowerSet(u.from_config);
+    const mine = (u.people || []).filter((p) => !locked.has(String(p).toLowerCase()));
+    if (lowerSet(u.people).has(String(who).toLowerCase())) { toast(`${who} is already urgent.`); return; }
+    await api("/api/followups/urgent", { people: [...mine, who] });
+    toast(`${who} added to urgent people.`);
+    loaders.today(true);
+  });
+}
+
+async function urgentDialog() {
+  await guarded(async () => {
+    const u = await api("/api/followups/urgent");
+    const locked = lowerSet(u.from_config);
+    const fixed = (u.people || []).filter((p) => locked.has(String(p).toLowerCase()));
+    const mine = (u.people || []).filter((p) => !locked.has(String(p).toLowerCase()));
+    const list = el("ul", { class: "list dialog-list" });
+    const err = el("div", { class: "err", role: "alert" });
+    const input = el("input", { placeholder: "Full name (Sean Cordero) or email address", maxlength: "120", "aria-label": "Add a person",
+      onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } } });
+    const draw = () => list.replaceChildren(
+      ...fixed.map((p) => el("li", {}, el("div", { class: "grow mono" }, p),
+        el("span", { class: "tag locked", title: "Listed in config.yaml (followups.urgent_people). Edit it there." }, "config.yaml"))),
+      ...mine.map((p, i) => el("li", {}, el("div", { class: "grow mono" }, p),
+        el("button", { type: "button", class: "small subtle", "aria-label": `Remove ${p}`, onclick: () => { mine.splice(i, 1); draw(); } }, "Remove"))),
+      ...(!fixed.length && !mine.length ? [el("li", { class: "empty" }, "No one yet. Add the people whose mail should jump the queue.")] : []));
+    const add = () => {
+      const v = input.value.trim();
+      err.textContent = "";
+      if (!v) return;
+      if (v.length > 120 || !/^[\p{L}\p{N}_ .'@&()-]+$/u.test(v)) {
+        err.textContent = "Use a name or email address (letters, digits, spaces and . ' @ & ( ) - only).";
+        return;
+      }
+      if (![...fixed, ...mine].some((p) => p.toLowerCase() === v.toLowerCase())) mine.push(v);
+      input.value = "";
+      draw();
+      input.focus();
+    };
+    draw();
+    showDialog(el("h3", {}, "Urgent people"),
+      el("p", { class: "muted" }, `Mail and Teams messages from these people go to “Urgent — reply needed”. Match by full name or email.${u.internal_domains?.length ? ` Internal domains: ${u.internal_domains.join(", ")}.` : ""}`),
+      list,
+      el("div", { class: "inline-field" }, input, el("button", { type: "button", onclick: add }, "+ Add")),
+      err,
+      fixed.length ? el("p", { class: "muted" }, "Entries marked config.yaml can't be removed here; edit followups.urgent_people in config.yaml.") : null,
+      el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Cancel"),
+        el("button", { type: "button", class: "primary", onclick: () => guardedIn(err, async () => {
+          if (input.value.trim()) add();
+          if (err.textContent) return;
+          await api("/api/followups/urgent", { people: mine });
+          $("#dialog").close();
+          toast("Urgent people saved.");
+          loaders.today(true);
+        }) }, "Save")));
+    input.focus();
+  });
 }
 
 async function nudge(m) {
@@ -563,12 +1350,121 @@ loaders.today = (refresh = false) => guarded(async () => {
     renderTasks(todayData.tasks);
     renderFollowups(todayData.followups);
     renderStats(todayData);
+    renderSnoozedButton(todayData);
+    loadTodayAlerts();
   } finally {
     btn.disabled = false; btn.textContent = "↻ Rescan";
   }
 });
 
 $("#today-refresh").addEventListener("click", () => loaders.today(true));
+$("#snoozed-btn").addEventListener("click", snoozedDialog);
+$("#urgent-btn").addEventListener("click", urgentDialog);
+
+// ---- launch bar (hotbar) -----------------------------------------------------------
+
+let launchItems = [];
+
+const launchGlyph = (url) => /^https?:/i.test(url) ? "◈" : /^msteams:/i.test(url) ? "✉" : "▣";
+
+async function loadLauncher() {
+  try { launchItems = (await api("/api/launcher")).items || []; } catch { /* keep what we have */ }
+  renderLauncher();
+}
+
+function renderLauncher() {
+  $("#launch-slots").replaceChildren(
+    ...launchItems.map((it, i) => el("button", {
+        type: "button", class: "hot-slot", "data-i": i,
+        title: `${it.url}${i < 9 ? `  (Alt+${i + 1})` : ""}`,
+        "aria-label": `Open ${it.name}${i < 9 ? `, Alt+${i + 1}` : ""}`,
+        onclick: () => openLaunch(i),
+      },
+      el("span", { class: "key", "aria-hidden": "true" }, i < 9 ? String(i + 1) : "·"),
+      el("span", { class: "glyph", "aria-hidden": "true" }, launchGlyph(it.url)),
+      el("span", { class: "name" }, it.name))),
+    el("button", { type: "button", class: "hot-slot add", onclick: launchAddDialog }, "+ Add"));
+}
+
+function openLaunch(i) {
+  const slot = document.querySelector(`.hot-slot[data-i="${i}"]`);
+  if (slot) { slot.classList.remove("fired"); void slot.offsetWidth; slot.classList.add("fired"); }
+  guarded(() => api("/api/launcher/open", { index: i }));
+}
+
+async function saveLauncher(items) {
+  const r = await api("/api/launcher", { items });
+  launchItems = r.items;
+  renderLauncher();
+  $("#dialog").close();
+  toast("Hotbar saved.");
+}
+
+const LAUNCH_HINT = "A web address (https://…), a Teams link (msteams:…) or a folder/file path (C:\\… or \\\\server\\share\\…).";
+
+function launchAddDialog() {
+  const name = el("input", { placeholder: "Name (e.g. Pulse)", maxlength: "40", "aria-label": "Name" });
+  const url = el("input", { placeholder: "https://… or C:\\folder", "aria-label": "Link or path", class: "mono" });
+  const err = el("div", { class: "err", role: "alert" });
+  const save = () => guardedIn(err, async () => {
+    if (!name.value.trim()) { name.focus(); throw new Error("Give the button a name."); }
+    await saveLauncher([...launchItems, { name: name.value.trim(), url: url.value.trim() }]);
+  });
+  url.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } });
+  showDialog(el("h3", {}, `Add hotbar slot ${launchItems.length + 1}`),
+    el("label", { class: "field-label" }, "Name"), name,
+    el("label", { class: "field-label" }, "Opens"), url,
+    el("p", { class: "muted" }, LAUNCH_HINT), err,
+    el("div", { class: "row" },
+      el("button", { type: "button", class: "subtle", onclick: () => launchEditDialog() }, "Edit all…"),
+      el("span", { class: "spacer" }),
+      el("button", { value: "cancel", class: "subtle" }, "Cancel"),
+      el("button", { type: "button", class: "primary", onclick: save }, "Add")));
+  name.focus();
+}
+
+function launchEditDialog() {
+  const rows = launchItems.map((x) => ({ ...x }));
+  const list = el("ol", { class: "launch-edit" });
+  const err = el("div", { class: "err", role: "alert" });
+  const draw = (focus) => {
+    list.replaceChildren(...rows.map((r, i) => {
+      const move = (to) => { [rows[i], rows[to]] = [rows[to], rows[i]]; draw(`[data-move="${to}${to < i ? "u" : "d"}"]`); };
+      return el("li", {},
+        el("span", { class: "key", "aria-hidden": "true" }, i + 1),
+        el("input", { value: r.name, placeholder: "Name", maxlength: "40", "aria-label": `Slot ${i + 1} name`, oninput: (e) => { r.name = e.target.value; } }),
+        el("input", { value: r.url, placeholder: "https://… or C:\\folder", class: "mono", "aria-label": `Slot ${i + 1} link`, oninput: (e) => { r.url = e.target.value; } }),
+        el("button", { type: "button", class: "icon subtle", "data-move": `${i}u`, title: "Move up", "aria-label": `Move slot ${i + 1} up`, disabled: i === 0, onclick: () => move(i - 1) }, "↑"),
+        el("button", { type: "button", class: "icon subtle", "data-move": `${i}d`, title: "Move down", "aria-label": `Move slot ${i + 1} down`, disabled: i === rows.length - 1, onclick: () => move(i + 1) }, "↓"),
+        el("button", { type: "button", class: "icon subtle danger", title: "Remove", "aria-label": `Remove slot ${i + 1}`, onclick: () => { rows.splice(i, 1); draw(); } }, "✕"));
+    }));
+    if (!rows.length) list.append(el("li", { class: "empty" }, "No buttons. Add one below."));
+    if (focus) list.querySelector(focus)?.focus();
+  };
+  draw();
+  const save = () => guardedIn(err, async () => {
+    const items = rows.map((r) => ({ name: r.name.trim(), url: r.url.trim() })).filter((r) => r.name || r.url);
+    const bad = items.find((r) => !r.name);
+    if (bad) throw new Error(`${bad.url}: give it a name.`);
+    await saveLauncher(items);
+  });
+  showDialog(el("h3", {}, "Edit hotbar"),
+    el("p", { class: "muted" }, `${LAUNCH_HINT} Slots 1–9 also open with Alt+number.`),
+    list, err,
+    el("div", { class: "row" },
+      el("button", { type: "button", class: "subtle", onclick: () => { if (rows.length < 24) { rows.push({ name: "", url: "" }); draw("li:last-child input"); } } }, "+ Add slot"),
+      el("span", { class: "spacer" }),
+      el("button", { value: "cancel", class: "subtle" }, "Cancel"),
+      el("button", { type: "button", class: "primary", onclick: save }, "Save")));
+}
+
+$("#launch-edit").addEventListener("click", () => launchEditDialog());
+document.addEventListener("keydown", (e) => {
+  if (!e.altKey || e.ctrlKey || e.metaKey || !/^[1-9]$/.test(e.key)) return;
+  if ($("#dialog").open || $("#palette").classList.contains("open")) return;
+  const i = Number(e.key) - 1;
+  if (launchItems[i]) { e.preventDefault(); openLaunch(i); }
+});
 $("#new-task").addEventListener("click", () => newTaskDialog());
 $("#asana-btn").addEventListener("click", asanaDialog);
 $("#muted-btn").addEventListener("click", mutedDialog);
@@ -684,8 +1580,19 @@ function paletteSources() {
   for (const source of extraPaletteSources) {
     try { for (const i of source() || []) add(i.group || "Commands", i.label, i.hint, i.run); } catch { /* module not ready */ }
   }
-  const tabs = { today: "Today", alerts: "Alerts", mail: "Mail", calendar: "Calendar", teams: "Teams", websites: "Websites", sql: "SQL" };
-  for (const [k, v] of Object.entries(tabs)) add("Commands", `Go to ${v}`, "tab", () => openTab(k));
+  const order = /^#?(\d{7,10})$/.exec($("#palette-input").value.trim());
+  if (order) add("Commands", `Look up order ${order[1]}`, "SQL", () => orderDialog(order[1]));
+  launchItems.forEach((it, i) => add("Commands", `Open ${it.name}`, `hotbar ${i + 1}`, () => openLaunch(i)));
+  add("Commands", "Edit hotbar", "launch buttons", () => launchEditDialog());
+  add("Commands", "Show snoozed", "snoozes + no-reply reminders", snoozedDialog);
+  add("Commands", "Urgent people", "who counts as urgent", urgentDialog);
+  // "Go to <tab>" for every tab in both nav groups (module tabs included), each landing in its own pane.
+  for (const b of document.querySelectorAll(".nav-group button[data-tab]")) {
+    const label = `Go to ${b.dataset.label || b.textContent.trim()}`;
+    if (!out.some((i) => i.label === label)) add("Commands", label, `${b.closest(".nav-group").dataset.pane === "work" ? "WORK" : "COMMS"} tab`, () => openTab(b.dataset.tab));
+  }
+  if (window.innerWidth >= SPLIT_MIN_WIDTH) add("Commands", layout.split ? "Single pane" : "Split panes", "layout", () => $("#layout-toggle").click());
+  for (const p of proj.list) add("Projects", `Work on: ${p.name}`, p.path, () => { setActiveProject(p.path); openTab("projects"); });
   add("Commands", "New task", "Outlook or Asana", () => newTaskDialog());
   add("Commands", "Rescan follow-ups", "", () => { openTab("today"); loaders.today(true); });
   add("Commands", "Focus 30 minutes", "mute non-urgent alerts", () => setFocus(30));
@@ -703,9 +1610,10 @@ function paletteSources() {
     const next = agenda.find((m) => m.join_url && new Date(m.end) > now);
     if (next) add("Commands", `Join next meeting: ${next.subject}`, timeOf(next.start), () => openExternal(next.join_url));
     for (const m of agenda) add("Agenda", m.subject, timeOf(m.start), () => guarded(() => api("/api/outlook/open", { id: m.id })));
+    for (const m of agenda.filter((m) => new Date(m.end) > now)) add("Agenda", `Prep: ${m.subject}`, timeOf(m.start), () => prepDialog(m.id, m));
     for (const t of todayData.tasks.items) add("Tasks", t.subject, dueText(t.due), () => t.url ? openExternal(t.url) : guarded(() => api("/api/outlook/open", { id: t.id })));
     const f = todayData.followups.error ? {} : todayData.followups;
-    for (const m of [...(f.needs_reply || []), ...(f.flagged || []), ...(f.unread_vip || [])])
+    for (const m of [...(f.urgent_reply || []), ...(f.needs_reply || []), ...(f.teams_reply || []), ...(f.flagged || []), ...(f.unread_vip || [])])
       add("Follow-ups", m.subject, m.sender_name, () => { openTab("mail"); showMail(m.id); });
   }
   for (const q of sqlInfo.queries || []) add("SQL", `Run query: ${q.name}`, q.connection, () => { openTab("sql"); $("#sql-query").value = q.name; renderParams(); });
@@ -726,8 +1634,9 @@ function renderPalette() {
   const words = q.split(/\s+/).filter(Boolean);
   pal.items = paletteSources().map((i) => ({ ...i, score: paletteScore(i, words) })).filter((i) => i.score > 0)
     .sort((a, b) => b.score - a.score).slice(0, 60);
-  const order = ["Commands", "Agenda", "Tasks", "Follow-ups", "SQL", "Mail"];
-  pal.items.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
+  const order = ["Commands", "Projects", "Agenda", "Tasks", "Follow-ups", "Pulse", "Toolkit", "SQL", "Mail"];
+  const rank = (g) => (order.includes(g) ? order.indexOf(g) : order.length - 1);  // unknown module groups before Mail
+  pal.items.sort((a, b) => rank(a.group) - rank(b.group));
   pal.active = Math.min(pal.active, Math.max(0, pal.items.length - 1));
   const rows = [];
   let group = null;
@@ -800,16 +1709,76 @@ async function refresh() {
     const sites = Object.values(st.websites).filter(Boolean);
     const sitesOk = sites.every((s) => s.ok);
     const dot = (state) => el("span", { class: `dot ${state === undefined ? "" : state ? "ok" : "bad"}` });
+    const item = (state, name) => el("span", { title: `${name}: ${state === undefined ? "not checked" : state ? "OK" : "problem"}` },
+      dot(state), el("span", { class: "status-name" }, name));
     $("#status").replaceChildren(
-      el("span", {}, dot(st.outlook ? st.outlook.ok : undefined), "Outlook"),
-      el("span", {}, dot(st.teams ? st.teams.ok : undefined), "Teams"),
-      ...(sites.length ? [el("span", {}, dot(sitesOk), "Websites")] : []));
+      item(st.outlook ? st.outlook.ok : undefined, "Outlook"),
+      item(st.teams ? st.teams.ok : undefined, "Teams"),
+      ...(sites.length ? [item(sitesOk, "Websites")] : []));
+    renderWindowControls(st);
     if (unread !== lastUnread && $("#tab-alerts").classList.contains("active")) loaders.alerts();
+    if (unread !== lastUnread && lastUnread !== -1 && $("#tab-today").classList.contains("active")) loadTodayAlerts();
     lastUnread = unread;
   } catch { $("#status").textContent = "Server not reachable"; }
 }
 
+// ---- window controls (desktop app: frameless window) ------------------------------
+
+let isFullscreen = null, windowStateAsked = false;
+function renderWindowControls(st) {
+  const desktop = st.desktop === true;
+  $("#win-controls").hidden = !desktop;
+  if (!desktop) { setDragRegions(false); return; }
+  if (!windowStateAsked) {
+    windowStateAsked = true;
+    api("/api/window/state").then((ws) => setFullscreenUi(!!ws.fullscreen)).catch(() => setFullscreenUi(false));
+  }
+}
+// The frameless window drags by the header's empty parts (never its buttons), and only when not full screen.
+const DRAG_PARTS = "header, header .logo, header .logo *, header .navs, header .nav-group, header .nav-label, header .header-right";
+function setDragRegions(on) {
+  document.querySelectorAll(DRAG_PARTS).forEach((n) => n.classList.toggle("pywebview-drag-region", on));
+}
+function setFullscreenUi(on) {
+  isFullscreen = !!on;
+  setDragRegions(!isFullscreen && !$("#win-controls").hidden);
+  const b = $("#win-full");
+  b.textContent = isFullscreen ? "❐" : "⛶";
+  b.title = isFullscreen ? "Leave full screen (F11)" : "Full screen (F11)";
+  b.setAttribute("aria-label", isFullscreen ? "Leave full screen" : "Full screen");
+  b.setAttribute("aria-pressed", String(isFullscreen));
+}
+async function toggleFullscreen() {
+  await guarded(async () => { const r = await api("/api/window/fullscreen", {}); setFullscreenUi(r.fullscreen); });
+}
+$("#win-lock").addEventListener("click", async () => {
+  if (!await confirmDialog("Lock Command Center?", "You'll need Windows Hello to get back in. Alerts keep running.", "Lock")) return;
+  // The server drops the session and the window switches itself to the local lock screen.
+  await guarded(() => api("/api/session/lock", {}));
+});
+$("#win-restart").addEventListener("click", async () => {
+  if (!await confirmDialog("Restart Command Center?", "The app closes and opens again. Claude sessions and the VS Code server stop.", "Restart")) return;
+  const overlay = el("div", { class: "restart-overlay", role: "status", "aria-live": "assertive" },
+    el("div", { class: "restart-box" }, el("div", { class: "restart-mark" }, "◢◤"), el("div", {}, "Restarting…")));
+  document.body.append(overlay);
+  try { await api("/api/app/restart", {}); } catch (e) { overlay.remove(); showMessage("Restart", e.message); }
+});
+// Buttons in the header must never start a window drag: stop their mousedown before pywebview's body listener.
+document.querySelector("header").addEventListener("mousedown", (e) => {
+  if (e.target.closest("button, input, select, textarea, a, [tabindex]")) e.stopPropagation();
+});
+$("#win-min").addEventListener("click", () => guarded(() => api("/api/window/minimize", {})));
+$("#win-full").addEventListener("click", toggleFullscreen);
+$("#win-hide").addEventListener("click", () => guarded(() => api("/api/window/hide", {})));
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "F11" || $("#win-controls").hidden) return;
+  e.preventDefault();
+  toggleFullscreen();
+});
+
 tickClock();
+loadLauncher();
+loadProjectList();
 refresh().then(() => loaders.today());
 setInterval(refresh, 5000);
 
@@ -819,21 +1788,45 @@ setInterval(refresh, 5000);
 //   CC.registerTab({ id: "toolkit", label: "Toolkit", render(section) {...}, onShow() {...} })
 //   CC.addPaletteSource(() => [{ group: "Toolkit", label: "...", hint: "...", run() {...} }])
 window.CC = {
-  $, el, api, guarded, fill, when, timeOf, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
+  $, el, api, guarded, fill, when, timeOf, srcTag, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
   get todayData() { return todayData; },
-  registerTab({ id, label, render, onShow, before }) {
-    if (document.querySelector(`#tab-${id}`)) return;
-    const nav = document.querySelector("nav");
-    const button = el("button", { "data-tab": id }, label);
-    const ref = before ? nav.querySelector(`button[data-tab="${before}"]`) : null;
+  // The project picked in "Working on:" (right pane), or null. Changes fire document "cc:project" {detail:{path,name}}.
+  get activeProject() { return activeProject(); },
+  get projects() { return proj.list.slice(); },
+  setActiveProject,
+  get split() { return layout.split; },
+  paneOf,
+  // pane: "comms" | "work". Defaults: known ids by PANE_OF, everything else goes to WORK.
+  registerTab({ id, label, render, onShow, before, pane }) {
+    if (!TAB_ID.test(String(id)) || document.querySelector(`#tab-${id}`)) return;
+    pane = pane === "comms" || pane === "work" ? pane : PANE_OF[id] || "work";
+    const nav = $(`#nav-${pane}`);
+    const button = el("button", { "data-tab": id, "data-label": label }, label);
+    const order = TAB_ORDER[pane];
+    let ref = null;
+    if (order.includes(id)) {
+      // known tabs keep a fixed order whatever order the modules load in
+      const later = order.slice(order.indexOf(id) + 1);
+      ref = [...nav.querySelectorAll("button[data-tab]")].find((b) => later.includes(b.dataset.tab)) || null;
+    } else if (before) ref = nav.querySelector(`button[data-tab="${CSS.escape(before)}"]`);
     ref ? nav.insertBefore(button, ref) : nav.append(button);
     const section = el("section", { id: `tab-${id}`, class: "tab" });
-    document.querySelector("main").append(section);
+    $(`#pane-${pane}-body`).append(section);
     render?.(section);
     if (onShow) loaders[id] = onShow;
+    if (layout.ready) runLoaders(applyLayout());
   },
   addPaletteSource(fn) { extraPaletteSources.push(fn); },
   wideDialog(...content) { $("#dialog").classList.add("wide"); showDialog(...content); },
 };
 $("#dialog").addEventListener("close", () => $("#dialog").classList.remove("wide"));
 document.dispatchEvent(new Event("cc:ready"));
+
+// Modules register their tabs while their scripts load (right after this file); lay out once they're in.
+function initLayout() {
+  if (layout.ready) return;
+  layout.ready = true;
+  runLoaders(applyLayout().filter((id) => id !== "today"));  // Today loads with the first status refresh
+}
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initLayout, { once: true });
+else initLayout();

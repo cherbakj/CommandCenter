@@ -1,0 +1,37 @@
+/* Profile avatar + panel (profile.js) and the appearance switches it sets on <html>. */
+.pf-avatar {
+  width: 2.2rem; height: 2.2rem; padding: 0; display: grid; place-items: center;
+  font: 800 .85rem var(--font-display); letter-spacing: .04em; color: var(--on-accent, #031400);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); border: none;
+  clip-path: polygon(.5rem 0, 100% 0, 100% calc(100% - .5rem), calc(100% - .5rem) 100%, 0 100%, 0 .5rem);
+}
+.pf-avatar:hover { filter: brightness(1.15); color: var(--on-accent, #031400); }
+
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.4rem; }
+.pf-row { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+.pf-field { display: flex; flex-direction: column; gap: .25rem; margin-bottom: .5rem; }
+.pf-field input[type=color] { height: 2.4rem; padding: .15rem; cursor: pointer; }
+.pf-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .4rem; margin-bottom: .7rem; }
+.pf-preset { display: flex; align-items: center; gap: .5rem; text-transform: none; letter-spacing: 0; font: 600 .82rem var(--font-ui); color: var(--text); }
+.pf-preset.on { border-color: var(--accent); box-shadow: var(--glow); color: #fff; }
+.pf-sw { display: inline-flex; flex-shrink: 0; }
+.pf-sw i { width: .8rem; height: 1.2rem; display: block; }
+.pf-scale { display: flex; align-items: center; gap: .6rem; }
+.pf-scale input { margin: 0; flex: 1; accent-color: var(--accent); }
+.pf-scale-out { font: 600 .85rem var(--font-mono); color: var(--accent); min-width: 3rem; }
+.pf-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem .8rem; margin: .4rem 0 .6rem; }
+.pf-toggle { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
+
+/* appearance switches */
+/* Same fluid size as style.css, times the profile's text size. Everything is in rem, so it all scales. */
+html { font-size: calc(clamp(14px, calc(8px + .25vw + .35vh), 19px) * var(--pf-scale, 1)); }
+html.pf-compact { --gap: .6rem; }
+html.pf-compact .panel { padding: .65rem .8rem; }
+html.pf-compact .list li { padding: .38rem .6rem; }
+html.pf-compact .stat { padding: .5rem .7rem; }
+html.pf-no-scanlines body::after { display: none; }
+html.pf-no-grid body { background-image: none; }
+html.pf-no-glow * { text-shadow: none !important; }
+html.pf-no-glow .panel::before, html.pf-no-glow .stat::after { filter: none !important; box-shadow: none !important; }
+html.pf-no-glow button:hover, html.pf-no-glow nav button.active { box-shadow: none !important; }
+html.pf-no-motion *, html.pf-no-motion *::before, html.pf-no-motion *::after { animation: none !important; transition: none !important; }

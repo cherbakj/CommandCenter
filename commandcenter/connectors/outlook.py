@@ -17,7 +17,7 @@ import pythoncom
 import pywintypes
 import win32com.client
 
-from .. import alerts, config, db
+from .. import alerts, config, db, people
 
 log = logging.getLogger(__name__)
 
@@ -193,15 +193,18 @@ def current_focus_block(keywords) -> dict | None:
     return None
 
 
-def _meetings(start, end) -> list[dict]:
+OL_BUSY_STATUS = {0: "free", 1: "tentative", 2: "busy", 3: "out of office", 4: "working elsewhere"}
+
+
+def _meetings(start, end, limit=50, all_day=False) -> list[dict]:
     items = _ns().GetDefaultFolder(OL_FOLDER_CALENDAR).Items
     items.Sort("[Start]")
     items.IncludeRecurrences = True
     fmt = "%m/%d/%Y %I:%M %p"
     found = items.Restrict(f"[Start] <= '{end.strftime(fmt)}' AND [End] >= '{start.strftime(fmt)}'")
     out, item = [], found.GetFirst()
-    while item is not None and len(out) < 50:
-        if not item.AllDayEvent:
+    while item is not None and len(out) < limit:
+        if all_day or not item.AllDayEvent:
             body = item.Body or ""
             link = TEAMS_LINK.search(body)
             out.append({
@@ -212,9 +215,17 @@ def _meetings(start, end) -> list[dict]:
                 "location": item.Location or "",
                 "organizer": item.Organizer or "",
                 "join_url": link.group(0) if link else None,
+                "all_day": bool(item.AllDayEvent),
+                "status": OL_BUSY_STATUS.get(item.BusyStatus, ""),
             })
         item = found.GetNext()
     return out
+
+
+def meetings_range(days=10) -> list[dict]:
+    """Calendar items (including all-day ones) from the start of today through `days` days."""
+    start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return _meetings(start, start + timedelta(days=days), limit=400, all_day=True)
 
 
 # ---- actions -----------------------------------------------------------------
@@ -307,8 +318,11 @@ def meeting_prep(entry_id, days=21) -> dict:
                   + _mail_rows(OL_FOLDER_SENT, f'@SQL=("urn:schemas:httpmail:date" >= \'{since}\') AND ({who_out})', "SentOn", 8))
         recent = sorted(recent, key=lambda m: m["received"] or "", reverse=True)[:10]
     link = TEAMS_LINK.search(item.Body or "")
+    # A recurring series' EntryID opens the series, whose Start is the first occurrence: leave times to the caller.
+    times = {} if item.IsRecurring else {"start": _local_time(item.Start).isoformat(timespec="minutes"),
+                                         "end": _local_time(item.End).isoformat(timespec="minutes")}
     return {"id": entry_id, "subject": item.Subject or "(no subject)", "organizer": item.Organizer or "",
-            "location": item.Location or "", "join_url": link.group(0) if link else None,
+            "location": item.Location or "", "join_url": link.group(0) if link else None, **times,
             "agenda": _agenda_text(item.Body), "attendees": attendees, "recent_mail": recent}
 
 
@@ -415,8 +429,36 @@ def _is_bulk(item, sender) -> bool:
     return "list-unsubscribe:" in headers or "precedence: bulk" in headers or "precedence: list" in headers
 
 
+# Messages that never need a reply even from a coworker: auto-replies, sharing notices, meeting responses.
+NO_REPLY_SUBJECT = re.compile(
+    r"^(automatic reply|auto[- ]?reply|out of office|undeliverable|delivery has failed|accepted:|declined:|"
+    r"tentative:|canceled:|cancelled:)|\bshared (?:the|a) (?:file|folder)\b|\binvited you to\b", re.I)
+TEAMS_NOTIFY_DOMAIN = "teams.microsoft.com"
+TEAMS_SUBJECT_PATTERNS = [
+    re.compile(r"^(?P<name>.+?) (?:sent you|mentioned you|replied to|messaged you|is trying to reach you)", re.I),
+    re.compile(r"new messages? from (?P<name>.+?)(?: in .*)?$", re.I),
+    re.compile(r"^(?:missed|new) (?:chat|message) from (?P<name>.+)$", re.I),
+]
+
+
+def teams_sender(subject) -> str:
+    """The person's name from a Teams missed-activity email subject, or "" if it can't be read."""
+    for pattern in TEAMS_SUBJECT_PATTERNS:
+        m = pattern.search(subject or "")
+        if m:
+            return m.group("name").strip(" :")
+    return ""
+
+
+def is_teams_notification(sender_smtp) -> bool:
+    return (sender_smtp or "").lower().endswith(TEAMS_NOTIFY_DOMAIN)
+
+
 def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -> dict:
-    """Sent mail nobody answered, mail you haven't replied to, and unread mail from VIP senders."""
+    """Sent mail nobody answered, mail you haven't replied to (internal senders by default, urgent people
+    split out), unread Teams missed-activity emails, and unread mail from VIP senders."""
+    internal_only = config.section("followups", {}).get("needs_reply_scope", "internal") == "internal"
+    urgent = people.urgent_people()
     me_name, me_smtp = _me()
     now = datetime.now()
     horizon = now - timedelta(days=max(awaiting_days, reply_days) + 7)
@@ -435,7 +477,8 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -
             sent_candidates[conv] = {"id": item.EntryID, "subject": item.Subject or "(no subject)",
                                      "to": to, "sent": sent_on.isoformat(timespec="minutes"), "_sent": sent_on}
 
-    inbox_latest, needs_reply, unread_vip, reply_seen = {}, [], [], set()
+    inbox_latest, needs_reply, urgent_reply, teams_reply, unread_vip, reply_seen = {}, [], [], [], [], set()
+    recent = now - timedelta(days=reply_days)
     for item in _iter_inbox(3000):
         received = _local_time(item.ReceivedTime)
         if received < horizon:
@@ -445,20 +488,40 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -
         sender = _sender_smtp(item).lower()
         if sender == me_smtp:
             continue
+        # Teams missed-activity emails stay pending until you mark them done (read) or dismiss them.
+        if is_teams_notification(sender):
+            if item.UnRead and received >= recent and len(teams_reply) < 25:
+                who = teams_sender(item.Subject)
+                teams_reply.append({**_summary(item), "from_name": who, "urgent": people.matches("", who, urgent)})
+            continue
         if item.UnRead and vip_senders and _sender_matches(sender, vip_senders) and len(unread_vip) < 25:
             unread_vip.append(_summary(item))
-        if (received >= now - timedelta(days=reply_days) and conv not in reply_seen and len(needs_reply) < 25
-                and me_name and me_name in (item.To or "").lower()):
-            reply_seen.add(conv)  # only judge the newest message in each conversation
-            replied = _prop(item, PR_LAST_VERB) in REPLIED_VERBS or sent_latest.get(conv, datetime.min) > received
-            if not replied and not _is_bulk(item, sender):
-                needs_reply.append(_summary(item))
+        if received < recent or conv in reply_seen:
+            continue
+        is_urgent = people.matches(sender, item.SenderName or "", urgent)
+        # Urgent people count even when you're only on CC.
+        addressed = (item.To or "").lower() + (";" + (item.CC or "").lower() if is_urgent else "")
+        if not (me_name and me_name in addressed):
+            continue
+        reply_seen.add(conv)  # only judge the newest message in each conversation
+        if internal_only and not is_urgent and not people.is_internal(sender):
+            continue
+        replied = _prop(item, PR_LAST_VERB) in REPLIED_VERBS or sent_latest.get(conv, datetime.min) > received
+        if replied or _is_bulk(item, sender) or NO_REPLY_SUBJECT.search(item.Subject or ""):
+            continue
+        summary = {**_summary(item), "internal": people.is_internal(sender), "urgent": is_urgent}
+        if is_urgent and len(urgent_reply) < 25:
+            urgent_reply.append(summary)
+        elif not is_urgent and len(needs_reply) < 25:
+            needs_reply.append(summary)
 
     awaiting = []
     for conv, s in sent_candidates.items():
         if inbox_latest.get(conv, datetime.min) <= s.pop("_sent"):
             awaiting.append(s)
-    return {"awaiting_reply": awaiting[:25], "needs_reply": needs_reply, "unread_vip": unread_vip}
+    teams_reply.sort(key=lambda t: not t["urgent"])  # urgent people first
+    return {"urgent_reply": urgent_reply, "needs_reply": needs_reply, "teams_reply": teams_reply,
+            "awaiting_reply": awaiting[:25], "unread_vip": unread_vip}
 
 
 # ---- alert rules -------------------------------------------------------------
@@ -489,12 +552,23 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
     since = datetime.fromisoformat(watermark) - timedelta(minutes=5)
 
     hits = []
+    urgent = people.urgent_people()
     for item in _iter_inbox(200):
         if _local_time(item.ReceivedTime) < since:
             break
         mail = _summary(item)
         if db.seen("mail:" + mail["id"]):
             continue
+        # Urgent people beat every other rule: high priority, with sound.
+        if urgent:
+            if is_teams_notification(mail["sender"]):
+                who = teams_sender(mail["subject"])
+                if people.matches("", who, urgent):
+                    hits.append((mail, {"name": f"Urgent Teams message from {who}", "priority": "high"}))
+                    continue
+            elif people.matches(mail["sender"], mail["sender_name"], urgent):
+                hits.append((mail, {"name": "Urgent reply needed", "priority": "high"}))
+                continue
         body_lower = (item.Body or "")[:20000].lower()
         for rule in rules:
             if _matches(rule, mail, body_lower):

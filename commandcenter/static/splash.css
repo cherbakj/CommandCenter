@@ -1,0 +1,72 @@
+/* Launch splash (splash.js). Uses the theme tokens from style.css. */
+.sp-overlay {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  background-image:
+    radial-gradient(60rem 30rem at 50% 45%, rgb(var(--accent-rgb) / .10), transparent 65%),
+    linear-gradient(rgb(var(--accent-rgb) / .04) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--accent-rgb) / .04) 1px, transparent 1px);
+  background-size: auto, 2.75rem 2.75rem, 2.75rem 2.75rem;
+  cursor: pointer; user-select: none;
+}
+.sp-stage { display: flex; flex-direction: column; align-items: center; gap: 1.1rem; width: min(46rem, 92vw); }
+.sp-puzzle { width: min(34rem, 80vw, 55vh); height: auto; overflow: visible; }
+
+.sp-art-bg { fill: #071310; }
+.sp-art-grid { stroke: rgb(var(--accent-rgb) / .10); stroke-width: 1; }
+.sp-art-trace { fill: none; stroke: rgb(var(--accent-2-rgb) / .55); stroke-width: 3; stroke-linecap: round; }
+.sp-logo-a { fill: var(--accent); }
+.sp-logo-b { fill: var(--accent-2); }
+
+.sp-edge { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linejoin: round; transition: stroke-opacity .6s ease, stroke-width .6s ease; }
+.sp-piece.snapped .sp-edge { animation: sp-snap .35s ease-out; }
+@keyframes sp-snap { 0% { stroke: #fff; stroke-width: 6; } 100% { stroke: var(--accent); stroke-width: 2.2; } }
+.sp-overlay.assembled .sp-edge { stroke-opacity: .12; stroke-width: 1; }
+.sp-overlay.assembled .sp-puzzle { animation: sp-glow 1.6s ease-in-out infinite; }
+@keyframes sp-glow {
+  0%, 100% { filter: drop-shadow(0 0 .6rem rgb(var(--accent-rgb) / .45)); }
+  50% { filter: drop-shadow(0 0 1.6rem rgb(var(--accent-rgb) / .8)); }
+}
+
+.sp-title {
+  font: 900 clamp(1.4rem, 2.6vw, 2.4rem) var(--font-display); letter-spacing: .2em; color: #fff;
+  text-shadow: 0 0 .8rem rgb(var(--accent-rgb) / .8); opacity: 0; transform: translateY(.5rem);
+  transition: opacity .5s ease, transform .5s ease;
+}
+.sp-title span { color: var(--accent-2); margin: 0 .1em; }
+.sp-overlay.assembled .sp-title { opacity: 1; transform: none; }
+
+.sp-phase { font: 700 .9rem var(--font-ui); letter-spacing: .4em; color: var(--accent); }
+.sp-overlay.syncing:not(.ready) .sp-phase { animation: sp-blink 1s steps(2) infinite; }
+.sp-overlay.ready .sp-phase { color: #fff; text-shadow: 0 0 .6rem var(--accent); }
+@keyframes sp-blink { 50% { opacity: .35; } }
+
+.sp-bar { width: min(28rem, 80vw); height: .7rem; border: 1px solid var(--line-strong); padding: 1px; background: rgb(0 0 0 / .5); opacity: 0; transition: opacity .3s; }
+.sp-overlay.syncing .sp-bar { opacity: 1; }
+.sp-bar-fill {
+  height: 100%; width: 0; transition: width .35s ease;
+  background: repeating-linear-gradient(90deg, var(--accent) 0 .5rem, transparent .5rem .62rem);
+  box-shadow: 0 0 .7rem rgb(var(--accent-rgb) / .7);
+}
+
+.sp-systems { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .45rem .9rem; width: min(36rem, 90vw); min-height: 4.2rem; }
+.sp-sys {
+  display: flex; align-items: center; gap: .5rem; padding: .35rem .6rem; border: 1px solid var(--line);
+  background: rgb(0 0 0 / .35); font: 600 .82rem var(--font-mono); color: var(--text);
+  animation: sp-in .3s ease-out both;
+}
+@keyframes sp-in { from { opacity: 0; transform: translateY(.3rem); } }
+.sp-sys-name { flex: 1; }
+.sp-sys-state { color: var(--muted); font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; }
+.sp-sys-dot { width: .5rem; height: .5rem; transform: rotate(45deg); background: var(--muted); flex-shrink: 0; }
+.sp-sys.pending .sp-sys-dot { background: var(--accent-2); animation: sp-blink .6s steps(2) infinite; }
+.sp-sys.ok .sp-sys-dot { background: var(--accent); box-shadow: 0 0 .5rem var(--accent); }
+.sp-sys.ok .sp-sys-state { color: var(--accent); }
+.sp-sys.warn .sp-sys-dot, .sp-sys.err .sp-sys-dot { background: var(--amber); box-shadow: 0 0 .5rem var(--amber); }
+.sp-sys.warn .sp-sys-state, .sp-sys.err .sp-sys-state { color: var(--amber); }
+.sp-sys.off { opacity: .7; }
+
+.sp-skip { position: absolute; bottom: 1.4rem; font: .78rem var(--font-mono); color: var(--muted); letter-spacing: .06em; }
+
+@media (max-width: 700px) { .sp-systems { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .sp-overlay * { animation: none !important; transition: none !important; } }

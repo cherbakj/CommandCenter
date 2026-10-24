@@ -4,7 +4,7 @@ import importlib
 import logging
 import os
 import re
-import webbrowser
+import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,7 +12,8 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import alerts, config, db, orders, today
+from . import alerts, config, db, orders, security, today
+from . import profile as user_profile
 from .connectors import asana, outlook, sql, teams, web
 
 log = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ STATIC = Path(__file__).parent / "static"
 def _load_feature_modules():
     """Optional feature modules (each in its own file) that add API routes and background jobs."""
     found = []
-    for name in ("security", "toolkit", "pulse", "terminal", "vscode"):
+    for name in ("security", "toolkit", "pulse", "terminal", "vscode", "planner", "profile"):
         try:
             found.append(importlib.import_module(f".{name}", __package__))
         except ModuleNotFoundError as e:
@@ -49,20 +50,24 @@ async def lifespan(app: FastAPI):
         t.cancel()
 
 
-app = FastAPI(title="Command Center", lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title="Command Center", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
 @app.middleware("http")
 async def local_only(request: Request, call_next):
-    # Block DNS-rebinding (foreign Host header) and cross-site requests from other web pages:
-    # every non-GET call must carry a custom header, which browsers won't send cross-origin.
-    port = config.section("server", {}).get("port", 8765)
-    if request.headers.get("host") not in (f"127.0.0.1:{port}", f"localhost:{port}"):
-        return JSONResponse({"error": "forbidden host"}, status_code=403)
-    if request.method != "GET" and request.headers.get("x-commandcenter") != "1":
-        return JSONResponse({"error": "missing X-CommandCenter header"}, status_code=403)
-    return await call_next(request)
+    # The access rules live in security.py: foreign Host (DNS rebinding), cross-site fetches,
+    # X-CommandCenter + Origin on non-GET (CSRF), same Windows user, session cookie.
+    # security.guard() enforces them before the app is reached; this re-checks anything that
+    # arrives without passing through it (e.g. the app served some other way).
+    denied = security.http_denied(request)
+    if denied is not None:
+        return denied
+    response = await call_next(request)
+    if not request.scope.get("cc.guarded"):
+        for name, value in security.response_headers(request.url.path):
+            response.headers[name.decode()] = value.decode()
+    return response
 
 
 @app.exception_handler(Exception)
@@ -102,8 +107,9 @@ async def status():
         "outlook": db.kv_get("outlook:status"),
         "websites": {m["name"]: db.kv_get(f"web:{m['name']}") for m in web.monitors() if m.get("enabled", True)},
         "teams": db.kv_get("teams:state") if teams.is_set_up() else None,
+        "asana": await asyncio.to_thread(asana.connected),
         "focus": alerts.focus_state(),
-        "ui": {"accent": config.section("ui", {}).get("accent", "#39ff14"),
+        "ui": {"accent": user_profile.get()["accent"],
                "workday": [t.get("workday_start", "08:00"), t.get("workday_end", "17:00")]},
         "desktop": hasattr(app.state, "show_window"),
         "config_path": str(config.CONFIG_PATH),
@@ -120,17 +126,38 @@ async def focus(minutes: int = Body(..., embed=True)):
 async def show_window():
     """Used by a second launch of the app to bring the running window forward."""
     show = getattr(app.state, "show_window", None)
-    show() if show else webbrowser.open(alerts.dashboard_url())
+    show() if show else alerts.open_dashboard()  # serve mode: a fresh one-time sign-in link
     return {"ok": True}
 
 
 @app.post("/api/open")
 async def open_external(url: str = Body(..., embed=True)):
     """Opens a link with Windows (default browser, or the Teams app for msteams: links)."""
-    if not url.startswith(("https://", "http://", "msteams:")):
+    parts = urllib.parse.urlsplit(url)
+    scheme = parts.scheme.lower()
+    if (scheme not in ("http", "https", "msteams") or (scheme != "msteams" and not parts.netloc)
+            or len(url) > 4000 or any(ord(c) < 32 or c == '"' for c in url)):
         raise HTTPException(400, "Only web and Teams links can be opened")
     await asyncio.to_thread(os.startfile, url)
     return {"ok": True}
+
+
+@app.get("/api/weather")
+async def get_weather(zip: str | None = None):
+    from .connectors import weather
+    if zip and zip not in [p["zip"] for p in weather.locations()]:
+        raise HTTPException(400, "Unknown weather location")
+    return await asyncio.to_thread(weather.current, zip)
+
+
+@app.post("/api/weather/select")
+async def select_weather(zip: str = Body(..., embed=True)):
+    from .connectors import weather
+    try:
+        weather.select(zip)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await asyncio.to_thread(weather.current, zip)
 
 
 @app.get("/api/search")
@@ -196,6 +223,24 @@ async def mute_sender(sender: str = Body(..., embed=True)):
 async def unmute_sender(sender: str = Body(..., embed=True)):
     today.unmute(sender)
     return {"ok": True}
+
+
+@app.get("/api/followups/urgent")
+async def get_urgent_people():
+    from . import people
+    return {"people": people.urgent_people(), "from_config": config.section("followups", {}).get("urgent_people") or [],
+            "internal_domains": people.internal_domains()}
+
+
+@app.post("/api/followups/urgent")
+async def save_urgent_people(people_list: list = Body(..., embed=True, alias="people")):
+    from . import people
+    try:
+        saved = people.set_urgent_people(people_list)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    today._followup_cache.clear()  # re-sort follow-ups with the new list
+    return {"people": saved}
 
 
 @app.post("/api/asana/token")
@@ -310,6 +355,12 @@ async def unsnooze(id: str = Body(..., embed=True)):
 async def reply_watch(id: str = Body(...), days: float = Body(2)):
     info = await outlook.call(outlook.conversation_of, id)
     today.watch_for_reply(info, days, id)
+    return {"ok": True}
+
+
+@app.post("/api/reply-watch/cancel")
+async def cancel_reply_watch(conversation: str = Body(..., embed=True)):
+    today.cancel_reply_watch(conversation)
     return {"ok": True}
 
 

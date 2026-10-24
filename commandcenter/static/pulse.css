@@ -1,0 +1,30 @@
+/* Pulse tab (static/pulse.js). Builds on style.css: panel, list, tag, chip, toolbar. */
+.pulse-body { display: flex; flex-direction: column; min-height: 0; }
+.pulse-seg { display: flex; gap: 2px; }
+.pulse-search { flex: 1 1 18rem; max-width: 30rem; margin: 0; }
+.pulse-panel { min-height: 0; }
+.pulse-list { max-height: calc(100vh - var(--header-h) - 11rem); overflow-y: auto; }
+.pulse-row .pulse-no { font: 700 .95rem var(--font-mono); color: var(--accent-2); min-width: 4.2rem; padding-top: .1rem; }
+.pulse-row.pulse-mine { box-shadow: inset 3px 0 0 var(--accent); background: linear-gradient(90deg, rgb(var(--accent-rgb) / .07), transparent 60%); }
+.pulse-detail { color: var(--text); opacity: .8; font-size: .9rem; margin: .15rem 0; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.tag.p-open { color: var(--accent); border-color: rgb(var(--accent-rgb) / .55); }
+.tag.p-wait { color: var(--accent-2); border-color: rgb(var(--accent-2-rgb) / .5); }
+.tag.p-hold { color: var(--amber); border-color: rgb(255 184 0 / .6); }
+.tag.p-done { color: var(--muted); border-color: rgb(111 143 128 / .5); }
+.tag.p-normal { color: var(--text); border-color: rgb(232 245 236 / .35); }
+.tag.p-low { color: var(--muted); border-color: rgb(111 143 128 / .4); }
+.tag.p-type { color: var(--hot); border-color: rgb(var(--hot-rgb) / .45); }
+
+.pulse-setup { max-width: 46rem; }
+.pulse-steps { margin: .4rem 0 1rem 1.2rem; padding: 0; color: var(--muted); }
+.pulse-steps li { margin: .2rem 0; }
+.pulse-steps b { color: var(--text); font-weight: 600; }
+.pulse-form { display: flex; flex-direction: column; gap: .55rem; }
+.pulse-field { display: flex; flex-direction: column; align-items: stretch; gap: .2rem; text-align: left; margin: 0; }
+.pulse-field input { margin: 0; width: 100%; box-sizing: border-box; }
+.pulse-flabel { font: 700 .74rem var(--font-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.pulse-two { display: grid; grid-template-columns: 1fr 2fr; gap: .6rem; }
+.pulse-msg { min-height: 1.2rem; font-family: var(--font-mono); font-size: .82rem; overflow-wrap: anywhere; }
+.pulse-sql { font: .78rem/1.45 var(--font-mono); background: var(--panel-solid); border: 1px solid var(--line);
+  padding: .75rem; max-height: 50vh; overflow: auto; white-space: pre; color: var(--text); }

@@ -56,7 +56,7 @@ def _connect(name) -> pyodbc.Connection:
         f"SERVER={_brace(c['server'])}",
         f"DATABASE={_brace(c['database'])}",
         "Encrypt=" + ("yes" if c.get("encrypt", True) else "no"),
-        "TrustServerCertificate=" + ("yes" if c.get("trust_server_certificate", True) else "no"),
+        "TrustServerCertificate=" + ("yes" if c.get("trust_server_certificate", False) else "no"),
         "ApplicationIntent=ReadOnly",
         "APP=CommandCenter",
     ]

@@ -2,11 +2,13 @@
 
   python -m commandcenter                     desktop app (same as "app")
   python -m commandcenter app [--minimized]   desktop window + tray icon
-  python -m commandcenter serve               server only, dashboard in your browser
+  python -m commandcenter serve               server only, dashboard in your browser (one-time link)
   python -m commandcenter install             Start menu, desktop and sign-in shortcuts
   python -m commandcenter uninstall           remove those shortcuts
   python -m commandcenter login <profile> <url>
   python -m commandcenter setpass <connection>
+
+CC_DEV_NO_AUTH=1 (development only) turns off the session-cookie check, and only for `serve`.
 """
 import argparse
 import asyncio
@@ -24,6 +26,7 @@ def main():
     sub = parser.add_subparsers(dest="cmd")
     app = sub.add_parser("app", help="Desktop window with tray icon (default)")
     app.add_argument("--minimized", action="store_true", help="Start in the tray without showing the window")
+    app.add_argument("--after-pid", type=int, help=argparse.SUPPRESS)  # Restart: wait for the old copy to exit
     serve = sub.add_parser("serve", help="Run the server only and use the dashboard in a browser")
     serve.add_argument("--no-browser", action="store_true", help="Don't open the dashboard")
     install = sub.add_parser("install", help="Create Start menu, desktop and sign-in shortcuts")
@@ -52,7 +55,9 @@ def main():
         sql.set_password(args.connection, getpass.getpass(f"Password for {args.connection}: "))
         print("Saved to Windows Credential Manager.")
     elif args.cmd == "install":
+        from . import security
         from .desktop import install_shortcuts
+        security.harden_folders()
         for line in install_shortcuts(startup=not args.no_startup):
             print("Created", line)
     elif args.cmd == "uninstall":
@@ -60,19 +65,42 @@ def main():
         for line in uninstall_shortcuts() or ["(no shortcuts found)"]:
             print("Removed", line)
     elif args.cmd == "serve":
-        import uvicorn
-        from .alerts import dashboard_url
-        if not args.no_browser:
-            threading.Timer(1.5, webbrowser.open, [dashboard_url()]).start()
-        uvicorn.run("commandcenter.app:app", host="127.0.0.1", port=config.section("server", {}).get("port", 8765),
-                    log_level="warning", log_config=None)
+        run_server(open_browser=not args.no_browser)
     else:
         from .desktop import DesktopApp
         try:
-            DesktopApp(start_hidden=getattr(args, "minimized", False)).run()
+            DesktopApp(start_hidden=getattr(args, "minimized", False), after_pid=getattr(args, "after_pid", None)).run()
         except Exception:
             logging.exception("Desktop app crashed")
             raise
+
+
+def run_server(open_browser=True):
+    """Server only. The browser gets in through a one-time link that sets the session cookie."""
+    import uvicorn
+
+    from . import alerts, security
+    security.configure("serve")  # the only mode that honors CC_DEV_NO_AUTH=1
+    security.harden_folders()
+    port = security.port()
+    try:
+        sock = security.listen_socket(port)
+    except OSError as e:
+        sys.exit(f"Can't listen on 127.0.0.1:{port} ({e}). Is Command Center already running?")
+    from .app import app
+
+    def open_dashboard():  # toast clicks: a fresh one-time link each time
+        webbrowser.open(security.bootstrap_url(ttl=120))
+
+    alerts.open_hook = open_dashboard
+    link = security.bootstrap_url(ttl=600)
+    print(f"Command Center is running on http://127.0.0.1:{port}/\n"
+          f"Open it with this one-time link (works once, within 10 minutes):\n  {link}", flush=True)
+    if open_browser:
+        threading.Timer(1.5, webbrowser.open, [link]).start()
+    server = uvicorn.Server(uvicorn.Config(security.guard(app), host="127.0.0.1", port=port, log_level="warning",
+                                           log_config=None, access_log=False))
+    server.run(sockets=[sock])
 
 
 if __name__ == "__main__":

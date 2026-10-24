@@ -1,0 +1,48 @@
+/* Calendar tab: 10-day planner (planner.js). Adapts to the width of its pane. */
+#tab-calendar { container-type: inline-size; }
+.pl-toolbar { flex-wrap: wrap; }
+.pl-legend { display: inline-flex; flex-wrap: wrap; gap: .2rem; margin-left: .6rem; }
+.pl-note:empty { display: none; }
+.pl-grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); }
+@container (min-width: 2300px) { .pl-grid { grid-template-columns: repeat(10, minmax(0, 1fr)); } }
+@container (min-width: 1200px) and (max-width: 2299px) { .pl-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+
+.pl-day {
+  display: flex; flex-direction: column; gap: .5rem; min-width: 0; padding: .7rem .75rem .8rem;
+  background: var(--panel); border: 1px solid var(--line);
+  clip-path: polygon(0 0, calc(100% - .7rem) 0, 100% .7rem, 100% 100%, 0 100%);
+}
+.pl-day.today { border-color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
+.pl-day.weekend { background: rgb(0 0 0 / .35); }
+.pl-day-head { display: flex; align-items: flex-start; gap: .5rem; border-bottom: 1px solid var(--line); padding-bottom: .45rem; }
+.pl-day-head > div:first-child { flex: 1; }
+.pl-dow { font: 700 .78rem var(--font-ui); letter-spacing: .12em; text-transform: uppercase; color: var(--accent-2); }
+.pl-day.today .pl-dow { color: var(--accent); }
+.pl-date { font: 700 1.15rem var(--font-ui); color: #fff; }
+.pl-counts { display: flex; flex-direction: column; gap: .2rem; align-items: flex-end; }
+.pl-chip-fu { color: var(--amber); border-color: rgb(255 184 0 / .5); }
+
+.pl-block-label { font: 700 .66rem var(--font-ui); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin-bottom: .2rem; }
+.pl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .3rem; }
+.pl-list li { display: grid; grid-template-columns: 4.3rem minmax(0, 1fr); gap: .1rem .45rem; padding: .35rem .4rem; background: rgb(0 0 0 / .3); border-left: 3px solid var(--line-strong); }
+.pl-time { font: 600 .78rem var(--font-mono); color: var(--accent-2); padding-top: .1rem; }
+.pl-body { min-width: 0; }
+.pl-title { font-weight: 600; font-size: .92rem; color: #f3fbf5; overflow-wrap: anywhere; }
+.pl-acts { grid-column: 2; display: flex; gap: .3rem; flex-wrap: wrap; margin-top: .15rem; }
+.pl-mtg { border-left-color: #6cb8ff !important; }
+.pl-mtg.live { border-left-color: var(--accent-2) !important; background: rgb(var(--accent-2-rgb) / .1) !important; }
+.pl-mtg.past { opacity: .55; }
+.pl-mtg.tentative { border-left-style: dashed !important; }
+.pl-item { border-left-color: var(--amber) !important; }
+.pl-item.overdue { border-left-color: var(--red) !important; }
+.pl-item .pl-time { color: var(--amber); font-size: .72rem; }
+.pl-personal { border-left-color: var(--hot) !important; cursor: pointer; }
+.pl-personal:hover, .pl-personal:focus-visible { background: rgb(var(--hot-rgb) / .1) !important; }
+.pl-personal .pl-time { color: var(--hot); }
+.pl-free { font: .82rem var(--font-mono); color: var(--muted); padding: .4rem 0; }
+
+.src.src-personal { color: var(--hot); }
+.pl-check { display: flex; align-items: center; gap: .5rem; margin: .2rem 0 .6rem; }
+.pl-times { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: .4rem; align-items: center; }
+.pl-times[hidden] { display: none; }
+.pl-times input { margin-bottom: 0; }

@@ -10,3 +10,4 @@ pystray
 pillow
 pywebview
 pywinpty
+psycopg[binary]

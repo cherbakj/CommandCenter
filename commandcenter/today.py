@@ -5,10 +5,11 @@ import re
 import time
 from datetime import date, datetime, timedelta
 
-from . import alerts, config, db
+from . import alerts, config, db, people
 from .connectors import asana, outlook, weather
 
 log = logging.getLogger(__name__)
+FOLLOWUP_GROUPS = ("urgent_reply", "needs_reply", "teams_reply", "awaiting_reply", "flagged", "unread_vip")
 FOLLOWUP_CACHE_SECONDS = 120
 _followup_cache: dict = {}
 AUTOMATED = re.compile(r"no-?reply|donotreply|notifications?@|mailer-daemon|postmaster", re.I)
@@ -72,6 +73,10 @@ def watch_for_reply(info, days, entry_id):
     db.kv_set("reply_watches", watches)
 
 
+def cancel_reply_watch(conversation):
+    db.kv_set("reply_watches", [w for w in reply_watches() if w["conversation"] != conversation])
+
+
 async def _check_snoozes_and_reminders():
     now = datetime.now().isoformat(timespec="seconds")
     s = snoozes()
@@ -91,6 +96,24 @@ async def _check_snoozes_and_reminders():
             alerts.raise_alert("Follow-up", f"No reply yet: {w['subject']}", f"To {w['to'][:80]}", "normal",
                                {"type": "mail", "id": w["id"]})
     db.kv_set("reply_watches", keep)
+    await _escalate_urgent()
+
+
+async def _escalate_urgent():
+    """Every 10 minutes: one high-priority reminder per urgent email/Teams message still unanswered after
+    followups.urgent_escalate_hours."""
+    hours = float(config.section("followups", {}).get("urgent_escalate_hours", 4) or 0)
+    if not hours or not people.urgent_people() or time.time() - db.kv_get("urgent:checked", 0) < 600:
+        return
+    db.kv_set("urgent:checked", time.time())
+    data = await _followups({"flagged": []}, refresh=True)
+    cutoff = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="minutes")
+    waiting = data.get("urgent_reply", []) + [t for t in data.get("teams_reply", []) if t.get("urgent")]
+    for m in waiting:
+        if m["received"] <= cutoff and not db.seen(f"urgent-escalate:{m['id']}"):
+            who = m.get("from_name") or m.get("sender_name", "")
+            alerts.raise_alert("Urgent", f"Still waiting on your reply: {m['subject']}", f"From {who}", "high",
+                               {"type": "mail", "id": m["id"]})
 
 
 def _vip_senders() -> list[str]:
@@ -188,8 +211,11 @@ def summary(data) -> str:
     remaining = [m for m in agenda if m["end"] >= datetime.now().isoformat()]
     due = [t for t in data["tasks"]["items"] if t["due"] and t["due"] <= today]
     f = data["followups"] if "error" not in data["followups"] else {}
-    n_follow = sum(len(f.get(k, [])) for k in ("flagged", "awaiting_reply", "needs_reply", "unread_vip"))
+    n_follow = sum(len(f.get(k, [])) for k in FOLLOWUP_GROUPS)
+    n_urgent = len(f.get("urgent_reply", [])) + len([t for t in f.get("teams_reply", []) if t.get("urgent")])
     parts = [f"{len(remaining)} meeting(s)", f"{len(due)} task(s) due", f"{n_follow} follow-up(s)"]
+    if n_urgent:
+        parts.insert(0, f"{n_urgent} URGENT repl{'y' if n_urgent == 1 else 'ies'}")
     w = data["weather"]
     if "error" not in w:
         parts.insert(0, f"{w['temp']}{w['unit']} {w['text'].lower()}")

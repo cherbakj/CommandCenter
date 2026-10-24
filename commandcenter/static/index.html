@@ -9,52 +9,98 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Chakra+Petch:wght@500;600;700&family=Exo+2:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/splash.css">
 </head>
 <body>
+  <script src="/static/splash.js"></script>
   <header>
-    <div class="logo"><span class="logo-mark">◢◤</span> COMMAND<span class="slash">//</span>CENTER</div>
-    <nav>
-      <button data-tab="today" class="active">Today</button>
-      <button data-tab="alerts">Alerts <span id="badge" class="badge" hidden></span></button>
-      <button data-tab="mail">Mail</button>
-      <button data-tab="calendar">Calendar</button>
-      <button data-tab="teams">Teams</button>
-      <button data-tab="websites">Websites</button>
-      <button data-tab="sql">SQL</button>
-    </nav>
+    <div class="logo" title="Command Center"><img src="/static/jc-logo.svg" alt="" class="logo-jc" width="32" height="32"><span class="logo-text">COMMAND<span class="slash">//</span>CENTER</span></div>
+    <div class="navs">
+      <nav id="nav-comms" class="nav-group" data-pane="comms" aria-label="Comms: messaging and alerts">
+        <span class="nav-label" aria-hidden="true">COMMS</span>
+        <button data-tab="today" data-label="Today" class="active">Today</button>
+        <button data-tab="alerts" data-label="Alerts">Alerts <span id="badge" class="badge" hidden></span></button>
+        <button data-tab="mail" data-label="Mail">Mail</button>
+        <button data-tab="calendar" data-label="Calendar">Calendar</button>
+        <button data-tab="teams" data-label="Teams">Teams</button>
+      </nav>
+      <nav id="nav-work" class="nav-group" data-pane="work" aria-label="Work: code, data and tools">
+        <span class="nav-label" aria-hidden="true">WORK</span>
+        <button data-tab="sql" data-label="SQL">SQL</button>
+        <button data-tab="websites" data-label="Websites">Websites</button>
+      </nav>
+    </div>
     <div class="header-right">
+      <button id="layout-toggle" class="layout-toggle small subtle" type="button" hidden aria-pressed="true" title="Switch to a single pane">Split</button>
       <button id="search-btn" class="search-btn subtle" title="Search and commands"><span>Search / command</span><kbd>Ctrl K</kbd></button>
       <button id="focus-chip" class="focus-chip small subtle" title="Focus mode: only high-priority alerts pop up">Focus</button>
       <div class="status" id="status"></div>
+      <div id="profile-slot"></div>
+      <div class="win-controls" id="win-controls" role="group" aria-label="Window" hidden>
+        <button type="button" class="win-btn" id="win-lock" title="Lock Command Center (Windows Hello to get back in)" aria-label="Lock Command Center">⏻</button>
+        <button type="button" class="win-btn" id="win-restart" title="Restart Command Center" aria-label="Restart Command Center">↻</button>
+        <button type="button" class="win-btn" id="win-min" title="Minimize" aria-label="Minimize window">—</button>
+        <button type="button" class="win-btn" id="win-full" title="Full screen (F11)" aria-label="Toggle full screen" aria-pressed="false">⛶</button>
+        <button type="button" class="win-btn win-close" id="win-hide" title="Close to tray (alerts keep running)" aria-label="Close to tray; alerts keep running">✕</button>
+      </div>
     </div>
   </header>
 
-  <main>
+  <main id="workspace" class="ws-single">
+    <!-- LEFT PANE: messaging and alerts -->
+    <div class="pane pane-comms" id="pane-comms" data-pane="comms">
+      <div class="pane-body" id="pane-comms-body">
     <!-- TODAY -->
     <section id="tab-today" class="tab active">
       <div class="today-layout">
-        <div class="panel a-clock">
-          <div class="panel-label">SYS.TIME</div>
-          <div id="clock" class="clock">--:--</div>
-          <div id="date-line" class="date-line"></div>
-          <div id="focus-line" class="focus-line"></div>
-          <div class="xp">
-            <div class="xp-head"><span id="xp-label">WORKDAY PROGRESS</span><span id="xp-pct">0%</span></div>
-            <div class="xp-bar"><div id="xp-fill"></div></div>
+        <div class="a-strip">
+          <div class="panel a-clock">
+            <div class="panel-label">SYS.TIME</div>
+            <div id="clock" class="clock">--:--</div>
+            <div id="date-line" class="date-line"></div>
+            <div id="focus-line" class="focus-line"></div>
+            <div class="xp">
+              <div class="xp-head"><span id="xp-label">WORKDAY PROGRESS</span><span id="xp-pct">0%</span></div>
+              <div class="xp-bar"><div id="xp-fill"></div></div>
+            </div>
           </div>
+          <div class="panel a-weather" id="weather">
+            <div class="panel-label">ENV.WEATHER</div>
+            <div class="muted">Loading weather…</div>
+          </div>
+          <div class="a-stats" id="stats"></div>
         </div>
-        <div class="panel a-weather" id="weather">
-          <div class="panel-label">ENV.WEATHER</div>
-          <div class="muted">Loading weather…</div>
+        <div class="panel a-launch hotbar" id="launch">
+          <span class="panel-label">HOTBAR</span>
+          <div id="launch-slots" class="launch-slots"></div>
+          <button id="launch-edit" class="small subtle" title="Add, remove and reorder launch buttons">Edit</button>
         </div>
-        <div class="a-stats" id="stats"></div>
+        <div class="panel a-follow">
+          <div class="panel-head">
+            <span class="panel-label">01 // FOLLOW-UPS</span>
+            <span class="spacer"></span>
+            <button id="urgent-btn" class="small subtle" title="People whose mail and Teams messages count as urgent">Urgent people</button>
+            <button id="snoozed-btn" class="small subtle">Snoozed (0)</button>
+            <button id="muted-btn" class="small subtle">Muted senders</button>
+            <button id="today-refresh" class="small">↻ Rescan</button>
+          </div>
+          <div id="followups" class="followups"></div>
+        </div>
         <div class="panel a-agenda">
-          <div class="panel-head"><span class="panel-label">01 // AGENDA</span><span id="agenda-count" class="chip"></span></div>
+          <div class="panel-head"><span class="panel-label">02 // AGENDA</span><span id="agenda-count" class="chip"></span></div>
           <ul id="agenda" class="list"></ul>
+        </div>
+        <div class="panel a-alerts">
+          <div class="panel-head">
+            <span class="panel-label">03 // RECENT ALERTS</span><span id="today-alerts-count" class="chip"></span>
+            <span class="spacer"></span>
+            <button id="today-alerts-all" class="small subtle" type="button">All alerts</button>
+          </div>
+          <ul id="today-alerts" class="list"></ul>
         </div>
         <div class="panel a-tasks">
           <div class="panel-head">
-            <span class="panel-label">02 // TASKS</span>
+            <span class="panel-label">04 // TASKS</span>
             <span class="spacer"></span>
             <button id="asana-btn" class="small"></button>
             <button id="new-task" class="small primary">+ New task</button>
@@ -62,18 +108,8 @@
           <div id="tasks-note" class="muted"></div>
           <ul id="tasks" class="list"></ul>
         </div>
-        <div class="panel a-follow">
-          <div class="panel-head">
-            <span class="panel-label">03 // FOLLOW-UPS</span>
-            <span class="spacer"></span>
-            <button id="muted-btn" class="small subtle">Muted senders</button>
-            <button id="today-refresh" class="small">↻ Rescan</button>
-          </div>
-          <div id="followups" class="followups"></div>
-        </div>
       </div>
     </section>
-
     <!-- ALERTS -->
     <section id="tab-alerts" class="tab">
       <div class="toolbar">
@@ -125,12 +161,22 @@
       </div>
     </section>
 
-    <!-- WEBSITES -->
-    <section id="tab-websites" class="tab">
-      <div class="toolbar"><span class="muted">Monitors are defined in config.yaml</span><span class="spacer"></span><button id="web-refresh">↻ Refresh</button></div>
-      <ul id="web-list" class="list panel-list flow"></ul>
-    </section>
+      </div>
+    </div>
 
+    <div class="splitter" id="splitter" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="pane-comms pane-work"
+         aria-label="Resize panes (arrow keys; double-click or Enter resets)" title="Drag to resize · double-click to reset"></div>
+
+    <!-- RIGHT PANE: work -->
+    <div class="pane pane-work" id="pane-work" data-pane="work">
+      <div class="work-bar">
+        <label class="work-label" for="project-select">WORKING ON</label>
+        <select id="project-select" class="project-select"><option value="">Loading projects…</option></select>
+        <span id="project-path" class="project-path muted"></span>
+        <span class="spacer"></span>
+        <button id="project-refresh" class="small subtle" type="button" title="Reload the project list" aria-label="Reload the project list">↻</button>
+      </div>
+      <div class="pane-body" id="pane-work-body">
     <!-- SQL -->
     <section id="tab-sql" class="tab">
       <div class="sql-grid">
@@ -152,6 +198,14 @@
         </div>
       </div>
     </section>
+    <!-- WEBSITES -->
+    <section id="tab-websites" class="tab">
+      <div class="toolbar"><span class="muted">Monitors are defined in config.yaml</span><span class="spacer"></span><button id="web-refresh">↻ Refresh</button></div>
+      <ul id="web-list" class="list panel-list flow"></ul>
+    </section>
+
+      </div>
+    </div>
   </main>
 
   <div id="palette">
@@ -170,5 +224,7 @@
   <script src="/static/vscode.js"></script>
   <script src="/static/toolkit.js"></script>
   <script src="/static/pulse.js"></script>
+  <script src="/static/planner.js"></script>
+  <script src="/static/profile.js"></script>
 </body>
 </html>
