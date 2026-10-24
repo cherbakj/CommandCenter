@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Command Center</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%2305070d'/%3E%3Cpath d='M4 26 L14 6 L18 6 L8 26Z' fill='%23ff2bd6'/%3E%3Cpath d='M14 26 L24 6 L28 6 L18 26Z' fill='%2300f0ff'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="logo"><span class="logo-mark">◢◤</span> COMMAND<span class="slash">//</span>CENTER</div>
+    <nav>
+      <button data-tab="today" class="active">Today</button>
+      <button data-tab="alerts">Alerts <span id="badge" class="badge" hidden></span></button>
+      <button data-tab="mail">Mail</button>
+      <button data-tab="calendar">Calendar</button>
+      <button data-tab="websites">Websites</button>
+      <button data-tab="sql">SQL</button>
+    </nav>
+    <div class="status" id="status"></div>
+  </header>
+
+  <main>
+    <!-- TODAY -->
+    <section id="tab-today" class="tab active">
+      <div class="hero">
+        <div class="panel clock-panel">
+          <div class="panel-label">SYS.TIME</div>
+          <div id="clock" class="clock">--:--</div>
+          <div id="date-line" class="date-line"></div>
+          <div class="xp">
+            <div class="xp-head"><span>WORKDAY PROGRESS</span><span id="xp-pct">0%</span></div>
+            <div class="xp-bar"><div id="xp-fill"></div></div>
+          </div>
+        </div>
+        <div class="panel weather-panel" id="weather">
+          <div class="panel-label">ENV.WEATHER</div>
+          <div class="muted">Loading weather…</div>
+        </div>
+      </div>
+
+      <div class="stats" id="stats"></div>
+
+      <div class="today-grid">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-label">01 // AGENDA</span><span id="agenda-count" class="chip"></span></div>
+          <ul id="agenda" class="list"></ul>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <span class="panel-label">02 // TASKS</span>
+            <span class="spacer"></span>
+            <button id="asana-btn" class="small"></button>
+            <button id="new-task" class="small primary">+ New task</button>
+          </div>
+          <div id="tasks-note" class="muted"></div>
+          <ul id="tasks" class="list"></ul>
+        </div>
+        <div class="panel wide">
+          <div class="panel-head">
+            <span class="panel-label">03 // FOLLOW-UPS</span>
+            <span class="spacer"></span>
+            <button id="muted-btn" class="small subtle">Muted senders</button>
+            <button id="today-refresh" class="small">↻ Rescan</button>
+          </div>
+          <div id="followups" class="followups"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ALERTS -->
+    <section id="tab-alerts" class="tab">
+      <div class="toolbar">
+        <label><input type="checkbox" id="alerts-unread"> Unread only</label>
+        <span class="spacer"></span>
+        <button id="alerts-readall">Mark all read</button>
+        <button id="alerts-clear" class="subtle">Clear</button>
+        <button id="reload" class="subtle">Reload config</button>
+      </div>
+      <ul id="alerts-list" class="list panel-list"></ul>
+    </section>
+
+    <!-- MAIL -->
+    <section id="tab-mail" class="tab">
+      <div class="toolbar">
+        <label><input type="checkbox" id="mail-unread"> Unread only</label>
+        <span class="spacer"></span>
+        <button id="mail-refresh">↻ Refresh</button>
+      </div>
+      <div class="split">
+        <ul id="mail-list" class="list panel-list"></ul>
+        <article id="mail-view" class="panel empty">Select a message</article>
+      </div>
+    </section>
+
+    <!-- CALENDAR -->
+    <section id="tab-calendar" class="tab">
+      <div class="toolbar"><span class="panel-label">NEXT 24 HOURS</span><span class="spacer"></span><button id="cal-refresh">↻ Refresh</button></div>
+      <ul id="cal-list" class="list panel-list"></ul>
+    </section>
+
+    <!-- WEBSITES -->
+    <section id="tab-websites" class="tab">
+      <div class="toolbar"><span class="muted">Monitors are defined in config.yaml</span><span class="spacer"></span><button id="web-refresh">↻ Refresh</button></div>
+      <ul id="web-list" class="list panel-list"></ul>
+    </section>
+
+    <!-- SQL -->
+    <section id="tab-sql" class="tab">
+      <div class="sql-grid">
+        <div class="panel">
+          <div class="panel-label">SAVED QUERIES</div>
+          <select id="sql-query"></select>
+          <div id="sql-params"></div>
+          <button id="sql-run" class="primary">▶ Run</button>
+          <div class="panel-label gap">CONNECTIONS</div>
+          <div id="sql-conns"></div>
+          <div class="panel-label gap">BROWSE TABLES</div>
+          <select id="sql-browse-conn"></select>
+          <input id="sql-filter" placeholder="Filter tables…">
+          <ul id="sql-tables" class="list compact"></ul>
+        </div>
+        <div class="panel results">
+          <div id="sql-meta" class="muted">Run a saved query, test a connection, or pick a table to preview its rows.</div>
+          <div class="table-wrap"><table id="sql-table"></table></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dialog"><form method="dialog"><div id="dialog-body"></div></form></dialog>
+  <script src="/static/app.js"></script>
+</body>
+</html>

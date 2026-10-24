@@ -1,0 +1,121 @@
+# Command Center settings. Edit config.yaml (copied from this file on first run),
+# then click "Reload config" in the dashboard or restart run.cmd.
+
+server:
+  port: 8765
+
+alerts:
+  toast: true            # Windows pop-up notifications
+  sound_for: [high]      # priorities that also play a sound: low | normal | high
+
+browser:
+  channel: msedge        # msedge or chrome - uses the browser already installed
+
+# ---------------------------------------------------------------------------
+# Today tab: weather, agenda, tasks, follow-ups
+# ---------------------------------------------------------------------------
+today:
+  zip: "92630"
+  country: us
+  units: fahrenheit        # or celsius
+  briefing_time: "07:30"   # daily pop-up summary of your day; "" to turn off
+
+followups:
+  awaiting_reply_days: 7   # sent mail with no answer, looking back this many days
+  min_wait_hours: 4        # give people this long before it counts as "no reply"
+  needs_reply_days: 5      # mail sent to you that you haven't replied to
+  flagged_days: 30         # flagged mail older than this (and not due) is hidden
+  ignore_subjects:         # regular expressions; matching mail never shows as a follow-up
+    - "^Junk:"
+    - "Hoxhunt"
+    - "^(RE: |FW: )?test$"
+  ignore_recipients:       # sent mail to these never shows as "awaiting reply"
+    - "IT Administrator"
+
+# Asana: connect on the Today tab with a Personal Access Token
+# (Asana > profile picture > Settings > Apps > Developer apps > Create new token)
+asana:
+  enabled: true
+  workspace: ""            # blank = your first workspace; or the workspace name
+
+# ---------------------------------------------------------------------------
+# Outlook (uses the classic Outlook desktop app you're signed into - keep it open)
+# A rule matches when ALL of the criteria it lists match. First matching rule wins.
+#   senders:   full addresses, or "@domain.com" for a whole domain
+#   keywords:  any word/phrase in the subject or body
+#   high_importance / flagged: true
+# ---------------------------------------------------------------------------
+outlook:
+  enabled: true
+  poll_seconds: 60
+  rules:
+    - name: VIP sender
+      senders: ["your.manager@sonance.com", "@importantcustomer.com"]
+      priority: high
+    - name: Teams activity              # Teams emails you about missed chats/mentions
+      senders: ["@email.teams.microsoft.com"]
+      priority: normal
+    - name: High importance
+      high_importance: true
+      priority: high
+    - name: Flagged
+      flagged: true
+      priority: normal
+    - name: Keyword
+      keywords: ["urgent", "asap", "PO#"]
+      priority: normal
+  meetings:
+    remind_minutes: [10, 1]             # pop-ups this many minutes before a meeting
+
+# ---------------------------------------------------------------------------
+# Websites - read a value from a page and alert when it changes.
+#   profile:            saved browser session to use. For sites that need a login, pick a
+#                       name and log in once:  run.cmd login <profile> <url>
+#   selector:           CSS selector of the element holding the value
+#                       (right-click the value in Edge > Inspect > right-click > Copy selector)
+#   regex:              optional; pulls part of the text, first (group) if present
+#   alert_on:           change | above | below   (above/below use threshold)
+#   logged_in_selector: optional; element only visible when logged in, so an expired
+#                       session raises a "login needed" alert instead of a false change
+# ---------------------------------------------------------------------------
+websites:
+  - name: Example public page
+    url: https://example.com
+    profile: public
+    selector: p
+    alert_on: change
+    interval_minutes: 30
+    enabled: false
+
+  - name: Example login portal
+    url: https://portal.example.com/orders
+    profile: vendor
+    selector: "#open-orders-count"
+    regex: '(\d+)'
+    alert_on: above
+    threshold: 10
+    logged_in_selector: "#account-menu"
+    interval_minutes: 15
+    priority: high
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# SQL Server (over VPN). Passwords are stored in Windows Credential Manager - set them
+# on the SQL tab or with:  run.cmd setpass <connection name>
+# Only saved SELECT queries run, each inside a transaction that is rolled back.
+# Use ? for each value you type in; list one label per ? under params.
+# ---------------------------------------------------------------------------
+sql:
+  connections:
+    - name: main
+      server: YOURSERVER\INSTANCE       # or hostname,port
+      database: YourDatabase
+      username: your_sql_login
+      # auth: windows                   # use this instead of username for Windows login
+      trust_server_certificate: true    # typical for internal servers
+  queries:
+    - name: Example - find by ID
+      connection: main
+      description: Replace with a real table and column
+      sql: SELECT TOP 50 * FROM dbo.YourTable WHERE Id = ?
+      params: [ID]

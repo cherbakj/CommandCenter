@@ -1,0 +1,423 @@
+"""Outlook connector: drives the classic Outlook desktop app over COM, as the signed-in user.
+
+COM objects must stay on the thread that created them, so every call runs on one
+dedicated worker thread via `call()`.
+"""
+import asyncio
+import html
+import logging
+import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
+
+import pythoncom
+import pywintypes
+import win32com.client
+
+from .. import alerts, config, db
+
+log = logging.getLogger(__name__)
+
+OL_FOLDER_SENT = 5
+OL_FOLDER_INBOX = 6
+OL_FOLDER_CALENDAR = 9
+OL_FOLDER_TODO = 28
+OL_MAIL = 43
+OL_TASK = 48
+OL_TASK_ITEM = 3
+OL_MARK_NO_DATE = 4
+OL_FLAG_COMPLETE = 1
+OL_IMPORTANCE_HIGH = 2
+OL_FORMAT_HTML = 2
+NO_DATE_YEAR = 4501  # Outlook's "None" date is 1/1/4501
+OL_FOLDER_TASKS = 13
+PR_FLAG_STATUS = "http://schemas.microsoft.com/mapi/proptag/0x10900003"
+PR_SENDER_NAME = "http://schemas.microsoft.com/mapi/proptag/0x0C1A001F"
+PR_DELIVERY_TIME = "http://schemas.microsoft.com/mapi/proptag/0x0E060040"
+PID_TASK_DUE = "http://schemas.microsoft.com/mapi/id/{00062003-0000-0000-C000-000000000046}/81050040"
+PR_HEADERS = "http://schemas.microsoft.com/mapi/proptag/0x007D001F"
+PR_LAST_VERB = "http://schemas.microsoft.com/mapi/proptag/0x10810003"
+REPLIED_VERBS = (102, 103, 104)  # reply, reply all, forward
+
+_executor = ThreadPoolExecutor(1, initializer=pythoncom.CoInitialize, thread_name_prefix="outlook")
+_local = threading.local()
+TEAMS_LINK = re.compile(r"https://teams\.microsoft\.com/l/meetup-join/[^\s\"'<>]+")
+
+
+async def call(fn, *args):
+    return await asyncio.get_running_loop().run_in_executor(_executor, _guarded, fn, args)
+
+
+def _guarded(fn, args):
+    try:
+        return fn(*args)
+    except pywintypes.com_error:
+        _local.ns = None  # Outlook may have restarted; reconnect next time
+        raise
+
+
+def _ns():
+    if getattr(_local, "ns", None) is None:
+        _local.ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+    return _local.ns
+
+
+def _local_time(value) -> datetime:
+    # pywin32 labels Outlook's local times as UTC; drop the tz to keep them local.
+    return datetime(value.year, value.month, value.day, value.hour, value.minute, value.second)
+
+
+def _sender_smtp(item) -> str:
+    try:
+        if item.SenderEmailType == "EX":
+            user = item.Sender.GetExchangeUser()
+            if user:
+                return user.PrimarySmtpAddress or ""
+        return item.SenderEmailAddress or ""
+    except pywintypes.com_error:
+        return ""
+
+
+def _summary(item) -> dict:
+    return {
+        "id": item.EntryID,
+        "subject": item.Subject or "(no subject)",
+        "sender_name": item.SenderName or "",
+        "sender": _sender_smtp(item),
+        "received": _local_time(item.ReceivedTime).isoformat(timespec="minutes"),
+        "unread": bool(item.UnRead),
+        "high_importance": item.Importance == OL_IMPORTANCE_HIGH,
+        "flagged": bool(item.IsMarkedAsTask),
+        "preview": re.sub(r"\s+", " ", (item.Body or "")[:300]).strip(),
+    }
+
+
+def _date_or_none(value):
+    if value is None or value.year >= NO_DATE_YEAR:
+        return None
+    return _local_time(value).date().isoformat()
+
+
+def _prop(item, tag):
+    try:
+        return item.PropertyAccessor.GetProperty(tag)
+    except pywintypes.com_error:
+        return None
+
+
+def _iter_inbox(limit):
+    return _iter_folder(OL_FOLDER_INBOX, "[ReceivedTime]", limit)
+
+
+def _iter_folder(folder, sort_field, limit):
+    items = _ns().GetDefaultFolder(folder).Items
+    items.Sort(sort_field, True)
+    item, n = items.GetFirst(), 0
+    while item is not None and n < limit:
+        if item.Class == OL_MAIL:
+            yield item
+            n += 1
+        item = items.GetNext()
+
+
+# ---- reads -------------------------------------------------------------------
+
+def recent_mail(limit=50, unread_only=False) -> list[dict]:
+    out = []
+    for item in _iter_inbox(limit * 4 if unread_only else limit):
+        if unread_only and not item.UnRead:
+            continue
+        out.append(_summary(item))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def get_message(entry_id) -> dict:
+    item = _ns().GetItemFromID(entry_id)
+    d = _summary(item)
+    d.update(to=item.To or "", cc=item.CC or "", body=item.Body or "")
+    return d
+
+
+def upcoming_meetings(hours=24) -> list[dict]:
+    return _meetings(datetime.now(), datetime.now() + timedelta(hours=hours))
+
+
+def meetings_today() -> list[dict]:
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return _meetings(today, today + timedelta(days=1))
+
+
+def _meetings(start, end) -> list[dict]:
+    items = _ns().GetDefaultFolder(OL_FOLDER_CALENDAR).Items
+    items.Sort("[Start]")
+    items.IncludeRecurrences = True
+    fmt = "%m/%d/%Y %I:%M %p"
+    found = items.Restrict(f"[Start] <= '{end.strftime(fmt)}' AND [End] >= '{start.strftime(fmt)}'")
+    out, item = [], found.GetFirst()
+    while item is not None and len(out) < 50:
+        if not item.AllDayEvent:
+            body = item.Body or ""
+            link = TEAMS_LINK.search(body)
+            out.append({
+                "id": item.EntryID,
+                "subject": item.Subject or "(no subject)",
+                "start": _local_time(item.Start).isoformat(timespec="minutes"),
+                "end": _local_time(item.End).isoformat(timespec="minutes"),
+                "location": item.Location or "",
+                "organizer": item.Organizer or "",
+                "join_url": link.group(0) if link else None,
+            })
+        item = found.GetNext()
+    return out
+
+
+# ---- actions -----------------------------------------------------------------
+
+def reply(entry_id, text, reply_all=False, send=True):
+    item = _ns().GetItemFromID(entry_id)
+    msg = item.ReplyAll() if reply_all else item.Reply()
+    if msg.BodyFormat == OL_FORMAT_HTML:
+        snippet = "<div>" + html.escape(text).replace("\n", "<br>") + "</div><br>"
+        msg.HTMLBody = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + snippet, msg.HTMLBody, count=1, flags=re.I)
+    else:
+        msg.Body = text + "\n\n" + msg.Body
+    if send:
+        msg.Send()
+    else:
+        msg.Display(False)
+
+
+def set_read(entry_id, read=True):
+    item = _ns().GetItemFromID(entry_id)
+    item.UnRead = not read
+    item.Save()
+
+
+def set_flag(entry_id, flagged=True):
+    item = _ns().GetItemFromID(entry_id)
+    if flagged:
+        item.MarkAsTask(OL_MARK_NO_DATE)
+    else:
+        item.ClearTaskFlag()
+    item.Save()
+
+
+def open_item(entry_id):
+    _ns().GetItemFromID(entry_id).Display(False)
+
+
+# ---- tasks and follow-ups ----------------------------------------------------
+
+def _table_rows(folder_id, where, columns, limit=10000):
+    # Folder.GetTable reads thousands of rows in well under a second; walking Items does not.
+    table = _ns().GetDefaultFolder(folder_id).GetTable(where)
+    table.Columns.RemoveAll()
+    for c in columns:
+        table.Columns.Add(c)
+    return table.GetArray(limit) or ()
+
+
+def _utc_to_local(value):
+    if value is None:
+        return None
+    utc = datetime(value.year, value.month, value.day, value.hour, value.minute, value.second, tzinfo=timezone.utc)
+    return utc.astimezone().replace(tzinfo=None)
+
+
+def todo_items() -> dict:
+    """Open Outlook/To Do tasks, and flagged mail whose flag isn't complete."""
+    tasks = [{
+        "source": "outlook", "id": r[0], "subject": r[1] or "(untitled)",
+        "due": _date_or_none(r[2]), "important": r[3] == OL_IMPORTANCE_HIGH,
+    } for r in _table_rows(OL_FOLDER_TASKS, "[Complete] = False", ["EntryID", "Subject", "DueDate", "Importance"])]
+
+    flagged = []
+    # The To-Do search folder ignores GetTable filters, so filter the rows here.
+    rows = _table_rows(OL_FOLDER_TODO, "", ["EntryID", "Subject", "MessageClass", PR_FLAG_STATUS,
+                                            PR_SENDER_NAME, PR_DELIVERY_TIME, PID_TASK_DUE])
+    for entry_id, subject, msg_class, flag, sender, received, due in rows:
+        if flag != 2 or not (msg_class or "").startswith("IPM.Note"):
+            continue
+        received = _utc_to_local(received)
+        flagged.append({
+            "id": entry_id, "subject": subject or "(no subject)", "sender_name": sender or "",
+            "due": due.date().isoformat() if due and due.year < NO_DATE_YEAR else None,
+            "received": received.isoformat(timespec="minutes") if received else None,
+        })
+    return {"tasks": tasks, "flagged": flagged}
+
+
+def create_task(subject, due=None, notes="") -> str:
+    task = _ns().Application.CreateItem(OL_TASK_ITEM)
+    task.Subject = subject
+    if due:
+        task.DueDate = datetime.fromisoformat(due)
+    if notes:
+        task.Body = notes
+    task.Save()
+    return task.EntryID
+
+
+def complete_item(entry_id):
+    """Completes an Outlook task, or marks a flagged email's flag complete."""
+    item = _ns().GetItemFromID(entry_id)
+    if item.Class == OL_TASK:
+        item.MarkComplete()
+    else:
+        item.FlagStatus = OL_FLAG_COMPLETE
+        item.Save()
+
+
+def _me() -> tuple[str, str]:
+    ns = _ns()
+    smtp = ""
+    try:
+        smtp = ns.Accounts.Item(1).SmtpAddress or ""
+    except pywintypes.com_error:
+        pass
+    return (ns.CurrentUser.Name or "").lower(), smtp.lower()
+
+
+def _sender_matches(sender, patterns) -> bool:
+    sender = sender.lower()
+    return any(sender.endswith(p.lower()) if p.startswith("@") else sender == p.lower() for p in patterns)
+
+
+def _is_bulk(item, sender) -> bool:
+    if re.search(r"no-?reply|donotreply|notifications?@|mailer-daemon", sender):
+        return True
+    headers = (_prop(item, PR_HEADERS) or "").lower()
+    return "list-unsubscribe:" in headers or "precedence: bulk" in headers or "precedence: list" in headers
+
+
+def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -> dict:
+    """Sent mail nobody answered, mail you haven't replied to, and unread mail from VIP senders."""
+    me_name, me_smtp = _me()
+    now = datetime.now()
+    horizon = now - timedelta(days=max(awaiting_days, reply_days) + 7)
+
+    # Latest message I sent in each conversation, plus the candidates for "awaiting reply".
+    sent_latest, sent_candidates = {}, {}
+    for item in _iter_folder(OL_FOLDER_SENT, "[SentOn]", 1500):
+        sent_on = _local_time(item.SentOn)
+        if sent_on < horizon:
+            break
+        conv = item.ConversationID
+        sent_latest.setdefault(conv, sent_on)  # newest first, so the first one seen is the latest
+        to = (item.To or "").strip()
+        if (conv not in sent_candidates and sent_on >= now - timedelta(days=awaiting_days)
+                and sent_on <= now - timedelta(hours=min_wait_hours) and to and to.lower() != me_name):
+            sent_candidates[conv] = {"id": item.EntryID, "subject": item.Subject or "(no subject)",
+                                     "to": to, "sent": sent_on.isoformat(timespec="minutes"), "_sent": sent_on}
+
+    inbox_latest, needs_reply, unread_vip, reply_seen = {}, [], [], set()
+    for item in _iter_inbox(3000):
+        received = _local_time(item.ReceivedTime)
+        if received < horizon:
+            break
+        conv = item.ConversationID
+        inbox_latest.setdefault(conv, received)
+        sender = _sender_smtp(item).lower()
+        if sender == me_smtp:
+            continue
+        if item.UnRead and vip_senders and _sender_matches(sender, vip_senders) and len(unread_vip) < 25:
+            unread_vip.append(_summary(item))
+        if (received >= now - timedelta(days=reply_days) and conv not in reply_seen and len(needs_reply) < 25
+                and me_name and me_name in (item.To or "").lower()):
+            reply_seen.add(conv)  # only judge the newest message in each conversation
+            replied = _prop(item, PR_LAST_VERB) in REPLIED_VERBS or sent_latest.get(conv, datetime.min) > received
+            if not replied and not _is_bulk(item, sender):
+                needs_reply.append(_summary(item))
+
+    awaiting = []
+    for conv, s in sent_candidates.items():
+        if inbox_latest.get(conv, datetime.min) <= s.pop("_sent"):
+            awaiting.append(s)
+    return {"awaiting_reply": awaiting[:25], "needs_reply": needs_reply, "unread_vip": unread_vip}
+
+
+# ---- alert rules -------------------------------------------------------------
+
+def _matches(rule, mail, body_lower) -> bool:
+    checks = []
+    if rule.get("senders"):
+        checks.append(_sender_matches(mail["sender"], rule["senders"]))
+    if rule.get("keywords"):
+        text = mail["subject"].lower() + "\n" + body_lower
+        checks.append(any(k.lower() in text for k in rule["keywords"]))
+    if rule.get("high_importance"):
+        checks.append(mail["high_importance"])
+    if rule.get("flagged"):
+        checks.append(mail["flagged"])
+    return bool(checks) and all(checks)
+
+
+def scan_new_mail() -> list[tuple[dict, dict]]:
+    """Returns (mail, rule) pairs for mail received since the last scan."""
+    cfg = config.section("outlook", {})
+    rules = cfg.get("rules") or []
+    started = datetime.now()
+    watermark = db.kv_get("outlook:watermark")
+    db.kv_set("outlook:watermark", started.isoformat())
+    if watermark is None:  # first run: don't alert on the existing inbox
+        return []
+    since = datetime.fromisoformat(watermark) - timedelta(minutes=5)
+
+    hits = []
+    for item in _iter_inbox(200):
+        if _local_time(item.ReceivedTime) < since:
+            break
+        mail = _summary(item)
+        if db.seen("mail:" + mail["id"]):
+            continue
+        body_lower = (item.Body or "")[:20000].lower()
+        for rule in rules:
+            if _matches(rule, mail, body_lower):
+                hits.append((mail, rule))
+                break  # first matching rule wins
+    return hits
+
+
+def scan_meetings() -> list[tuple[dict, int]]:
+    reminders = sorted(config.section("outlook", {}).get("meetings", {}).get("remind_minutes", [10, 1]))
+    if not reminders:
+        return []
+    due = []
+    now = datetime.now()
+    for m in upcoming_meetings(hours=max(reminders) / 60 + 1):
+        minutes = (datetime.fromisoformat(m["start"]) - now).total_seconds() / 60
+        if minutes < -1:
+            continue
+        hit = next((r for r in reminders if minutes <= r), None)
+        if hit is not None and not db.seen(f"mtg:{m['id']}:{m['start']}:{hit}"):
+            due.append((m, max(0, round(minutes))))
+    return due
+
+
+async def watch_loop():
+    cfg = config.section("outlook", {})
+    if not cfg.get("enabled", True):
+        return
+    poll = cfg.get("poll_seconds", 60)
+    while True:
+        try:
+            for mail, rule in await call(scan_new_mail):
+                alerts.raise_alert(
+                    "Outlook",
+                    f"{rule.get('name', 'Mail')}: {mail['subject']}",
+                    f"From {mail['sender_name']} - {mail['preview'][:150]}",
+                    rule.get("priority", "normal"),
+                    {"type": "mail", "id": mail["id"]},
+                )
+            for m, minutes in await call(scan_meetings):
+                when = "now" if minutes == 0 else f"in {minutes} min"
+                action = {"type": "meeting", "id": m["id"], "join_url": m["join_url"]}
+                alerts.raise_alert("Calendar", f"{m['subject']} starts {when}", m["location"], "high", action)
+            db.kv_set("outlook:status", {"ok": True, "checked": db.now()})
+        except Exception as e:
+            log.exception("Outlook scan failed")
+            db.kv_set("outlook:status", {"ok": False, "checked": db.now(), "error": str(e)})
+        await asyncio.sleep(poll)

@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pywin32
+pyyaml
+playwright
+keyring
+pyodbc
+windows-toasts
