@@ -40,6 +40,7 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
 - Personal reminders: the pop-up closes **only with Done** (no Dismiss); **Snooze on by default, 15 min**; **Weekdays** is the default repeat.
 - Teams: **full chat embedded in CC** (a native Teams web view), not just previews.
 - Important senders: a separate tier from Urgent people.
+- Pulse Supabase `service_role` key (was readable by other local accounts before the lock-down; all copies on this PC were removed): Joe decided **not to rotate it** and not to track it. Don't raise it again or list it as a to-do. It's still recorded in `C:\Sonance\internal\Security\Pulse-security-findings-2026-10-24.md`.
 - Today: hotbar not needed (alerts have "open with" actions, sites are embedded); Top 3 strip not needed.
 
 ### Settings changed (config.yaml, not in git)
@@ -62,7 +63,7 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
 - [ ] VS Code · Claude: open a project and **Trust** the folder.
 - [ ] Personal tab: add the three weekday reminders he described. Do it after the restart; the vault is already set up.
 - [ ] Calendar → Calendars: add the Google / iCloud links (he was doing iCloud).
-- [ ] Still open from the account setup list: urgent people, Asana token, Windows Hello, and **rotate the Pulse Supabase service_role key** (urgent).
+- [ ] Still open from the account setup list: urgent people, Asana token, Windows Hello.
 
 ### In flight / not finished
 These were all running when Joe left. If this session ended, they stopped too: check what landed and resume or redo.
