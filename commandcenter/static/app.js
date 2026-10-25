@@ -546,6 +546,8 @@ function srcTag(kind, detail = "") {
 }
 // "Name <email>" as the visible sender line, so the origin of every message is explicit.
 const fromLine = (name, email) => (email && name && !name.includes(email) ? `${name} <${email}>` : name || email || "");
+// The star before an important sender (people.py; `important: true` on the item from the server; important.js marks them).
+const importantStar = () => el("span", { class: "imp-star", title: "Important sender", "aria-label": "Important sender", role: "img" }, "★");
 const ALERT_SOURCES = { Outlook: "outlook", Calendar: "calendar", Teams: "teams", Pulse: "pulse", Website: "website",
   Order: "sql", Toolkit: "sql", Snooze: "outlook", "Follow-up": "sent", Urgent: "outlook" };
 function alertSource(a) {
@@ -567,7 +569,7 @@ loaders.mail = () => guarded(async () => {
       onclick: () => showMail(m.id),
     },
     el("div", { class: "grow" },
-      el("div", { class: "title" }, m.high_importance ? "❗ " : "", m.flagged ? el("span", { class: "flag" }, "⚑ ") : "", m.subject),
+      el("div", { class: "title" }, m.important ? importantStar() : "", m.high_importance ? "❗ " : "", m.flagged ? el("span", { class: "flag" }, "⚑ ") : "", m.subject),
       el("div", { class: "src-line" }, srcTag("outlook", m.pinned ? "opened" : "Inbox"), m.pinned && el("span", { class: "tag" }, "Opened"), fromLine(m.sender_name, m.sender)),
       el("div", { class: "muted" }, when(m.received), " · ", m.preview.slice(0, 120))),
     mailActions(m, "row"),
@@ -589,7 +591,7 @@ async function showMail(id) {
     const act = (path, body, msg) => guarded(async () => { await api(path, body); if (msg) showMessage("Done", msg); loaders.mail(); showMail(id); });
     view.replaceChildren(
       el("h2", {}, m.subject),
-      el("div", {}, `${m.sender_name} <${m.sender}>`),
+      el("div", {}, m.important ? importantStar() : "", `${m.sender_name} <${m.sender}>`),
       el("div", { class: "muted" }, `To: ${m.to}${m.cc ? "  ·  Cc: " + m.cc : ""}  ·  ${when(m.received)}`),
       el("div", { class: "actions", style: "margin:10px 0" },
         el("button", { class: "primary", onclick: () => replyDialog(m, false) }, "Reply"),
@@ -608,7 +610,7 @@ async function showMail(id) {
     const listed = [...document.querySelectorAll("#mail-list li")].some((li) => li.dataset.id === id);
     if (!listed || pinnedMail?.id === id) {
       pinnedMail = { id, subject: m.subject, sender_name: m.sender_name, sender: m.sender, received: m.received,
-        preview: (m.body || "").replace(/\s+/g, " "), flagged: m.flagged, high_importance: m.high_importance, pinned: true };
+        preview: (m.body || "").replace(/\s+/g, " "), flagged: m.flagged, high_importance: m.high_importance, important: m.important, pinned: true };
       if (!listed) await loaders.mail();
     }
     document.querySelectorAll("#mail-list li").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));
@@ -848,7 +850,7 @@ function followupsInvolving(attendees) {
     ["Needs your reply", f.needs_reply, (m) => hit(m.sender, m.sender_name), (m) => m.sender_name],
     ["Awaiting their reply", f.awaiting_reply, (m) => hit(m.to), (m) => `to ${m.to}`],
     ["Flagged", f.flagged, (m) => hit(m.sender, m.sender_name), (m) => m.sender_name],
-    ["Unread from VIPs", f.unread_vip, (m) => hit(m.sender, m.sender_name), (m) => m.sender_name],
+    ["Important senders", f.unread_vip, (m) => hit(m.sender, m.sender_name), (m) => m.sender_name],
   ].flatMap(([group, items, match, who]) => (items || []).filter(match).map((m) => ({ group, who: who(m), ...m })));
 }
 
@@ -1532,10 +1534,11 @@ async function completeTask(task) {
 }
 
 // ---- follow-ups: a dense list, one row per item ----------------------------------------------------------
-// Each group (Urgent, Needs your reply, Teams, Awaiting their reply, Flagged, VIP unread) is a list section with
+// Each group (Urgent, Needs your reply, Teams, Awaiting their reply, Flagged, Important senders) is a list section with
 // its count; a section can be collapsed (remembered per viewer in cc.today.fu.collapsed). A row shows the source
-// tag, who, the subject, how long ago, and its main action; Snooze, Dismiss and the second action appear on hover
-// or keyboard focus, and the rest (Teams chat, Mark urgent, Mute, module actions such as Spam) are in its ⋯ menu.
+// tag, who (★ for an important sender), the subject, how long ago, and its main action; Snooze, Dismiss and the second
+// action appear on hover or keyboard focus, and the rest (Teams chat, Mark urgent, Mute, module actions such as Mark
+// important and Spam) are in its ⋯ menu.
 const FU_COLLAPSED = "cc.today.fu.collapsed";
 const fuCollapsed = (() => { try { return new Set(JSON.parse(store.get(FU_COLLAPSED) || "[]")); } catch { return new Set(); } })();
 
@@ -1576,7 +1579,7 @@ function fuRow(m, { cls = "", src, who, whoTitle = who, subject, about = subject
   const extra = more().filter(Boolean);
   return el("li", { class: `fu-row ${cls}` },
     el("span", { class: "fu-src" }, src),
-    el("span", { class: "fu-who", title: whoTitle }, who),
+    el("span", { class: "fu-who", title: whoTitle }, m.important ? importantStar() : "", who),
     el("span", { class: "fu-subj", title: about }, tags.filter(Boolean), el("span", { class: "fu-subj-text" }, subject)),
     el("span", { class: "fu-age", title: at ? when(at) : "" }, ago(at)),
     el("span", { class: "fu-acts" }, primary, el("span", { class: "fu-quick" }, quick.filter(Boolean)),
@@ -1649,7 +1652,7 @@ function flaggedRow(m) {
 
 function vipRow(m) {
   return fuRow(m, {
-    cls: "unread", src: srcTag("outlook", "VIP sender"), who: m.sender_name || m.sender, whoTitle: fromLine(m.sender_name, m.sender),
+    cls: "unread", src: srcTag("outlook", "important sender"), who: m.sender_name || m.sender, whoTitle: fromLine(m.sender_name, m.sender),
     subject: m.subject, at: m.received, primary: fuView(m), quick: [fuSnooze(m), fuDismiss(m)],
     more: () => [fuMute(m.sender || m.sender_name), ...mailActions(m, "followup")],
   });
@@ -1670,7 +1673,7 @@ function renderFollowups(f) {
     fuSection("teams", "Teams — reply needed", f.teams_reply, teamsRow, { empty: "No unread Teams messages.", hot: !!f.teams_reply?.some((m) => m.urgent) }),
     fuSection("awaiting", "Awaiting their reply", f.awaiting_reply, awaitingRow, { empty: "No one owes you a reply." }),
     fuSection("flagged", "Flagged", f.flagged, flaggedRow, { empty: "No recent flags.", note: hiddenNote && `Hidden: ${hiddenNote} (of ${Number(h.total || 0).toLocaleString()} flagged)` }),
-    fuSection("vip", "Unread from VIPs", f.unread_vip, vipRow, { empty: "No unread VIP mail." }));
+    fuSection("vip", "Important senders", f.unread_vip, vipRow, { empty: "No unread mail from important senders." }));
 }
 
 // ---- urgent people ---------------------------------------------------------------
@@ -2040,8 +2043,14 @@ async function teamsLogin() {
   if (!await confirmDialog("Log in to Teams", "A browser window will open on Teams. Sign in (including MFA), wait until your chats load, then close that window. Command Center will then check your unread DMs and mentions every few minutes (read-only).", "Open browser")) return;
   guarded(() => api("/api/teams/login", {}));
 }
-// Teams alerts carry a deep link to the chat or message (action type "teams").
-alertActionTypes.teams = (act) => linkButton(teamsLink(act.url) || "msteams:", "Open in Teams");
+// Teams alerts carry a deep link to the chat or message (action type "teams"): the whole chat in the Teams tab's
+// web view when the desktop app has it (teamsview.js), else the Teams app.
+alertActionTypes.teams = (act) => {
+  const link = teamsLink(act.url);
+  return link && CC.teamsWeb?.available
+    ? el("button", { type: "button", class: "small", onclick: () => CC.teamsWeb.open(link) }, "Open chat")
+    : linkButton(link || "msteams:", "Open in Teams");
+};
 
 // Counts from the background check (teams.py): DMs, group / meeting chats and @mentions unread; null = not readable.
 const teamsPlural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -2094,9 +2103,13 @@ function teamsRecentRow(r) {
     tags: [r.urgent && el("span", { class: "tag urgent" }, "Urgent"), r.count > 1 && el("span", { class: "tag teams-n", title: `${r.count} unread messages` }, r.count),
       r.where && el("span", { class: "tag teams-where" }, r.where)],
     at: r.time,
-    primary: link
-      ? el("button", { type: "button", class: "small alt", title: "Open this chat in the Teams app", "aria-label": `Open in Teams: ${r.who}`, onclick: () => openExternal(link) }, "Open")
-      : el("button", { type: "button", class: "small alt", onclick: () => openExternal("msteams:") }, "Open Teams"),
+    // the whole chat in the web view beside the list (teamsview.js) when the desktop app has it, else the Teams app
+    primary: link && CC.teamsWeb?.available
+      ? el("button", { type: "button", class: "small primary", title: "Open the whole chat here, to read and reply", "aria-label": `Open chat: ${r.who}`, onclick: () => CC.teamsWeb.open(link) }, "Open chat")
+      : link
+        ? el("button", { type: "button", class: "small alt", title: "Open this chat in the Teams app", "aria-label": `Open in Teams: ${r.who}`, onclick: () => openExternal(link) }, "Open")
+        : el("button", { type: "button", class: "small alt", onclick: () => openExternal("msteams:") }, "Open Teams"),
+    quick: [link && CC.teamsWeb?.available && el("button", { type: "button", class: "small subtle", title: "Open this chat in the Teams app (calls, meetings)", "aria-label": `Open in the Teams app: ${r.who}`, onclick: () => CC.teamsWeb.app(link) }, "App")],
   });
 }
 function renderTeamsRecent(t) {
@@ -2108,6 +2121,13 @@ function renderTeamsRecent(t) {
     : s.details === "unavailable" ? "Details unavailable on the last check (only Teams' unread total could be read)."
     : "No DMs or mentions in the last 3 days.";
   fill($("#teams-recent-list"), recent.map(teamsRecentRow), empty);
+  // a click anywhere on a row (not on its buttons) opens that chat in the web view too
+  $("#teams-recent-list").querySelectorAll("li.teams-row").forEach((li, i) => {
+    const link = teamsLink(recent[i]?.link);
+    if (!link || !CC.teamsWeb?.available) return;
+    li.classList.add("teams-open");
+    li.addEventListener("click", (e) => { if (!e.target.closest("button, a, input")) CC.teamsWeb.open(link); });
+  });
 }
 
 loaders.teams = () => guarded(async () => {
@@ -2370,6 +2390,8 @@ setInterval(refresh, 5000);
 window.CC = {
   $, el, api, guarded, fill, when, timeOf, srcTag, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
   replyDialog,  // verified reply: compose -> review (recipients, subject, text) -> Send
+  importantStar,  // the ★ before an important sender
+  toast,  // short note in the corner
   get todayData() { return todayData; },
   // The project picked in "Working on:" (right pane), or null. Changes fire document "cc:project" {detail:{path,name}}.
   get activeProject() { return activeProject(); },

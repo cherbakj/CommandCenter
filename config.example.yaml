@@ -38,6 +38,10 @@ teams:
   url: https://teams.microsoft.com/v2/
   poll_minutes: 2          # each check opens Teams in a hidden Edge for ~20 s (read-only: unread DMs, @mentions)
   priority: normal         # alerts for new DMs / @mentions; from urgent people they are always high
+  # The Teams tab also shows Teams on the web (its own sign-in, data/webview-teams). It goes only to Teams and its
+  # sign-in (teams.microsoft.com, teams.cloud.microsoft, login.microsoftonline.com, login.microsoft.com,
+  # sonance.okta.com); other pages open in the default browser. Add a host here if the sign-in ever moves:
+  # view_hosts: [example.okta.com]
 
 followups:
   awaiting_reply_days: 7   # sent mail with no answer, looking back this many days
@@ -70,6 +74,10 @@ asana:
 #   senders:   full addresses, or "@domain.com" for a whole domain
 #   keywords:  any word/phrase in the subject or body
 #   high_importance / flagged: true
+# The "VIP sender" rule's senders (any rule with only senders: and priority: high) are your important senders,
+# together with the ones you mark in the app (Mark important on an email, or Follow-ups > Important senders /
+# Ctrl+K): their mail is a high-priority alert, listed under Follow-ups > Important senders and starred. The two
+# example entries below are ignored; replace them or leave the list to the app.
 # ---------------------------------------------------------------------------
 outlook:
   enabled: true
@@ -77,7 +85,7 @@ outlook:
   auto_start: true                    # reopen Outlook if it gets closed
   focus_keywords: ["focus"]           # a calendar event with this in its title turns on focus mode
   rules:
-    - name: VIP sender
+    - name: VIP sender                  # more can be added in the app (Follow-ups > Important senders)
       senders: ["your.manager@sonance.com", "@importantcustomer.com"]
       priority: high
     - name: Teams activity              # Teams emails you about missed chats/mentions
@@ -93,7 +101,7 @@ outlook:
       keywords: ["urgent", "asap", "PO#"]
       priority: normal
   meetings:
-    remind_minutes: [10, 1]             # pop-ups this many minutes before a meeting (the first one has a Prep button)
+    remind_minutes: [15, 5, 0]          # pop-ups this many minutes before a meeting (0 = when it starts); each has Join and Prep
 
 # ---------------------------------------------------------------------------
 # Mark as spam (Spam on an email from outside Sonance; manage under Mail > Spam blocks or Ctrl+K).

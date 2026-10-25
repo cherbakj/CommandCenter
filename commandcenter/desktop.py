@@ -28,7 +28,7 @@ import webview
 from PIL import Image, ImageDraw
 
 from . import alerts, config, db, security
-from .overlay import NativeOverlay
+from .siteview import PulseView, TeamsView, _no_autofill
 from .ssmsdock import SsmsDock
 
 log = logging.getLogger(__name__)
@@ -151,24 +151,6 @@ def _harden_webview():
     edgechromium.EdgeChrome.on_new_window_request = on_new_window_request
 
 
-def _no_autofill(settings, core=None):
-    """WebView2 must not remember what is typed (form autofill) or offer to save passwords: the vault passphrase,
-    Logi passwords and Toolkit fields would otherwise land in the profile in data/webview. CoreWebView2Settings 4+
-    (the bundled Microsoft.Web.WebView2.Core has both properties). Anything an older version let it save is
-    cleared from the profile once per launch."""
-    for name in ("IsGeneralAutofillEnabled", "IsPasswordAutosaveEnabled"):
-        try:
-            setattr(settings, name, False)
-        except Exception as e:
-            log.warning("WebView2: couldn't turn off %s (%s)", name, type(e).__name__)
-    if core is not None:
-        try:
-            from Microsoft.Web.WebView2.Core import CoreWebView2BrowsingDataKinds as kinds
-            core.Profile.ClearBrowsingDataAsync(kinds.GeneralAutofill | kinds.PasswordAutosave)  # fire and forget
-        except Exception as e:
-            log.warning("WebView2: couldn't clear saved autofill data (%s)", type(e).__name__)
-
-
 def _on_navigation(sender, args):
     uri = str(args.Uri)
     if uri.startswith(_nav["origin"] or "\0") or uri.startswith(("about:", "data:text/html")):
@@ -183,454 +165,6 @@ def _on_navigation(sender, args):
         webbrowser.open(uri)
     else:
         log.warning("Blocked navigation to %s", uri[:80])
-
-
-# ---- Pulse site view (the WORK Pulse tab) -----------------------------------------------------
-# pulse.sonance.com refuses to be framed (frame-ancestors 'self'), so the Pulse tab is a second WebView2 that this
-# window hosts itself, laid over the tab's empty stage. Being a top-level page in its own control, it isn't a frame.
-# The dashboard reports where the stage is (CSS px) and whether anything of its own must be on top (a dialog, the
-# palette, the splash: hide; a toast: cut a hole) through /api/window/pulse/* (security.py). There is still no
-# js_api, and the Pulse site gets no channel to Command Center at all: its own profile (data/webview-pulse, so no
-# Command Center cookie), and navigation limited to the Pulse sites and the sign-in hosts they use.
-
-PULSE_DEFAULTS = {"prod": "https://pulse.sonance.com", "dev": "https://dev.pulse.sonance.com"}
-# Where the sign-in really goes (checked 2026-10: both sites 302 to Okta, and Okta's IdP discovery for sonance.com
-# answers type OKTA, so no Microsoft hop). More can be added with pulse.view_sso_hosts in config.yaml.
-PULSE_SSO_HOSTS = ("sonance.okta.com",)
-# Non-web links the site may use: mail, Teams, and Okta Verify (FastPass). Windows opens them; anything else is dropped.
-PULSE_OUT_SCHEMES = ("mailto", "msteams", "com-okta-authenticator")
-# Downloads go to the Windows Downloads folder, and only these types (exports, documents, images). Not legacy .xls
-# (macro-capable; Pulse exports .xlsx / .csv, and an .xls ticket attachment can still be opened in the browser).
-PULSE_DOWNLOAD_TYPES = {".csv", ".xlsx", ".pdf", ".docx", ".pptx", ".txt", ".json", ".png", ".jpg", ".jpeg",
-                        ".gif", ".webp"}
-_HOSTNAME_RE = None
-
-
-def _host_ok(host) -> bool:
-    global _HOSTNAME_RE
-    import re
-    _HOSTNAME_RE = _HOSTNAME_RE or re.compile(r"^(?=.{1,200}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
-    return isinstance(host, str) and bool(_HOSTNAME_RE.match(host))
-
-
-def pulse_sites() -> dict[str, str]:
-    """{"prod": "https://pulse.sonance.com/", "dev": "https://dev.pulse.sonance.com/"} (pulse.url / pulse.dev_url)."""
-    from urllib.parse import urlsplit
-    s = config.section("pulse", {}) or {}
-    out = {}
-    for site, key in (("prod", "url"), ("dev", "dev_url")):
-        url = str(s.get(key) or PULSE_DEFAULTS[site]).strip().rstrip("/")
-        p = urlsplit(url)
-        if p.scheme != "https" or not _host_ok((p.hostname or "").lower()) or p.port or p.username or p.path:
-            url = PULSE_DEFAULTS[site]
-        out[site] = url + "/"
-    return out
-
-
-def pulse_hosts() -> set[str]:
-    from urllib.parse import urlsplit
-    hosts = {urlsplit(u).hostname for u in pulse_sites().values()} | set(PULSE_SSO_HOSTS)
-    extra = (config.section("pulse", {}) or {}).get("view_sso_hosts") or []
-    hosts |= {str(h).strip().lower() for h in (extra if isinstance(extra, list) else []) if _host_ok(str(h).strip().lower())}
-    return hosts
-
-
-def pulse_allowed(url: str) -> bool:
-    """May the Pulse view show this page? https on 443, a Pulse site or a sign-in host, no user:pass@."""
-    from urllib.parse import urlsplit
-    try:
-        p = urlsplit(str(url))
-        return (p.scheme == "https" and not p.username and not p.password and p.port in (None, 443)
-                and (p.hostname or "").lower() in pulse_hosts())
-    except ValueError:
-        return False
-
-
-def pulse_site_of(url: str):
-    """"prod" / "dev" for a page on one of the Pulse sites themselves (not the sign-in hosts), else None."""
-    from urllib.parse import urlsplit
-    if not pulse_allowed(url):
-        return None
-    host = urlsplit(str(url)).hostname.lower()
-    return next((site for site, home in pulse_sites().items() if urlsplit(home).hostname == host), None)
-
-
-def _downloads_folder() -> Path:
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders") as k:
-            return Path(winreg.QueryValueEx(k, "{374DE290-123F-4565-9164-39C4925E467B}")[0])
-    except OSError:
-        return Path.home() / "Downloads"
-
-
-class _SiteView:
-    def __init__(self, site, home):
-        self.site, self.home = site, home
-        self.panel = None        # WinForms Panel: positioned, shown/hidden and clipped (Region) by PulseView
-        self.controller = None   # CoreWebView2Controller inside it
-        self.pending_url = None  # a ticket asked for before the view existed
-        self.failed = False
-        self.region = None
-        self.state = {"ready": False, "loading": False, "host": "", "path": "", "title": "", "can_back": False,
-                      "can_forward": False, "outside": None, "note": None, "failed": False}
-
-
-class PulseView(NativeOverlay):
-    """The Pulse site, one WebView2 per site (Prod / Dev keep their own page), created the first time it's shown.
-    update() / action() are called from the server thread; everything that touches WinForms or WebView2 runs on the
-    window's UI thread (BeginInvoke). Reports are coalesced: however many arrive, one apply is queued at a time."""
-    NAME = "Pulse view"
-    SITES = tuple(PULSE_DEFAULTS)
-
-    def __init__(self, app):
-        super().__init__(app)
-        self.views: dict[str, _SiteView] = {}
-        self.env = None
-        self._env_started = False
-        self._env_error = None
-        self._scheduler = None
-        self._last_out = (None, 0.0)
-        self._launches: list[float] = []  # when links last went to the browser / Windows (3 per 10 s)
-
-    # ---- from the server thread ----
-    def status(self) -> dict:
-        with self._lock:
-            views = {site: dict(v.state) for site, v in self.views.items()}
-        return {"available": self.available(), "sites": pulse_sites(), "views": views, "error": self._env_error}
-
-    def action(self, site: str, name: str, url: str | None = None):
-        sites = pulse_sites()
-        if name == "navigate":
-            site = pulse_site_of(url or "")
-            if not site:
-                raise ValueError("only Pulse pages can be opened here")
-        if site not in sites:
-            raise ValueError("site must be prod or dev")
-        if name not in ("back", "forward", "reload", "home", "open", "navigate"):
-            raise ValueError("unknown action")
-        self._invoke(lambda: self._do(site, name, url))
-        return site
-
-    # ---- UI thread ----
-    def _panels(self):
-        return [v.panel for v in self.views.values()]
-
-    def _apply(self):
-        form = self._form()
-        if form is None:
-            return
-        with self._lock:
-            want = dict(self.want)
-        show = self._showing(want)
-        if show and want["site"] not in self.views:
-            self._create(want["site"])
-        for site, v in self.views.items():
-            on = show and site == want["site"] and v.controller is not None and not v.failed
-            if on:
-                on = self._place(form, v, want["rect"], want["cuts"])
-            self._set_visible(form, v, on)
-
-    def _place(self, form, v, rect, cuts) -> bool:
-        from System.Drawing import Rectangle
-        geo = self._geometry(form, rect, cuts)
-        if geo is None:
-            return False
-        left, top, width, height, holes = geo
-        v.panel.SetBounds(left, top, width, height)
-        v.controller.Bounds = Rectangle(0, 0, width, height)
-        self._clip(v, width, height, holes)
-        return True
-
-    def _set_visible(self, form, v, on):
-        if v.panel is None:
-            return
-        self._show_panel(form, v.panel, on)
-        if v.controller is not None:
-            v.controller.IsVisible = on  # lets WebView2 throttle a hidden page
-
-    def _create(self, site):
-        v = _SiteView(site, pulse_sites()[site])
-        v.panel = self._new_panel()
-        v.panel.Resize += lambda *_: self._fit(v)
-        with self._lock:
-            self.views[site] = v
-        self._start_env()
-        if self.env is not None:
-            self._create_controller(v)
-
-    def _fit(self, v):
-        if v.controller is not None:
-            from System.Drawing import Rectangle
-            v.controller.Bounds = Rectangle(0, 0, v.panel.Width, v.panel.Height)
-
-    def _start_env(self):
-        if self._env_started:
-            return
-        self._env_started = True
-        from System import Action
-        from System.Threading.Tasks import Task, TaskScheduler
-        from Microsoft.Web.WebView2.Core import CoreWebView2Environment, CoreWebView2EnvironmentOptions
-        folder = config.DATA_DIR / "webview-pulse"  # its own profile: Okta / Pulse cookies never mix with Command Center's
-        folder.mkdir(exist_ok=True)
-        opts = CoreWebView2EnvironmentOptions()
-        opts.AdditionalBrowserArguments = ""  # no remote debugging or other switches (the env vars were removed too)
-        opts.AreBrowserExtensionsEnabled = False
-        opts.AllowSingleSignOnUsingOSPrimaryAccount = False
-        opts.ExclusiveUserDataFolderAccess = True
-        scheduler = TaskScheduler.FromCurrentSynchronizationContext()
-
-        def ready(task):
-            if task.IsFaulted or task.IsCanceled:
-                self._env_error = "The Pulse view couldn't start (WebView2)."
-                log.warning("Pulse view: WebView2 environment failed (%s)",
-                            type(task.Exception).__name__ if task.Exception else "canceled")
-                return
-            self.env = task.Result
-            for v in list(self.views.values()):
-                if v.controller is None:
-                    self._create_controller(v)
-        self._scheduler = scheduler
-        CoreWebView2Environment.CreateAsync(None, str(folder), opts).ContinueWith(
-            Action[Task[CoreWebView2Environment]](ready), scheduler)
-
-    def _create_controller(self, v):
-        from System import Action
-        from System.Threading.Tasks import Task
-        from Microsoft.Web.WebView2.Core import CoreWebView2Controller
-
-        def ready(task):
-            if task.IsFaulted or task.IsCanceled:
-                v.failed = True
-                v.state.update(failed=True, note="The Pulse view couldn't start.")
-                log.warning("Pulse view: controller for %s failed", v.site)
-                return
-            self._setup(v, task.Result)
-        self.env.CreateCoreWebView2ControllerAsync(v.panel.Handle).ContinueWith(
-            Action[Task[CoreWebView2Controller]](ready), self._scheduler)
-
-    def _setup(self, v, controller):
-        from System.Drawing import Color
-        v.controller = controller
-        controller.IsVisible = False
-        controller.DefaultBackgroundColor = Color.FromArgb(255, 5, 7, 13)
-        self._fit(v)
-        core = controller.CoreWebView2
-        st = core.Settings
-        st.AreDevToolsEnabled = False
-        st.AreHostObjectsAllowed = False
-        st.IsWebMessageEnabled = False       # nothing on the site can post to this app
-        st.IsStatusBarEnabled = False
-        st.IsSwipeNavigationEnabled = False
-        st.AreDefaultContextMenusEnabled = True  # copy / paste; "Inspect" isn't there with devtools off
-        st.AreBrowserAcceleratorKeysEnabled = True  # F5, Ctrl+F, Alt+Left; Ctrl+K and F11 are passed on below
-        _no_autofill(st, core)  # Okta sign-in fields aren't remembered either
-        try:
-            core.Profile.DefaultDownloadFolderPath = str(_downloads_folder())
-        except Exception as e:
-            log.warning("Pulse view: couldn't set the download folder (%s)", type(e).__name__)
-        core.NavigationStarting += lambda s, a: self._on_nav(v, a)
-        core.FrameNavigationStarting += lambda s, a: self._on_frame_nav(v, a)
-        core.NewWindowRequested += lambda s, a: self._on_new_window(v, a)
-        core.LaunchingExternalUriScheme += lambda s, a: self._on_scheme(v, a)
-        core.DownloadStarting += lambda s, a: self._on_download(v, a)
-        core.PermissionRequested += self._on_permission
-        core.ScreenCaptureStarting += lambda s, a: setattr(a, "Cancel", True)
-        core.SaveAsUIShowing += lambda s, a: setattr(a, "Cancel", True)  # Ctrl+S: no "save page" anywhere
-        core.SourceChanged += lambda s, a: self._track(v)
-        core.HistoryChanged += lambda s, a: self._track(v)
-        core.DocumentTitleChanged += lambda s, a: self._track(v)
-        core.NavigationCompleted += lambda s, a: self._track(v, loading=False)
-        core.ProcessFailed += lambda s, a: self._on_failed(v, a)
-        controller.AcceleratorKeyPressed += lambda s, a: self._on_key(a)
-        url, v.pending_url = v.pending_url or v.home, None
-        v.state["ready"] = True
-        core.Navigate(url)
-        self._apply()
-
-    # ---- events from the Pulse page (UI thread) ----
-    @staticmethod
-    def _note(v, text):
-        v.state.update(note=text, note_at=time.time())  # the tab shows it for a short while
-
-    def _track(self, v, loading=None):
-        from urllib.parse import urlsplit
-        core = v.controller.CoreWebView2 if v.controller else None
-        if core is None:
-            return
-        p = urlsplit(str(core.Source))
-        v.state.update(host=(p.hostname or "")[:100], path=(p.path or "/")[:200], title=str(core.DocumentTitle or "")[:200],
-                       can_back=bool(core.CanGoBack), can_forward=bool(core.CanGoForward))
-        if loading is not None:
-            v.state["loading"] = loading
-
-    def _on_nav(self, v, args):
-        uri = str(args.Uri)
-        if pulse_allowed(uri) or uri == "about:blank":
-            v.state.update(loading=True, note=None)
-            return
-        args.Cancel = True
-        self._outside(v, uri, user=bool(args.IsUserInitiated))
-
-    def _on_frame_nav(self, v, args):
-        uri = str(args.Uri)
-        scheme = uri.split(":", 1)[0].lower()
-        if scheme in ("https", "http", "about", "data", "blob"):
-            return  # frames are the site's own business (its CSP); only top-level pages are limited
-        args.Cancel = True
-        if scheme in PULSE_OUT_SCHEMES:
-            self._outside(v, uri, user=bool(args.IsUserInitiated))
-
-    def _on_new_window(self, v, args):
-        args.Handled = True  # never a second window: links that want one open in the default browser
-        self._outside(v, str(args.Uri), new_window=True, user=bool(args.IsUserInitiated))
-
-    def _on_scheme(self, v, args):
-        args.Cancel = True  # no WebView2 prompt; _outside decides (and NavigationStarting may already have)
-        self._outside(v, str(args.Uri), user=bool(args.IsUserInitiated))
-
-    def _outside(self, v, uri, new_window=False, user=True):
-        """A link the view doesn't show: web pages open in the default browser, mail / Teams / Okta Verify links in
-        their apps, anything else is dropped. Only for a click (WebView2's IsUserInitiated), so a script on an allowed
-        page can't open tabs or launch apps by itself; the one exception is Okta FastPass, which the Okta sign-in page
-        launches from script after its own button. At most 3 a 10 s, and the same link once a second (two events can
-        report the same one)."""
-        from urllib.parse import urlsplit
-        if len(uri) > 4000 or any(ord(c) < 32 or c == '"' for c in uri):
-            log.warning("Pulse view: dropped an odd link")
-            return
-        scheme = uri.split(":", 1)[0].lower()
-        now = time.monotonic()
-        last = self._last_out
-        if last[0] == uri and now - last[1] < 1:
-            return
-        self._last_out = (uri, now)
-        what = (urlsplit(uri).hostname or "")[:100] if scheme in ("https", "http") else f"{scheme[:20]}:"
-        source = str(v.controller.CoreWebView2.Source) if v.controller else ""
-        fastpass = scheme == "com-okta-authenticator" and (urlsplit(source).hostname or "").lower() in PULSE_SSO_HOSTS
-        if not user and not fastpass:
-            self._note(v, f"Blocked {what}: the page opened it by itself (click a link to open it)")
-            log.warning("Pulse view: blocked %s opened without a click", what)
-            return
-        if scheme not in ("https", "http") and scheme not in PULSE_OUT_SCHEMES:
-            log.warning("Pulse view: blocked a %s: link", scheme[:20])
-            return
-        self._launches = [t for t in self._launches if now - t < 10]
-        if len(self._launches) >= 3:
-            self._note(v, f"Blocked {what}: too many links opened at once")
-            log.warning("Pulse view: blocked %s (more than 3 links in 10 s)", what)
-            return
-        self._launches.append(now)
-        if scheme in ("https", "http"):
-            host = (urlsplit(uri).hostname or "")[:100]
-            v.state["outside"] = {"host": host, "at": time.time()}
-            log.info("Pulse view: opened %s in the browser%s", host, " (new window)" if new_window else "")
-            threading.Thread(target=webbrowser.open, args=(uri,), daemon=True).start()
-        else:
-            log.info("Pulse view: handed a %s: link to Windows", scheme)
-            threading.Thread(target=os.startfile, args=(uri,), daemon=True).start()
-
-    def _on_download(self, v, args):
-        name = Path(str(args.ResultFilePath)).name
-        if Path(name).suffix.lower() not in PULSE_DOWNLOAD_TYPES:
-            args.Cancel = True
-            self._note(v, f"Download blocked ({Path(name).suffix[:10] or 'no type'}): only exports, documents and images.")
-            log.warning("Pulse view: blocked a %s download", Path(name).suffix[:10] or "typeless")
-            return
-        folder = _downloads_folder()
-        target = Path(str(args.ResultFilePath))
-        if target.parent != folder:  # WebView2 picks a free name in the profile's download folder (set to Downloads)
-            stem, ext, n = Path(name).stem, Path(name).suffix, 1
-            target = folder / name
-            while target.exists():
-                target, n = folder / f"{stem} ({n}){ext}", n + 1
-            args.ResultFilePath = str(target)
-        self._note(v, f"Downloading {target.name} to Downloads")
-        log.info("Pulse view: download to Downloads (%s)", target.suffix)
-
-    @staticmethod
-    def _on_permission(sender, args):
-        from Microsoft.Web.WebView2.Core import CoreWebView2PermissionKind, CoreWebView2PermissionState
-        # More than one download in a row (exports): still only the allowed types, into Downloads. Everything else
-        # (camera, microphone, location, notifications, clipboard read...) is refused.
-        multiple = args.PermissionKind == CoreWebView2PermissionKind.MultipleAutomaticDownloads
-        args.State = CoreWebView2PermissionState.Allow if multiple else CoreWebView2PermissionState.Deny
-
-    def _on_failed(self, v, args):
-        kind = str(args.ProcessFailedKind)
-        log.warning("Pulse view: %s process failed (%s)", v.site, kind)
-        if "BrowserProcessExited" in kind:
-            v.failed = True
-            v.state.update(failed=True, note="The Pulse view stopped. Reload to start it again.")
-            self._apply()
-        else:
-            self._note(v, "The page stopped responding. Reload it.")
-
-    def _on_key(self, args):
-        from Microsoft.Web.WebView2.Core import CoreWebView2KeyEventKind
-        if args.KeyEventKind not in (CoreWebView2KeyEventKind.KeyDown, CoreWebView2KeyEventKind.SystemKeyDown):
-            return
-        down = lambda vk: bool(ctypes.windll.user32.GetKeyState(vk) & 0x8000)  # noqa: E731
-        ctrl, shift, alt = down(0x11), down(0x10), down(0x12)
-        key = int(args.VirtualKey)
-        if key == 0x4B and ctrl and not shift and not alt:  # Ctrl+K: Command Center's palette
-            args.Handled = True
-            self._focus_dashboard()
-            # run_js waits for the UI thread (this one), so it runs from another thread
-            threading.Thread(target=self.app.window.run_js, args=("document.getElementById('search-btn')?.click()",),
-                             daemon=True).start()
-        elif key == 0x50 and ctrl and shift and not alt:  # Ctrl+Shift+P: Privacy mode (hide personal now)
-            args.Handled = True
-            threading.Thread(target=self.app.privacy_key, daemon=True).start()
-        elif int(args.VirtualKey) == 0x7A:  # F11: full screen, as in the dashboard
-            args.Handled = True
-            threading.Thread(target=self.app.toggle_fullscreen, daemon=True).start()
-
-    # ---- actions from the tab's buttons (UI thread) ----
-    def _do(self, site, name, url):
-        v = self.views.get(site)
-        if name == "open":
-            src = str(v.controller.CoreWebView2.Source) if v and v.controller else ""
-            target = src if pulse_site_of(src) else pulse_sites()[site]  # never a sign-in page's one-time link
-            threading.Thread(target=webbrowser.open, args=(target,), daemon=True).start()
-            return
-        if v is None or v.controller is None:
-            if name == "navigate":
-                if v is None:
-                    self._pending_for(site, url)
-                else:
-                    v.pending_url = url
-            return
-        if v.failed and name in ("reload", "home", "navigate"):
-            self._restart(v, url if name == "navigate" else None)
-            return
-        core = v.controller.CoreWebView2
-        if name == "back" and core.CanGoBack:
-            core.GoBack()
-        elif name == "forward" and core.CanGoForward:
-            core.GoForward()
-        elif name == "reload":
-            core.Reload()
-        elif name == "home":
-            core.Navigate(v.home)
-        elif name == "navigate":
-            core.Navigate(url)
-
-    def _pending_for(self, site, url):
-        """A ticket opened before that site's view exists: remembered, and opened when the view starts."""
-        self._create(site)
-        self.views[site].pending_url = url
-
-    def _restart(self, v, url=None):
-        try:
-            v.controller.Close()
-        except Exception:
-            pass
-        v.controller, v.failed = None, False
-        v.pending_url = url
-        v.state.update(failed=False, note=None, ready=False)
-        if self.env is not None:
-            self._create_controller(v)
 
 
 # ---- global quick-capture hotkey -------------------------------------------------------------
@@ -773,9 +307,10 @@ class DesktopApp:
         self.hotkey = None
         # Native windows over dashboard tabs (overlay.py; security.py's /api/window/<view>/* routes)
         self.pulse = PulseView(self)  # the Pulse tab's site view
+        self.teams = TeamsView(self)  # Teams on the web in the Teams tab
         self.ssms = SsmsDock(self)    # the SQL tab's docked SSMS
         self.ssms.hotkey_factory = GlobalHotkey
-        self.overlays = {"pulse": self.pulse, "ssms": self.ssms}
+        self.overlays = {"pulse": self.pulse, "teams": self.teams, "ssms": self.ssms}
 
     # ---- window (security.shell uses these for the /api/window/* routes) ----
     def show(self):
@@ -813,15 +348,15 @@ class DesktopApp:
 
     def window_state(self) -> dict:
         return {"desktop": True, "fullscreen": self.fullscreen, "locked": not self.unlocked, "pulse_view": True,
-                "ssms_dock": True}
+                "teams_view": True, "ssms_dock": True}
 
     def lock(self):
         """Lock from the dashboard (the session secret was already replaced by security.end_session)."""
         self.unlocked = False
         self.locked_by_user = True
-        self.pulse.forget()  # the Pulse site never stays over the lock screen
         self.ssms.on_lock()  # SSMS goes back to a normal (minimized) window; docked again after unlock
-        self.ssms.forget()
+        for view in self.overlays.values():
+            view.forget()  # no site view or SSMS stays over the lock screen
         if self.window:
             self.lock_showing = True
             self.window.load_html(_lock_page("Locked. Select Unlock to confirm it's you."))
@@ -977,8 +512,8 @@ class DesktopApp:
         except Exception:
             pass
         if self.unlocked and not self.lock_showing and not self.quitting:  # still unlocked (no Lock in between)
-            self.pulse.release_focus()  # typing goes to the capture box, not the Pulse site or SSMS
-            self.ssms.release_focus()
+            for view in self.overlays.values():
+                view.release_focus()  # typing goes to the capture box, not a site view or SSMS
             # run_js, not evaluate_js: evaluate_js wraps the script in eval(), which the page's CSP (no 'unsafe-eval') blocks.
             self.window.run_js(f"window.CC && CC.quickCapture && CC.quickCapture({{restore: {json.dumps(restore)}}})")
 

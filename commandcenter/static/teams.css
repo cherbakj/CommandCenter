@@ -37,3 +37,41 @@
   .teams-row .fu-src { grid-area: src; } .teams-row .fu-who { grid-area: who; } .teams-row .fu-subj { grid-area: subj; }
   .teams-row .fu-age { grid-area: age; } .teams-row .fu-acts { grid-area: acts; }
 }
+
+/* Teams on the web beside the list (teamsview.js; the view itself is a native window over .tv-hole). Wide pane: list
+   left, Teams right. Narrow pane: one at a time (section[data-view]), with a Chats | Teams web switch on top. */
+.teams-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(20rem, 27rem) minmax(0, 1fr); gap: var(--gap); }
+.teams-side { min-height: 0; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--gap); }
+.teams-side > .panel { flex: none; }
+.teams-side .teams-recent { margin-top: 0; }
+.teams-side #teams-recent-list { max-height: none; }
+.teams-more > summary { cursor: pointer; list-style: none; }
+.teams-more > summary::-webkit-details-marker { display: none; }
+.teams-more > summary::before { content: "▸ "; }
+.teams-more[open] > summary::before { content: "▾ "; }
+.teams-more[open] > summary { margin-bottom: .5rem; }
+.teams-web { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.tv-bar { display: flex; align-items: center; gap: .4rem; margin-bottom: .55rem; min-width: 0; }
+.tv-bar > * { flex: none; }
+.tv-bar button.small.subtle { min-width: 2.1rem; }
+.tv-bar > .tv-where { display: flex; align-items: baseline; gap: .5rem; min-width: 0; flex: 1 1 0; overflow: hidden; margin-left: .3rem; }
+.tv-title { font: 600 .88rem var(--font-ui); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 3rem; }
+.tv-host { font: .78rem var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tv-bar > .tv-note { font: 600 .8rem var(--font-ui); color: var(--amber); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; max-width: 45%; }
+.tv-bar > .tv-note.err { color: var(--red); }
+.tv-loading { width: .5rem; height: .5rem; border-radius: 50%; background: var(--amber); box-shadow: 0 0 .5rem var(--amber); flex: none; align-self: center; animation: blink 1s infinite; }
+.tv-stage { position: relative; flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: .35rem; background: #05070d; overflow: hidden; }
+.tv-hole { position: absolute; inset: 0; display: grid; place-items: center; }
+.tv-wait { font: 700 2.4rem var(--font-display); letter-spacing: .3em; color: rgb(179 166 255 / .14); user-select: none; }
+.tv-switch { display: none; gap: 2px; }
+
+#tab-teams.tv-none .teams-layout { grid-template-columns: minmax(0, 1fr); }
+#tab-teams.tv-none .teams-web { display: none; }
+@container pane (max-width: 62rem) {
+  .teams-layout { grid-template-columns: minmax(0, 1fr); }
+  .tv-switch { display: flex; }
+  #tab-teams[data-view="web"]:not(.tv-none) .teams-side { display: none; }
+  #tab-teams[data-view="list"] .teams-web { display: none; }
+}
+.tv-side-switch { display: contents; }
+.list li.teams-row.teams-open { cursor: pointer; }

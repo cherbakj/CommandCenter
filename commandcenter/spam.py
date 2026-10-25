@@ -16,7 +16,7 @@ Joe picks what to block each time: the exact sender address, the sender's whole 
   condition list, and a disabled rule would still carry the unblocked entries). No other rule is ever changed.
   Rules.Save() can be slow and can fail (rule storage full, offline...): the block is still kept and enforced by
   the app filter, and the reason is shown with a Retry.
-- App filter (matcher()): the mail list, follow-ups, VIP unread, new-mail alerts, triage and briefing counts skip
+- App filter (matcher()): the mail list, follow-ups, important senders, new-mail alerts, triage and briefing counts skip
   blocked mail; the poller moves new blocked Inbox mail to Junk (outlook.scan_new_mail). Internal senders, Exchange
   (directory) senders and urgent people are never matched.
 - Deliberate, two-step: POST /preview validates and counts the Inbox mail that already matches and returns a
@@ -118,12 +118,13 @@ def _in_domain(host: str, domain: str) -> bool:
 
 def refusal(kind: str, value: str, *, sender: str = "", exchange: bool = False, name: str = "",
             me: tuple = (), urgent: list | None = None, internal: list | None = None,
-            cfg: dict | None = None) -> str | None:
+            cfg: dict | None = None, important: list | None = None) -> str | None:
     """Why this block isn't allowed (plain words), or None. `value` is normalized. `sender`/`exchange`/`name`
     describe the email it was started from (that email's sender must itself be blockable)."""
     cfg = cfg or settings()
     urgent = people.urgent_people() if urgent is None else urgent
     internal = people.internal_domains() if internal is None else internal
+    important = people.important_senders() if important is None else important
     me = {m.lower() for m in me if m}
 
     def who_refused(addr, display=""):
@@ -136,6 +137,8 @@ def refusal(kind: str, value: str, *, sender: str = "", exchange: bool = False, 
             return f"{addr} is an internal ({host}) address. Internal mail can't be marked as spam."
         if people.matches(addr, display, urgent):
             return "This sender is on your urgent people list. Remove them there first if you really mean it."
+        if people.sender_matches(addr, important):
+            return "This sender is on your important senders list. Remove them there first if you really mean it."
         return None
 
     if sender or exchange:
@@ -156,6 +159,8 @@ def refusal(kind: str, value: str, *, sender: str = "", exchange: bool = False, 
             p = str(p).lower()
             if "@" in p and (p.lstrip("@") == value or p.rpartition("@")[2] == value):
                 return "Someone on your urgent people list uses this domain. Block this sender instead."
+        if any(str(p).lower().lstrip("@") == value or str(p).lower().rpartition("@")[2] == value for p in important):
+            return "This domain (or someone at it) is on your important senders list. Block this sender instead."
         return None
     # subject phrase
     if len(value) < PHRASE_MIN:

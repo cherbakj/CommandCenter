@@ -431,15 +431,11 @@ async def window_hide():
     return {"ok": True}
 
 
-# Native windows over dashboard tabs (overlay.py): the Pulse site view (desktop.PulseView) and the docked SSMS
+# Native windows over dashboard tabs (overlay.py): the Pulse and Teams site views (siteview.py) and the docked SSMS
 # (ssmsdock.SsmsDock). The page reports where a tab's stage is and what is on top of it; each view has its own state
 # and buttons. Nothing here returns page content beyond the host, path and title of what the Pulse view shows.
 def _overlay(name: str):
     return (getattr(shell, "overlays", None) or {}).get(name) if shell else None
-
-
-def _pulse_view():
-    return _overlay("pulse")
 
 
 async def _small_json(request: Request, limit: int = 8192):
@@ -465,49 +461,32 @@ async def overlay_bounds(name: str, request: Request):
     return {"ok": True}
 
 
-@router.get("/api/window/pulse", include_in_schema=False)
-async def pulse_view_state():
-    view = _pulse_view()
-    return view.status() if view else {"available": False}
-
-
-@router.post("/api/window/pulse/action", include_in_schema=False)
-async def pulse_view_action(request: Request):
-    view = _pulse_view()
+@router.get("/api/window/{name}", include_in_schema=False)
+async def overlay_state(name: str):
+    """A native view's state for its tab: pulse / teams (site views: host, path and title of the page shown) or
+    ssms (the dock)."""
+    view = _overlay(name)
     if not view:
-        return _no_shell()
-    try:
-        body = await _small_json(request)
-        if not isinstance(body, dict):
-            raise ValueError("expected an object")
-        url = body.get("url")
-        site = view.action(str(body.get("site") or ""), str(body.get("action") or ""),
-                           url if isinstance(url, str) and len(url) <= 2000 else None)
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
-    return {"ok": True, "site": site}
-
-
-@router.get("/api/window/ssms", include_in_schema=False)
-async def ssms_dock_state():
-    view = _overlay("ssms")
-    if not view:
-        from .ssmsdock import ssms_path
-        return {"available": False, "installed": ssms_path().is_file()}
+        if name == "ssms":
+            from .ssmsdock import ssms_path
+            return {"available": False, "installed": ssms_path().is_file()}
+        return {"available": False}
     return await asyncio.to_thread(view.status)
 
 
-@router.post("/api/window/ssms/action", include_in_schema=False)
-async def ssms_dock_action(request: Request):
-    """start | dock (pid: an SSMS of this user, the installed and signed one) | undock | redock."""
-    view = _overlay("ssms")
+@router.post("/api/window/{name}/action", include_in_schema=False)
+async def overlay_action(name: str, request: Request):
+    """The tab's buttons. Pulse: back / forward / reload / home / open / navigate (Pulse pages only). Teams: the same
+    plus chat (a checked Teams deep link, opened in the view) and app (the Teams app). SSMS: start / dock (pid: an
+    SSMS of this user, the installed and signed one) / undock / redock."""
+    view = _overlay(name)
     if not view:
         return _no_shell()
     try:
         body = await _small_json(request)
         if not isinstance(body, dict):
             raise ValueError("expected an object")
-        return await asyncio.to_thread(view.action, str(body.get("action") or ""), body.get("pid"))
+        return await asyncio.to_thread(view.handle_action, body)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 

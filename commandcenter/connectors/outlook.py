@@ -188,12 +188,15 @@ def _blocked():
 def recent_mail(limit=50, unread_only=False) -> list[dict]:
     out = []
     blocked = _blocked()
+    important = people.important_senders()
     for item in _iter_inbox(limit * 4 if unread_only or blocked else limit):
         if unread_only and not item.UnRead:
             continue
         if blocked and blocked.hit(_sender_smtp(item), lambda: item.Subject, item.SenderName):
             continue  # blocked as spam (Junk Email); the Outlook rule may not have moved it yet
-        out.append(_summary(item))
+        m = _summary(item)
+        m["important"] = people.is_important(m["sender"], important)  # the star on Mail rows
+        out.append(m)
         if len(out) >= limit:
             break
     return out
@@ -202,7 +205,7 @@ def recent_mail(limit=50, unread_only=False) -> list[dict]:
 def get_message(entry_id) -> dict:
     item = _ns().GetItemFromID(entry_id)
     d = _summary(item)
-    d.update(to=item.To or "", cc=item.CC or "", body=item.Body or "")
+    d.update(to=item.To or "", cc=item.CC or "", body=item.Body or "", important=people.is_important(d["sender"]))
     return d
 
 
@@ -551,8 +554,7 @@ def _me() -> tuple[str, str]:
 
 
 def _sender_matches(sender, patterns) -> bool:
-    sender = sender.lower()
-    return any(sender.endswith(p.lower()) if p.startswith("@") else sender == p.lower() for p in patterns)
+    return people.sender_matches(sender, patterns)  # one definition, shared with the important-senders list
 
 
 def _is_bulk(item, sender) -> bool:
@@ -607,9 +609,10 @@ def _mentions_me(item, names, me_smtp) -> bool:
     return _mention_cache[key]
 
 
-def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -> dict:
+def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, important=()) -> dict:
     """Sent mail nobody answered, mail you haven't replied to (internal senders by default, urgent people
-    split out), unread Teams missed-activity emails, and unread mail from VIP senders."""
+    split out), unread Teams missed-activity emails, and unread mail from important senders (`important`:
+    people.important_senders(); listed under the old key "unread_vip")."""
     fu = config.section("followups", {})
     internal_only = fu.get("needs_reply_scope", "internal") == "internal"
     urgent = people.urgent_people()
@@ -652,8 +655,8 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -
                 who = teams_sender(item.Subject)
                 teams_reply.append({**_summary(item), "from_name": who, "urgent": people.matches("", who, urgent)})
             continue
-        if item.UnRead and vip_senders and _sender_matches(sender, vip_senders) and len(unread_vip) < 25:
-            unread_vip.append(_summary(item))
+        if item.UnRead and important and people.is_important(sender, important) and len(unread_vip) < 25:
+            unread_vip.append({**_summary(item), "important": True})
         if received < recent or conv in reply_seen:
             continue
         is_urgent = people.matches(sender, item.SenderName or "", urgent)
@@ -713,6 +716,7 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
 
     hits, spam = [], []
     urgent = people.urgent_people()
+    important = people.important_senders()
     blocked = _blocked()
     for item in _iter_inbox(200):
         if _local_time(item.ReceivedTime) < since:
@@ -733,6 +737,11 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
             elif people.matches(mail["sender"], mail["sender_name"], urgent):
                 hits.append((mail, {"name": "Urgent reply needed", "priority": "high"}))
                 continue
+        # Important senders (the config "VIP sender" rule's senders plus the list edited in the app) come next:
+        # high priority even if that rule was removed from config.yaml.
+        if important and people.is_important(mail["sender"], important):
+            hits.append((mail, {"name": "Important sender", "priority": "high"}))
+            continue
         body_lower = (item.Body or "")[:20000].lower()
         for rule in rules:
             if _matches(rule, mail, body_lower):
@@ -758,7 +767,7 @@ def scan_meetings() -> list[tuple[dict, int]]:
     now = datetime.now()
     for m in upcoming_meetings(hours=max(reminders) / 60 + 1):
         minutes = (datetime.fromisoformat(m["start"]) - now).total_seconds() / 60
-        if minutes < -1:
+        if minutes < -2:  # a "now" (0) reminder still fires if a scan lands up to 2 minutes after the start
             continue
         hit = next((r for r in reminders if minutes <= r), None)
         if hit is not None and not db.seen(f"mtg:{m['id']}:{m['start']}:{hit}"):

@@ -1,0 +1,21 @@
+/* Important senders (important.js). The ★ before an important sender (Mail rows, reader, follow-up rows) and the
+   Mark important actions; the dialogs use the generic dialog / list / button styles. */
+.imp-star { color: var(--amber); margin-right: .3rem; text-shadow: 0 0 .4rem rgb(var(--amber-rgb) / .45); }
+.fu-who .imp-star { margin-right: .25rem; }
+
+/* The row action shows on hover, focus or the selected row, like Spam; a filled star stays visible. */
+.imp-row-btn { align-self: center; opacity: 0; transition: opacity .15s; min-width: 2rem; }
+.imp-row-btn.on { color: var(--amber); }
+#mail-list li:hover .imp-row-btn, #mail-list li.selected .imp-row-btn, .imp-row-btn:focus-visible { opacity: 1; }
+@media (hover: none) { .imp-row-btn { opacity: 1; } }
+.imp-reader-btn.on { color: var(--amber); border-color: rgb(var(--amber-rgb) / .6); }
+
+.imp-dlg { display: flex; flex-direction: column; gap: .6rem; min-width: 0; }
+.imp-dlg h3 { margin-bottom: 0; }
+.imp-dlg p { margin: 0; }
+.imp-choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; text-align: left; width: 100%;
+  padding: .55rem .75rem; min-width: 0;
+}
+.imp-choice b { font-weight: 600; color: var(--text); }
+.imp-val { font: 500 .84rem var(--font-mono); color: var(--muted); overflow-wrap: anywhere; }

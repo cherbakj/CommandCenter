@@ -244,6 +244,9 @@ class SsmsDock(NativeOverlay):
             return self._dock_pid(self.last[1], self.last[0])
         raise ValueError("unknown action")
 
+    def handle_action(self, body: dict) -> dict:
+        return self.action(str(body.get("action") or ""), body.get("pid"))
+
     def _check_exe(self):
         exe = ssms_path()
         ok, why = verify_exe(exe)

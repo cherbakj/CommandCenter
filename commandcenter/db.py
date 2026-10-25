@@ -4,7 +4,7 @@ Work data is encrypted at rest with Windows DPAPI for the current Windows user (
 and planner.py), so the database file on its own shows no subjects, names, recipients or ticket text:
   * alerts: title, body and action (ids, ts, source, priority and the read flag stay clear for sorting).
   * kv: every value except the operational keys in CLEAR_KV / CLEAR_KV_PREFIXES (status, watermarks, weather,
-    timers). So the mail sent log, snoozes, reply watches, dismissed/muted follow-ups, urgent people, the
+    timers). So the mail sent log, snoozes, reply watches, dismissed/muted follow-ups, urgent people, important senders, the
     profile (name, initials and appearance), task priorities, the calendar focus block, website state, Asana account,
     Toolkit/Pulse settings, and any key a new module adds are sealed by default.
   * toolkit_changes (toolkit.py): pk, before_json, after_json and error.

@@ -154,27 +154,27 @@
     </section>
 
     <!-- TEAMS -->
-    <section id="tab-teams" class="tab">
-      <div class="teams-grid">
-        <div>
+    <section id="tab-teams" class="tab" data-view="web">
+      <!-- left: counts and Recent DMs / mentions (app.js "teams" section); right: Teams on the web (teamsview.js) -->
+      <div class="teams-layout">
+        <div class="teams-side">
           <div class="panel" id="teams-status"></div>
-          <div class="panel" style="margin-top: var(--gap)">
-            <div class="panel-label">SEND A TEAMS MESSAGE</div>
-            <p class="muted">Opens the chat in Teams with your message filled in. You press send.</p>
+          <!-- unread / recent DMs and @mentions, read by the background Teams check (app.js renderTeamsRecent) -->
+          <div class="panel teams-recent" id="teams-recent" aria-labelledby="teams-recent-label">
+            <div class="panel-head"><span class="panel-label" id="teams-recent-label">RECENT DMS AND MENTIONS</span><span class="spacer"></span><span class="muted small" id="teams-recent-note"></span></div>
+            <ul id="teams-recent-list" class="list"></ul>
+          </div>
+          <details class="panel teams-more">
+            <summary class="panel-label">SEND A MESSAGE · MISSED-ACTIVITY EMAILS</summary>
+            <p class="muted">Opens the chat in the Teams app with your message filled in. You press send.</p>
             <input id="teams-to" placeholder="Email address(es), comma separated">
             <textarea id="teams-msg" placeholder="Message (optional)"></textarea>
             <div class="row"><button id="teams-send" class="primary">Open chat in Teams</button></div>
-          </div>
+            <div class="panel-head"><span class="panel-label">TEAMS ACTIVITY (MISSED-ACTIVITY EMAILS)</span><span class="spacer"></span><button id="teams-refresh" class="small">↻ Refresh</button></div>
+            <ul id="teams-activity" class="list"></ul>
+          </details>
         </div>
-        <div class="panel">
-          <div class="panel-head"><span class="panel-label">TEAMS ACTIVITY (MISSED-ACTIVITY EMAILS)</span><span class="spacer"></span><button id="teams-refresh" class="small">↻ Refresh</button></div>
-          <ul id="teams-activity" class="list"></ul>
-        </div>
-      </div>
-      <!-- unread / recent DMs and @mentions, read by the background Teams check (app.js renderTeamsRecent) -->
-      <div class="panel teams-recent" id="teams-recent" aria-labelledby="teams-recent-label">
-        <div class="panel-head"><span class="panel-label" id="teams-recent-label">RECENT DMS AND MENTIONS</span><span class="spacer"></span><span class="muted small" id="teams-recent-note"></span></div>
-        <ul id="teams-recent-list" class="list"></ul>
+        <div class="teams-web" id="teams-web"></div>
       </div>
     </section>
 
@@ -243,11 +243,13 @@
   <script src="/static/nativestage.js"></script>
   <script src="/static/pulseview.js"></script>
   <script src="/static/ssms.js"></script>
+  <script src="/static/teamsview.js"></script>
   <script src="/static/planner.js"></script>
   <script src="/static/profile.js"></script>
   <script src="/static/daily.js"></script>
   <script src="/static/triage.js"></script>
   <script src="/static/spam.js"></script>
+  <script src="/static/important.js"></script>
   <script src="/static/capture.js"></script>
   <script src="/static/privacy.js"></script>
   <script src="/static/offhours.js"></script>

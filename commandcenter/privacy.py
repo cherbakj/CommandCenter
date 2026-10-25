@@ -132,8 +132,10 @@ def inventory() -> list[dict]:
     st = _try(lambda: db.kv_get("outlook:status")) or {}
     add("outlook", "Outlook", "Work",
         "Mail, calendar and To Do in the Outlook desktop app on this PC (through Outlook itself; Command Center has no cloud access).",
-        "Follow-up state (snoozes, reply checks, dismissed and muted items, urgent people), the sent-mail log, alerts.",
-        dpapi, f"Sent-mail log {_days(r.get('mail_sent_log_days'))}; dismissed follow-ups {_days(r.get('dismissed_followups_days'))}",
+        "Follow-up state (snoozes, reply checks, dismissed and muted items, urgent people, important senders), the "
+        "sent-mail log, alerts.",
+        dpapi, f"Sent-mail log {_days(r.get('mail_sent_log_days'))}; dismissed follow-ups {_days(r.get('dismissed_followups_days'))}; "
+        "urgent people and important senders until removed",
         connected=bool(st.get("ok")) if st else None, state="Connected" if st.get("ok") else (st.get("error") or "Not checked yet")[:80])
 
     teams_on = _try(teams.is_set_up, False)
@@ -147,6 +149,23 @@ def inventory() -> list[dict]:
         "Profile: Edge's own encryption (DPAPI), private folder; alerted ids: " + dpapi + "; counts: unencrypted metadata",
         "Profile until you sign out of it; alerted ids while unread; alerts " + _days(r.get("alerts_days")),
         connected=teams_on, state="Signed in" if teams_on else "Not set up")
+
+    # The sites shown inside the window (siteview.py): each has its own WebView2 profile folder, created the first time
+    # its tab shows it. Command Center never reads what's in them; only the site does.
+    for vid, vname, folder, what in (
+            ("teams_view", "Teams on the web (Teams tab)", "webview-teams",
+             "Teams on the web, signed in by you (Microsoft 365 / Okta), shown in the Teams tab to read and answer chats. "
+             "Separate from the background Teams reader's profile."),
+            ("pulse_view", "Pulse site (Pulse tab)", "webview-pulse",
+             "pulse.sonance.com and dev.pulse.sonance.com, signed in by you (Okta), shown in the Pulse tab.")):
+        there = _try(lambda f=folder: (config.DATA_DIR / f).is_dir(), False)
+        add(vid, vname, "Work", what + " Command Center only places the window; it reads nothing from the page except its "
+            "title and address for the tab's bar.",
+            f"That WebView2 profile in data/{folder}: the site's cookies and sign-in session, its cache and local storage. "
+            "Form autofill and saved passwords are off (cleared at each launch).",
+            "Edge / WebView2's own (cookies with DPAPI), private data folder",
+            "Until you sign out of the site there (or delete the folder while Command Center is closed)",
+            connected=there or None, state="Used" if there else "Not opened yet")
 
     try:
         from . import toolkit

@@ -181,13 +181,6 @@ async def _escalate_urgent():
                                {"type": "mail", "id": m["id"]}, toast="urgent reply needed")
 
 
-def _vip_senders() -> list[str]:
-    senders = []
-    for rule in config.section("outlook", {}).get("rules") or []:
-        senders += rule.get("senders") or []
-    return senders
-
-
 def _keep(item, cfg, hidden_ids, mutes) -> bool:
     if item["id"] in hidden_ids:
         return False
@@ -211,7 +204,7 @@ async def _followups(todo, refresh=False) -> dict:
     if refresh or time.time() - _followup_cache.get("at", 0) > FOLLOWUP_CACHE_SECONDS:
         _followup_cache["data"] = await outlook.call(
             outlook.followups, cfg.get("awaiting_reply_days", 7), cfg.get("needs_reply_days", 5),
-            cfg.get("min_wait_hours", 4), _vip_senders())
+            cfg.get("min_wait_hours", 4), people.important_senders())
         _followup_cache["at"] = time.time()
     raw = _followup_cache["data"]
     now = datetime.now().isoformat(timespec="seconds")
@@ -221,6 +214,7 @@ async def _followups(todo, refresh=False) -> dict:
     blocked = outlook._blocked() or False
     out = {k: [i for i in v if _keep(i, cfg, hidden_ids, mutes) and (k == "awaiting_reply" or not spam_hidden(i, blocked))]
            for k, v in raw.items()}
+    important = people.important_senders()
 
     # Flagged mail: skip flags set before flagged_since, automated senders and old flags; overdue first, then newest.
     cutoff = (datetime.now() - timedelta(days=cfg.get("flagged_days", 30))).isoformat()
@@ -237,6 +231,11 @@ async def _followups(todo, refresh=False) -> dict:
             flagged.append(f)
     flagged.sort(key=lambda f: f["received"] or "", reverse=True)
     out["flagged"] = flagged[:25]
+    # The star on received items (from the list as it is now, so a change shows before the next scan; the
+    # "Important senders" group itself is rescanned: the routes that change the list clear the cache).
+    for k, items in out.items():
+        if k not in ("awaiting_reply", "teams_reply"):
+            out[k] = [{**i, "important": people.is_important(i.get("sender", ""), important)} for i in items]
     out["flagged_hidden"] = {"automated": automated, "older": older, "more": max(0, len(flagged) - 25),
                              "before": before, "since": flagged_since(), "total": len(todo.get("flagged", []))}
     return out

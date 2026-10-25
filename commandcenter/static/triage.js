@@ -30,7 +30,7 @@
   }
 
   // ---- the queue ---------------------------------------------------------------------------------
-  // Urgent first: urgent replies, urgent Teams, needs-your-reply, other Teams, recent flags, VIP unread.
+  // Urgent first: urgent replies, urgent Teams, needs-your-reply, other Teams, recent flags, important senders' unread.
   // A message can sit in two groups (needs a reply and flagged): it comes up once, in the first.
   function buildQueue(data) {
     const f = data && data.followups && !data.followups.error ? data.followups : {};
@@ -48,7 +48,7 @@
     add(f.needs_reply, { group: "Needs your reply", src: "outlook" });
     add(teams.filter((m) => m && !m.urgent), { group: "Teams — reply needed", src: "teams" });
     add(f.flagged, { group: "Flagged", src: "flagged" });
-    add(f.unread_vip, { group: "Unread from VIPs", src: "outlook" });
+    add(f.unread_vip, { group: "Important senders", src: "outlook" });
     return out;
   }
 

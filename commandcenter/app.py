@@ -371,6 +371,46 @@ async def save_urgent_people(people_list: list = Body(..., embed=True, alias="pe
     return {"people": saved}
 
 
+# Important senders (people.py): GET lists them; POST replaces the app list (`senders`, the manage dialog) or
+# changes one email's entries (`add` one address / @domain, `remove` some), so two quick marks don't overwrite
+# each other. Entries from config.yaml (the "VIP sender" rule) come back read-only in `from_config`.
+_important_lock = asyncio.Lock()
+
+
+def _important_state() -> dict:
+    from . import people
+    return {"senders": people.app_important_senders(), "from_config": people.config_important_senders(),
+            "internal_domains": people.internal_domains(), "shared_providers": people.shared_providers(),
+            "max": people.MAX_IMPORTANT}
+
+
+@app.get("/api/people/important")
+async def get_important_senders():
+    return _important_state()
+
+
+@app.post("/api/people/important")
+async def save_important_senders(senders: list | None = Body(None), add: str | None = Body(None),
+                                 remove: list | None = Body(None)):
+    from . import people
+    if senders is None and add is None and remove is None:
+        raise HTTPException(400, "Nothing to change")
+    async with _important_lock:
+        current = people.app_important_senders() if senders is None else list(senders)
+        if remove:
+            drop = {str(r).strip().lower() for r in remove}
+            current = [p for p in current if str(p).strip().lower() not in drop]
+        if add is not None:
+            current.append(add)
+        try:
+            saved = people.set_important_senders(current)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    today._followup_cache.clear()  # the "Important senders" group is rescanned with the new list
+    log.info("Important senders saved: %d in the app list", len(saved))
+    return _important_state()
+
+
 @app.post("/api/asana/token")
 async def asana_token(token: str = Body(..., embed=True)):
     return {"ok": True, "name": await asyncio.to_thread(asana.set_token, token)}
