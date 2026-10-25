@@ -823,7 +823,10 @@ let calMeetings = [];
 loaders.calendar = () => guarded(async () => {
   const { meetings } = await api("/api/meetings?hours=24");
   calMeetings = meetings;
-  fill($("#cal-list"), meetings.map((m) => el("li", {},
+  // planner.js takes the tab over at load (its 10-day view replaces this list); a load started before that finds no list
+  const list = $("#cal-list");
+  if (!list) return;
+  fill(list, meetings.map((m) => el("li", {},
     el("div", { class: "grow" },
       el("div", { class: "title" }, m.subject),
       el("div", {}, `${when(m.start)} – ${new Date(m.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`),
