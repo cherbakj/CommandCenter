@@ -1682,7 +1682,7 @@ async function urgentDialog() {
     const mine = (u.people || []).filter((p) => !locked.has(String(p).toLowerCase()));
     const list = el("ul", { class: "list dialog-list" });
     const err = el("div", { class: "err", role: "alert" });
-    const input = el("input", { placeholder: "Full name (Sean Cordero) or email address", maxlength: "120", "aria-label": "Add a person",
+    const input = el("input", { placeholder: "Full name (Jane Smith) or email address", maxlength: "120", "aria-label": "Add a person",
       onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } } });
     const draw = () => list.replaceChildren(
       ...fixed.map((p) => el("li", {}, el("div", { class: "grow mono" }, p),

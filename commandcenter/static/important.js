@@ -3,7 +3,7 @@
 // the matching entries off again. New mail from them raises a high-priority alert, their unread mail is listed under
 // Follow-ups > Important senders, and their rows show a ★ (CC.importantStar, drawn by app.js from the server's
 // `important` flag). Whole domains are never offered for internal senders or shared providers (gmail.com...).
-// "Important senders" (Follow-ups tools, Ctrl+K) manages the list; config.yaml's "VIP sender" rule entries are
+// "Important senders" (Follow-ups > Manage, Ctrl+K) manages the list; config.yaml's "VIP sender" rule entries are
 // shown read-only. Addresses go in as text only (CC.el), never as HTML.
 (() => {
   const CC = window.CC;

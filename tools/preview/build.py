@@ -29,6 +29,10 @@ SCRUB = [
     ("snc-xxxx-db01.example.com", "sql01.example.com"),
     ("FS92STG", "STAGINGDB"),
     ("FS92SYS", "SYSDB"),
+    # personal details in code comments: the weather places (the sample data's are Brightwater / Seacliff) and the surname
+    ("Lake Forest", "Brightwater"),
+    ("San Clemente", "Seacliff"),
+    ("Cherbak's Toolkit", "the Toolkit"),
 ]
 
 
