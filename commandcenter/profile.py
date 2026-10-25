@@ -13,12 +13,15 @@ PRESETS = {
     "synth": {"label": "Synthwave Magenta", "accent": "#ff2bd6", "accent2": "#00e5ff"},
     "amber": {"label": "Amber Terminal", "accent": "#ffb000", "accent2": "#ff6a3d"},
     "ice": {"label": "Ice Blue", "accent": "#7cc4ff", "accent2": "#b8f2ff"},
+    "violet": {"label": "Ultraviolet", "accent": "#b98cff", "accent2": "#00e5ff"},
 }
 DEFAULTS = {
     "name": "Joe Cherbak", "initials": "JC", "preset": "neon", "accent": "#39ff14", "accent2": "#00e5ff",
-    "text_scale": 100, "density": "comfortable", "glow": True, "scanlines": True, "grid": True,
+    "text_scale": 100, "density": "comfortable", "glow": True, "glass": True, "aurora": True, "grid": True,
     "animations": True, "splash": True,
 }
+# Older profiles may still carry "scanlines" (the HUD theme's effect): get() drops keys that aren't in DEFAULTS,
+# so they load (and save) without it; the new switches start at their defaults.
 
 
 def get() -> dict:

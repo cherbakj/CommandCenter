@@ -155,8 +155,10 @@ async def _dated_items(first: date, last: date) -> list[dict]:
                 items.append({"kind": "task", "source": "asana" if t["source"] == "asana" else "todo", "id": t["id"],
                               "day": day, "title": t["subject"], "overdue": t["due"] < today_iso, "url": t.get("url")})
     recent_due = (date.today() - timedelta(days=7)).isoformat()  # older overdue flags stay on the Follow-ups panel
+    blocked = outlook._blocked() or False  # flags on mail blocked as spam are hidden too
     for f in todo.get("flagged", []):
-        if f.get("due") and f["due"] >= recent_due and not today.AUTOMATED.search(f.get("sender_name", "")):
+        if (f.get("due") and f["due"] >= recent_due and not today.AUTOMATED.search(f.get("sender_name", ""))
+                and not today.spam_hidden(f, blocked)):
             day = max(f["due"], today_iso)
             if day <= last.isoformat():
                 items.append({"kind": "flag", "source": "flagged", "id": f["id"], "day": day, "title": f["subject"],

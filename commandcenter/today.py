@@ -151,6 +151,12 @@ def _keep(item, cfg, hidden_ids, mutes) -> bool:
     return not any(r.lower() in item.get("to", "").lower() for r in cfg.get("ignore_recipients") or [])
 
 
+def spam_hidden(item, blocked=None) -> bool:
+    """True if a received message matches a spam block (spam.py). `blocked`: a matcher already in hand."""
+    blocked = outlook._blocked() if blocked is None else blocked
+    return bool(blocked and blocked.hit(item.get("sender", ""), item.get("subject", ""), item.get("sender_name", "")))
+
+
 async def _followups(todo, refresh=False) -> dict:
     cfg = config.section("followups", {})
     if refresh or time.time() - _followup_cache.get("at", 0) > FOLLOWUP_CACHE_SECONDS:
@@ -162,7 +168,10 @@ async def _followups(todo, refresh=False) -> dict:
     now = datetime.now().isoformat(timespec="seconds")
     hidden_ids = set(dismissed()) | {i for i, v in snoozes().items() if v["until"] > now}
     mutes = muted()
-    out = {k: [i for i in v if _keep(i, cfg, hidden_ids, mutes)] for k, v in raw.items()}
+    # Spam blocks apply to the cached scan too, so a new block hides its mail at once (sent mail never matches).
+    blocked = outlook._blocked() or False
+    out = {k: [i for i in v if _keep(i, cfg, hidden_ids, mutes) and (k == "awaiting_reply" or not spam_hidden(i, blocked))]
+           for k, v in raw.items()}
 
     # Flagged mail: skip automated senders and old flags; overdue first, then newest.
     cutoff = (datetime.now() - timedelta(days=cfg.get("flagged_days", 30))).isoformat()
@@ -173,7 +182,7 @@ async def _followups(todo, refresh=False) -> dict:
             automated += 1
         elif (f["received"] or "") < cutoff and not (f["due"] and f["due"] >= date.today().isoformat()):
             older += 1
-        elif _keep(f, cfg, hidden_ids, mutes):
+        elif _keep(f, cfg, hidden_ids, mutes) and not spam_hidden(f, blocked):
             flagged.append(f)
     flagged.sort(key=lambda f: f["received"] or "", reverse=True)
     out["flagged"] = flagged[:25]

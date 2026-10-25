@@ -203,18 +203,51 @@ def _brace(value) -> str:
     return "{" + str(value).replace("}", "}}") + "}"
 
 
-def connection_string(s, database, password) -> str:
+def connection_string(s, database, password, pinned=False) -> str:
+    # pinned: the certificate was just checked against Joe's approved fingerprint (sqlcert), so the driver's
+    # own CA check, which a self-signed certificate can never pass, is skipped.
     parts = [
         f"DRIVER={{{s['driver']}}}",
         f"SERVER={_brace(s['server'])}",
         f"DATABASE={_brace(database)}",
         f"UID={_brace(s['username'])}",
         f"PWD={_brace(password)}",
-        "Encrypt=" + ("yes" if s["encrypt"] else "no"),
-        "TrustServerCertificate=" + ("yes" if s["trust_server_certificate"] else "no"),
+        "Encrypt=" + ("yes" if s["encrypt"] or pinned else "no"),
+        "TrustServerCertificate=" + ("yes" if s["trust_server_certificate"] or pinned else "no"),
         "APP=CommandCenter-Toolkit",
     ]
     return ";".join(parts)
+
+
+# ---- certificate pin (see connectors/sqlcert.py) ------------------------------------------------------
+KV_CERT_PIN = "toolkit:cert_pin"   # {"server", "sha256", "subject", "issuer", "valid_to", "pinned_at"}
+
+
+class CertChanged(Exception):
+    """The server presents a different certificate than the one Joe approved."""
+    def __init__(self, cert, pin):
+        super().__init__("The SQL server's certificate changed since you approved it. Nothing was sent to it. "
+                         "Approve the new certificate only if you expected it (SQL Server makes a new self-signed "
+                         "one when its service restarts, e.g. after patching); if not, check with IT first.")
+        self.cert, self.pin = cert, pin
+
+
+def cert_pin(s=None) -> dict | None:
+    s = s or settings()
+    pin = db.kv_get(KV_CERT_PIN)
+    return pin if pin and pin.get("server", "").lower() == s["server"].lower() else None
+
+
+def _check_pin(s) -> bool:
+    """True if this server has a pinned certificate and it's the one presented now; raises if it changed."""
+    from .connectors import sqlcert
+    pin = cert_pin(s)
+    if not pin:
+        return False
+    cert = sqlcert.fetch(s["server"])
+    if cert["sha256"] != pin["sha256"]:
+        raise CertChanged(cert, pin)
+    return True
 
 
 _secret_for_scrub: set[str] = set()
@@ -233,7 +266,8 @@ def _connect(db_key: str, password: str | None = None):
     _secret_for_scrub.add(password)
     if s["driver"] not in pyodbc.drivers():
         raise NotConfigured(f"{s['driver']} is not installed on this PC; pick another driver under Toolkit > Connection.")
-    conn = pyodbc.connect(connection_string(s, s["databases"][db_key], password), autocommit=False, timeout=15)
+    pinned = _check_pin(s)  # before the password goes anywhere
+    conn = pyodbc.connect(connection_string(s, s["databases"][db_key], password, pinned), autocommit=False, timeout=15)
     conn.timeout = 60
     return conn
 
@@ -247,8 +281,8 @@ def _clean_error(e: Exception) -> str:
     msg = re.sub(r"(\[[^\]]*\])+", "", msg.splitlines()[0] if msg else type(e).__name__)
     msg = re.sub(r"\s*\((\d+)\)\s*(\(SQL\w+\))?\s*$", "", msg).strip(" ;.")
     if re.search(r"certificate|SSL Provider|chain was issued", msg, re.I):
-        msg += (". The SQL server's certificate couldn't be verified. Ask IT which CA issued it (this PC trusts "
-                "Sonance's corp CAs), or, only if IT confirms the server, tick 'Trust server certificate' under Connection")
+        msg += (". The SQL server's certificate couldn't be verified by a trusted CA. You can review it and pin it "
+                "(Toolkit > Connection > Certificate), so only this exact certificate is accepted")
     return (msg or type(e).__name__)[:700]
 
 
@@ -867,7 +901,7 @@ def test_connection(password=None) -> dict:
 async def _run(fn, *args):
     try:
         return await asyncio.to_thread(fn, *args)
-    except NotConfigured as e:
+    except (NotConfigured, CertChanged) as e:
         raise HTTPException(409, str(e))
     except (ValueError, ChangeRefused) as e:
         raise HTTPException(400, str(e))
@@ -903,6 +937,7 @@ def _public_settings():
                                             "databases", "shipping_schema", "dash_table", "tree")},
             "configured": bool(s["server"] and s["username"]), "password_saved": password_saved(s),
             "drivers": list(DRIVERS), "installed_drivers": installed, "last_test": db.kv_get(KV_LAST_TEST),
+            "cert_pin": cert_pin(s) if s["server"] else None,
             "keyring": {"service": KEYRING_SERVICE, "user": _keyring_user(s) if s["server"] and s["username"] else None},
             "tables": {k: {f: t[f] for f in ("label", "pk", "columns", "editable", "insert", "constants", "unique")}
                        | {"name": _safe_name(k, s)}
@@ -958,6 +993,50 @@ async def forget_password():
 @router.post("/test")
 async def test():
     return await _run(test_connection)
+
+
+def _server_for_cert() -> dict:
+    s = settings()
+    if not s["server"]:
+        raise HTTPException(409, "Enter and save the SQL server first.")
+    validate_settings(s)
+    return s
+
+
+@router.post("/cert/inspect")
+async def cert_inspect():
+    """The certificate the server presents now, next to the approved one (if any). Sends no login."""
+    from .connectors import sqlcert
+    s = _server_for_cert()
+    cert = await _run(sqlcert.fetch, s["server"])
+    pin = cert_pin(s)
+    return {"cert": cert, "pin": pin, "matches": bool(pin and pin["sha256"] == cert["sha256"])}
+
+
+@router.post("/cert/pin")
+async def cert_pin_save(sha256: str = Body(..., embed=True)):
+    """Approves the certificate Joe reviewed: it's read again and must still be exactly that one."""
+    from .connectors import sqlcert
+    s = _server_for_cert()
+    if not isinstance(sha256, str) or not re.fullmatch(r"[0-9A-Fa-f]{64}", sha256):
+        raise HTTPException(400, "Invalid fingerprint")
+    cert = await _run(sqlcert.fetch, s["server"])
+    if cert["sha256"] != sha256.upper():
+        raise HTTPException(409, "The server's certificate changed while you were reviewing it. Review it again.")
+    pin = {"server": s["server"], "sha256": cert["sha256"], "subject": cert["subject"], "issuer": cert["issuer"],
+           "valid_to": cert["valid_to"], "pinned_at": db.now()}
+    db.kv_set(KV_CERT_PIN, pin)
+    db.kv_set(KV_LAST_TEST, None)
+    log.info("Toolkit: SQL server certificate pinned")
+    return {"ok": True, "pin": pin}
+
+
+@router.post("/cert/unpin")
+async def cert_unpin():
+    db.kv_set(KV_CERT_PIN, None)
+    db.kv_set(KV_LAST_TEST, None)
+    log.info("Toolkit: SQL server certificate pin removed")
+    return {"ok": True}
 
 
 @router.post("/shipping/accounts")

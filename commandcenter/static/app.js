@@ -192,8 +192,22 @@ function applyLayout() {
   toggle.setAttribute("aria-pressed", String(layout.split));
   toggle.title = layout.split ? "Two panes: COMMS left, WORK right. Click for a single pane." : "One pane at a time. Click to show COMMS and WORK side by side.";
   if (layout.split) applySplit();
+  navPill();
   document.dispatchEvent(new CustomEvent("cc:layout", { detail: { split: layout.split } }));
   return fresh;
+}
+
+// The active tab's pill (style.css .nav-group::before) slides under the active button of each nav group.
+function navPill() {
+  document.querySelectorAll(".nav-group").forEach((g) => {
+    const b = g.querySelector("button.active");
+    const was = g.classList.contains("pill-on");
+    g.classList.toggle("pill-on", !!b);
+    if (!b) return;
+    g.style.setProperty("--pill-x", `${b.offsetLeft}px`);
+    g.style.setProperty("--pill-w", `${b.offsetWidth}px`);
+    if (was) g.classList.add("pill-anim");  // the first placement doesn't slide in from the edge
+  });
 }
 
 function runLoaders(ids) { for (const id of ids) loaders[id]?.(); }
@@ -241,6 +255,7 @@ function fitHeader() {
       if (overflows()) { h.classList.remove("hdr-tight"); h.classList.add("nav-wrap"); }
     }
     navFade();
+    navPill();
   });
 }
 // A narrow window scrolls the nav sideways: fade the edge that has more tabs behind it.
@@ -380,6 +395,12 @@ const meetingActionSources = [];
 function meetingActions(m, where) {
   return meetingActionSources.flatMap((fn) => { try { return [fn(m, where)].flat().filter(Boolean); } catch { return []; } });
 }
+// ...and to received emails (Mail list rows, the reader, follow-up cards): CC.addMailAction(fn(mail, where)),
+// where = "row" | "reader" | "followup".
+const mailActionSources = [];
+function mailActions(m, where) {
+  return mailActionSources.flatMap((fn) => { try { return [fn(m, where)].flat().filter(Boolean); } catch { return []; } });
+}
 function alertAction(a) {
   const act = a.action;
   if (!act) return null;
@@ -461,8 +482,13 @@ function alertSource(a) {
   return ALERT_SOURCES[a.source] || "system";
 }
 
+// An email opened from elsewhere (View on a follow-up, the calendar…) that isn't in the recent list is
+// pinned at the top of it, so the list always shows what's open.
+let pinnedMail = null;
+
 loaders.mail = () => guarded(async () => {
   const { mail } = await api(`/api/mail?unread_only=${$("#mail-unread").checked}`);
+  if (pinnedMail && pinnedMail.id === selectedMail && !mail.some((m) => m.id === pinnedMail.id)) mail.unshift(pinnedMail);
   fill($("#mail-list"), mail.map((m) => el("li", {
       class: `clickable ${m.unread ? "unread" : ""} ${m.id === selectedMail ? "selected" : ""}`,
       "data-id": m.id,
@@ -470,8 +496,9 @@ loaders.mail = () => guarded(async () => {
     },
     el("div", { class: "grow" },
       el("div", { class: "title" }, m.high_importance ? "❗ " : "", m.flagged ? el("span", { class: "flag" }, "⚑ ") : "", m.subject),
-      el("div", { class: "src-line" }, srcTag("outlook", "Inbox"), fromLine(m.sender_name, m.sender)),
+      el("div", { class: "src-line" }, srcTag("outlook", m.pinned ? "opened" : "Inbox"), m.pinned && el("span", { class: "tag" }, "Opened"), fromLine(m.sender_name, m.sender)),
       el("div", { class: "muted" }, when(m.received), " · ", m.preview.slice(0, 120))),
+    mailActions(m, "row"),
   )), "No mail");
 });
 
@@ -500,11 +527,20 @@ async function showMail(id) {
         el("button", { onclick: () => newTaskDialog({ subject: m.subject, notes: `From ${m.sender_name} <${m.sender}>, ${when(m.received)}` }) }, "+ Task"),
         el("button", { onclick: () => snoozeDialog({ id, subject: m.subject, who: m.sender_name, kind: "mail" }) }, "Snooze"),
         m.sender && el("button", { class: "alt", onclick: () => openTeamsChat(m.sender, "") }, "Chat in Teams"),
-        el("button", { onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook")),
+        el("button", { onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook"),
+        mailActions(m, "reader")),
       orderChips,
       el("pre", {}, m.body),
     );
+    view.scrollTop = 0;
+    const listed = [...document.querySelectorAll("#mail-list li")].some((li) => li.dataset.id === id);
+    if (!listed || pinnedMail?.id === id) {
+      pinnedMail = { id, subject: m.subject, sender_name: m.sender_name, sender: m.sender, received: m.received,
+        preview: (m.body || "").replace(/\s+/g, " "), flagged: m.flagged, high_importance: m.high_importance, pinned: true };
+      if (!listed) await loaders.mail();
+    }
     document.querySelectorAll("#mail-list li").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));
+    document.querySelector("#mail-list li.selected")?.scrollIntoView({ block: "nearest" });
     renderOrderChips(orderChips, `${m.subject}\n${m.body}`, id);
   });
 }
@@ -1328,6 +1364,7 @@ function fuGroup(title, items, render, note, empty, cls = "") {
 
 // Every follow-up gets Snooze and Dismiss; Mute only where muting the sender makes sense.
 const fuActions = (m, { mute, who, kind = "mail" } = {}, ...buttons) => el("div", { class: "actions" }, ...buttons,
+  mailActions(m, "followup"),
   el("button", { class: "icon subtle", title: "Snooze", onclick: () => snoozeDialog({ id: m.id, subject: m.subject, who: who ?? m.sender_name, kind }) }, "Snooze"),
   mute && el("button", { class: "icon subtle", title: `Mute ${mute}`, onclick: () => muteSender(mute) }, "Mute"),
   el("button", { class: "icon subtle", title: "Dismiss", "aria-label": `Dismiss "${m.subject}"`, onclick: () => dismissFollowup(m.id) }, "✕"));
@@ -2022,6 +2059,15 @@ window.CC = {
   },
   addMeetingAction(fn) { if (typeof fn === "function") meetingActionSources.push(fn); },
   meetingActions,
+  addMailAction(fn) { if (typeof fn === "function") mailActionSources.push(fn); },
+  // A message that left the Inbox (e.g. marked as spam): drop it from the reader and the pinned row.
+  forgetMail(id) {
+    if (pinnedMail?.id === id) pinnedMail = null;
+    if (selectedMail !== id) return;
+    selectedMail = null;
+    $("#mail-view").className = "panel empty";
+    $("#mail-view").textContent = "Select a message";
+  },
 };
 $("#dialog").addEventListener("close", () => $("#dialog").classList.remove("wide"));
 document.dispatchEvent(new Event("cc:ready"));

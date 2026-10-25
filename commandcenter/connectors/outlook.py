@@ -4,6 +4,7 @@ COM objects must stay on the thread that created them, so every call runs on one
 dedicated worker thread via `call()`.
 """
 import asyncio
+import ctypes
 import html
 import logging
 import re
@@ -16,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 import pythoncom
 import pywintypes
 import win32com.client
+import win32gui
+import win32process
 
 from .. import alerts, config, db, people
 
@@ -25,6 +28,7 @@ OL_FOLDER_SENT = 5
 OL_FOLDER_INBOX = 6
 OL_FOLDER_CALENDAR = 9
 OL_FOLDER_TODO = 28
+OL_FOLDER_JUNK = 23
 OL_MAIL = 43
 OL_TASK = 48
 OL_TASK_ITEM = 3
@@ -162,13 +166,29 @@ def _iter_folder(folder, sort_field, limit):
         item = items.GetNext()
 
 
+def _blocked():
+    """The spam blocks (spam.py) as a matcher, or None when there are none (or that module isn't there).
+    matcher.hit(sender, subject, name): subject may be a callable, so it's only read from Outlook when needed."""
+    try:
+        from .. import spam
+    except ModuleNotFoundError as e:
+        if e.name != f"{__package__.rpartition('.')[0]}.spam":
+            raise
+        return None
+    m = spam.matcher()
+    return m if m else None
+
+
 # ---- reads -------------------------------------------------------------------
 
 def recent_mail(limit=50, unread_only=False) -> list[dict]:
     out = []
-    for item in _iter_inbox(limit * 4 if unread_only else limit):
+    blocked = _blocked()
+    for item in _iter_inbox(limit * 4 if unread_only or blocked else limit):
         if unread_only and not item.UnRead:
             continue
+        if blocked and blocked.hit(_sender_smtp(item), lambda: item.Subject, item.SenderName):
+            continue  # blocked as spam (Junk Email); the Outlook rule may not have moved it yet
         out.append(_summary(item))
         if len(out) >= limit:
             break
@@ -300,7 +320,7 @@ def reply(entry_id, text, reply_all=False, send=True, expect_signature=None) -> 
     if send:
         msg.Send()
     else:
-        msg.Display(False)
+        _show(msg)
     return info
 
 
@@ -398,8 +418,38 @@ def set_flag(entry_id, flagged=True):
     item.Save()
 
 
+def _show(item):
+    """Opens an item in its own Outlook window, in front of Command Center.
+
+    Windows only lets the foreground process hand focus to another one, so a plain Display() opens the
+    window behind the (usually full-screen) Command Center window. Command Center is the foreground
+    process when its Open button is clicked, so it lets Outlook come forward, then raises the window."""
+    main = win32gui.FindWindow("rctrl_renwnd32", None)  # Outlook's main window
+    pid = win32process.GetWindowThreadProcessId(main)[1] if main else 0
+    if pid:
+        ctypes.windll.user32.AllowSetForegroundWindow(pid)
+    item.Display(False)
+    try:
+        item.GetInspector.Activate()
+    except pywintypes.com_error:
+        pass
+    fg = win32gui.GetForegroundWindow()
+    if not pid or (fg and win32process.GetWindowThreadProcessId(fg)[1] == pid):
+        return
+    # Still behind: raise the newest visible Outlook item window ourselves (allowed while we're in front).
+    found = []
+    win32gui.EnumWindows(lambda h, _: found.append(h) if (
+        win32gui.IsWindowVisible(h) and h != main and win32gui.GetClassName(h) == "rctrl_renwnd32"
+        and win32process.GetWindowThreadProcessId(h)[1] == pid) else None, None)
+    if found:  # EnumWindows lists top to bottom; a new window is first among Outlook's
+        try:
+            win32gui.SetForegroundWindow(found[0])
+        except pywintypes.error:
+            pass
+
+
 def open_item(entry_id):
-    _ns().GetItemFromID(entry_id).Display(False)
+    _show(_ns().GetItemFromID(entry_id))
 
 
 # ---- tasks and follow-ups ----------------------------------------------------
@@ -515,12 +565,36 @@ def is_teams_notification(sender_smtp) -> bool:
     return (sender_smtp or "").lower().endswith(TEAMS_NOTIFY_DOMAIN)
 
 
+# Where the quoted history of a reply starts: only the new text above it counts as calling Joe out.
+QUOTE_START = re.compile(r"^\s*(?:\*?From:\*?\s|-{3,}\s*Original Message|_{10,}|On .{4,200} wrote:)", re.I | re.M)
+_mention_cache: dict = {}  # EntryID -> bool (a received message's text doesn't change)
+
+
+def _mentions_me(item, names, me_smtp) -> bool:
+    """True if the subject or the new part of the body names Joe ("Joe", "Joe Cherbak", his address)."""
+    key = item.EntryID
+    if key not in _mention_cache:
+        body = item.Body or ""
+        m = QUOTE_START.search(body)
+        text = f"{item.Subject or ''}\n{body[:m.start()] if m else body}"[:20000]
+        pattern = r"(?<![\w.])(?:" + "|".join(re.escape(n) for n in names if n) + r")(?![\w])"
+        found = bool(re.search(pattern, text, re.I)) or bool(me_smtp and me_smtp in text.lower())
+        if len(_mention_cache) > 2000:
+            _mention_cache.clear()
+        _mention_cache[key] = found
+    return _mention_cache[key]
+
+
 def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -> dict:
     """Sent mail nobody answered, mail you haven't replied to (internal senders by default, urgent people
     split out), unread Teams missed-activity emails, and unread mail from VIP senders."""
-    internal_only = config.section("followups", {}).get("needs_reply_scope", "internal") == "internal"
+    fu = config.section("followups", {})
+    internal_only = fu.get("needs_reply_scope", "internal") == "internal"
     urgent = people.urgent_people()
     me_name, me_smtp = _me()
+    # "Needs your reply" only when the message calls Joe out by name or address (urgent people always count).
+    mention_names = [str(n) for n in fu.get("mention_names", ["Joe", "Joe Cherbak"]) or []] + [me_name]
+    need_mention = fu.get("needs_reply_requires_mention", True) is not False
     now = datetime.now()
     horizon = now - timedelta(days=max(awaiting_days, reply_days) + 7)
 
@@ -540,6 +614,7 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -
 
     inbox_latest, needs_reply, urgent_reply, teams_reply, unread_vip, reply_seen = {}, [], [], [], [], set()
     recent = now - timedelta(days=reply_days)
+    blocked = _blocked()
     for item in _iter_inbox(3000):
         received = _local_time(item.ReceivedTime)
         if received < horizon:
@@ -547,7 +622,7 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -
         conv = item.ConversationID
         inbox_latest.setdefault(conv, received)
         sender = _sender_smtp(item).lower()
-        if sender == me_smtp:
+        if sender == me_smtp or (blocked and blocked.hit(sender, lambda: item.Subject, item.SenderName)):
             continue
         # Teams missed-activity emails stay pending until you mark them done (read) or dismiss them.
         if is_teams_notification(sender):
@@ -569,6 +644,8 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, vip_senders=()) -
             continue
         replied = _prop(item, PR_LAST_VERB) in REPLIED_VERBS or sent_latest.get(conv, datetime.min) > received
         if replied or _is_bulk(item, sender) or NO_REPLY_SUBJECT.search(item.Subject or ""):
+            continue
+        if need_mention and not is_urgent and not _mentions_me(item, mention_names, me_smtp):
             continue
         summary = {**_summary(item), "internal": people.is_internal(sender), "urgent": is_urgent}
         if is_urgent and len(urgent_reply) < 25:
@@ -612,13 +689,17 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
         return []
     since = datetime.fromisoformat(watermark) - timedelta(minutes=5)
 
-    hits = []
+    hits, spam = [], []
     urgent = people.urgent_people()
+    blocked = _blocked()
     for item in _iter_inbox(200):
         if _local_time(item.ReceivedTime) < since:
             break
         mail = _summary(item)
         if db.seen("mail:" + mail["id"]):
+            continue
+        if blocked and blocked.hit(mail["sender"], item.Subject or "", mail["sender_name"]):
+            spam.append(item)  # no alert; moved below (not while walking the sorted Items)
             continue
         # Urgent people beat every other rule: high priority, with sound.
         if urgent:
@@ -635,6 +716,15 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
             if _matches(rule, mail, body_lower):
                 hits.append((mail, rule))
                 break  # first matching rule wins
+    if spam:  # blocked mail the Outlook rule didn't catch (e.g. the rule couldn't be saved): to Junk Email
+        junk, moved = _ns().GetDefaultFolder(OL_FOLDER_JUNK), 0
+        for item in spam:
+            try:
+                item.Move(junk)
+                moved += 1
+            except pywintypes.com_error:
+                pass
+        log.info("Moved %d new blocked message(s) to Junk Email", moved)
     return hits
 
 

@@ -16,7 +16,7 @@ and for this Windows user only (127.0.0.1:8765 behind a per-launch session cooki
 ## Configure it
 `config.yaml` (created from `config.example.yaml`; every setting is commented). Secrets are never in config: work secrets live in
 Windows Credential Manager (services `CommandCenter-SQL`, `CommandCenter-Toolkit`, `CommandCenter-Pulse`, `CommandCenter-Asana`); personal ones in the personal vault.
-Appearance (colors, text size, density, effects) lives in the in-app **Profile** (avatar at top right), stored in SQLite (DPAPI-encrypted with the name and initials).
+Appearance (colors, text size, density, effects: glow, frosted glass, background motion, dot grid, animations) lives in the in-app **Profile** (avatar at top right), stored in SQLite (DPAPI-encrypted with the name and initials).
 
 ## Layout of the window
 - **Split workspace** (>= 1600px wide; toggle Split/Single in the header):
@@ -30,7 +30,7 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - **Today:** compact clock / weather (Lake Forest | San Clemente toggle) / stats strip and hotbar (Alt+1-9), follow-ups, agenda (with free slots you can drag tasks onto), recent alerts, tasks.
 - **Follow-ups** (`today.py`, cached 2 min):
   - **Urgent:** reply needed from Joe's urgent people (edited in the app or `followups.urgent_people`).
-  - **Needs your reply:** internal @sonance.com senders only, excluding auto-replies and sharing notices.
+  - **Needs your reply:** internal @sonance.com senders only, excluding auto-replies and sharing notices, and only when the email names Joe (`followups.mention_names`, his Outlook name or address) in the subject or the new text above the quoted history (`needs_reply_requires_mention`). Urgent people always count.
   - **Teams:** reply-needed from Teams missed-activity emails.
   - **Awaiting their reply:** sent mail with no answer yet.
   - **Flagged:** recent flags from people; automated NoReply@sonance.com flags are hidden.
@@ -47,6 +47,11 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
   - Outlook meetings for the next 10 days, including all-day events.
   - Dated follow-ups: tasks, flags due, snoozes, reply checks.
   - **Personal entries**, kept in the personal vault (encrypted with Joe's own passphrase), never sent to Outlook.
+- **Spam blocks (`spam.py`, `spam.js`):** Spam on an email from outside Sonance (Mail rows/reader, follow-up cards, X in triage) blocks the exact sender (default), the whole domain, or a subject phrase.
+  - The dialog previews matching Inbox mail (`POST /api/spam/preview`, single-use, 5 min) and moves it to Junk Email only if ticked; Undo for 30 s. Manage under Mail > Spam blocks or Ctrl+K.
+  - Enforced by two Outlook rules "Command Center spam blocks — senders / — subjects" (work with Command Center closed; other rules are never touched; checked every 6 h, Retry rebuilds) plus an app filter that hides blocked mail everywhere and moves new matches to Junk.
+  - Refused: internal senders, Joe's own address, urgent people, whole-domain blocks on shared providers (`spam.shared_providers`), and short or generic phrases (`spam.subject_stoplist`). Blocks are DPAPI-encrypted (kv `spam:blocks`).
+- **Open in Outlook:** items open in an Outlook window brought in front of the full-screen app (`outlook._show`). View on a flagged/calendar item opens that email in the reader and pins it at the top of the Mail list.
 - **Alerts:** toast + sound + feed (toasts say only "<Source>: <category>" unless `alerts.toast_detail: full`, because Windows keeps toast text unencrypted); focus mode (manual, tray, or calendar events containing "focus"); morning briefing and end-of-day wrap-up; meeting reminders with a **Prep** card (attendees, recent mail, open follow-ups).
 - **Orders (`orders.py`):** copying an order number (7-10 digits) or opening an email that contains one looks it up with the saved SQL query `Find order` (needs SQL set up).
 - **Claude tab (`terminal.py`, `projects.py`):**
@@ -61,7 +66,8 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
   - Every write is a single-row, whitelisted, parameterized transaction, confirmed in the UI with a before/after diff.
   - Every attempt is logged in SQLite `toolkit_changes`.
   - TLS verifies the server certificate by default; this PC trusts Sonance's corp CAs.
-- **Pulse tab (`pulse.py`):** read-only Postgres access to `public.data_reviews` through a least-privilege role `commandcenter_ro` (setup SQL on the tab, run by Joe in Supabase). Polls every 2 min for new or changed tickets on Joe.
+  - Servers with only SQL Server's self-signed certificate (snc-awsw-db01): Toolkit > Connection > Certificate pins its SHA-256 fingerprint (`connectors/sqlcert.py` reads it over a TDS PRELOGIN + TLS handshake, no login). Before every connection the certificate is read again; a different one stops the connection before the password is sent ("certificate changed", re-approve after a SQL service restart).
+- **Pulse tab (`pulse.py`):** read-only Postgres access to `public.data_reviews` through a least-privilege role `commandcenter_ro` (setup SQL on the tab, run by Joe in Supabase). Polls every 2 min for new or changed tickets on Joe. TLS is `verify-full` against Supabase's root CA (`data/certs/supabase-prod-ca-2021.crt`); production project `ysogodjjjdomsfbpqbfb`.
 - **Verified sending:** every reply is reviewed before it sends.
   - `POST /api/mail/reply/preview` builds the reply in Outlook, reads its recipients and subject, discards it, and issues a single-use `approval_id` (5 min).
   - `POST /api/mail/reply` with `send:true` needs that approval for the exact same text, and Outlook re-checks the recipients right before Send.
@@ -72,7 +78,7 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - **Triage (`triage.js`, Shift+T):** one-at-a-time queue with single-key actions; replies use the verified-send flow. An item cleared this session keeps Reply/Snooze/Done/Task off when revisited (a snooze can be undone).
 - **Quick capture (`capture.js`, Ctrl+Alt+Space):** a global hotkey (`ui.capture_hotkey`) registered in `desktop.py`. Captures a task, or a personal note when the vault is unlocked; Task / Personal by click, Alt+1 / Alt+2 or the arrow keys on the choice (Tab just moves focus). It respects the app lock. In Privacy mode a saved Personal choice is never turned into a task: it says "Personal is off (Privacy mode)" and saves (Enter included) only after Task is picked.
 - **Pulse aging:** business days a ticket has waited on Joe, warn/overdue buckets (`pulse.aging_*`), a daily alert, and a Today tile (only while something is aging or overdue).
-- **Mail / Teams / Websites / SQL tabs:** as before. Teams unread count comes from a background browser profile once Joe logs in; chats open through `msteams:` links.
+- **Mail / Teams / Websites / SQL tabs:** as before. Teams unread count comes from a background browser profile once Joe logs in (Edge is retried while it releases the profile after the sign-in window closes; a failed sign-in window raises an alert); chats open through `msteams:` links.
 
 ## Security model (security.py, desktop.py)
 - **Loopback and same user:** binds 127.0.0.1 with SO_EXCLUSIVEADDRUSE. Each connection is checked against the owning process's Windows user (always on; the result is cached per PID + process creation time, so a recycled PID is checked again).
@@ -97,15 +103,15 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - **Secrets:** only in Credential Manager, the personal vault or memory. Logs, the database and API responses were swept for secrets.
   Logi passwords never come back in lists (`has_password` only); one user's password is fetched on an explicit Show/Clipboard click (POST `/api/toolkit/logi/password`), logged as a `reveal` in `toolkit_changes` without the value. New Logi passwords: 16 random characters (crypto.getRandomValues), upper/lower/digit/symbol, no look-alikes.
 - **Log:** `data/commandcenter.log`, rotated at 5 MB (3 old files). Alerts are logged by id, source and priority only, never titles or bodies. Request errors are logged as type, path and code locations only, never the exception message (it can quote row values). At startup, older lines carrying work data are rewritten as `[redacted]`.
-- **Fonts and network:** fonts are self-hosted (`static/fonts`, CSP `font-src 'self'`). The page makes no requests beyond 127.0.0.1.
+- **Fonts and network:** fonts are self-hosted (`static/fonts`: Inter for text, Orbitron for headings and numbers; CSP `font-src 'self'`). The page makes no requests beyond 127.0.0.1.
 - **Dev bypass:** `CC_DEV_NO_AUTH=1` works in `serve` mode only and logs a warning.
 
 ## Code layout
-- `commandcenter/app.py`: core routes. Auto-loads the feature modules security, toolkit, pulse, terminal, vscode, planner, profile, feeds, daily, vault and privacy (each exposes `router` and optionally `background`).
-- `commandcenter/connectors/`: outlook, web, sql, asana, weather, teams. `people.py` handles internal domains and urgent people.
+- `commandcenter/app.py`: core routes. Auto-loads the feature modules security, toolkit, pulse, terminal, vscode, planner, profile, feeds, daily, vault, privacy and spam (each exposes `router` and optionally `background`).
+- `commandcenter/connectors/`: outlook, web, sql, sqlcert, asana, weather, teams. `people.py` handles internal domains and urgent people.
 - `commandcenter/static/`:
   - Core UI: `app.js`, `style.css`, `index.html`.
-  - Feature modules: `projects`, `vscode`, `toolkit`, `pulse`, `planner`, `profile`, `splash`, `daily`, `triage`, `capture`, `privacy` (`.js`/`.css`).
+  - Feature modules: `projects`, `vscode`, `toolkit`, `pulse`, `planner`, `profile`, `splash`, `daily`, `triage`, `capture`, `privacy`, `spam` (`.js`/`.css`).
   - Shared assets: `vendor/` (xterm), `jc-logo.svg` and `icon.ico` (the JC monogram).
 - `data/` (git-ignored, private ACL): the SQLite DB, log, browser profiles, `vscode/`, and the ACL backup.
 

@@ -52,11 +52,19 @@ async def _normal_user_agent(pw) -> str:
 
 
 async def _launch(pw, profile, headless):
-    return await pw.chromium.launch_persistent_context(
-        _profile_dir(profile), channel=_browser_channel(), headless=headless,
-        viewport={"width": 1400, "height": 900},
-        user_agent=await _normal_user_agent(pw) if headless else None,
-    )
+    # Edge takes a few seconds to let go of a profile after its window closes (e.g. right after a sign-in);
+    # starting it on that profile in the meantime fails with "Target page, context or browser has been closed".
+    for attempt in range(4):
+        try:
+            return await pw.chromium.launch_persistent_context(
+                _profile_dir(profile), channel=_browser_channel(), headless=headless,
+                viewport={"width": 1400, "height": 900},
+                user_agent=await _normal_user_agent(pw) if headless else None,
+            )
+        except Exception as e:
+            if attempt == 3 or "has been closed" not in str(e):
+                raise
+            await asyncio.sleep(3)
 
 
 def _number(text):
@@ -137,12 +145,18 @@ async def check(m: dict) -> dict:
 async def login(profile: str, url: str):
     """Opens a visible browser on the profile; the session is saved when the window closes."""
     async with _lock(profile), async_playwright() as pw:
-        ctx = await _launch(pw, profile, headless=False)
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        await page.goto(url)
-        closed = asyncio.Event()
-        ctx.on("close", lambda _: closed.set())
-        await closed.wait()
+        try:
+            ctx = await _launch(pw, profile, headless=False)
+            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+            await page.goto(url)
+            closed = asyncio.Event()
+            ctx.on("close", lambda _: closed.set())
+            await closed.wait()
+        except Exception as e:  # runs as a background task: nothing else would report it
+            alerts.raise_alert("Website", "Sign-in window failed", str(e).splitlines()[0][:300], "normal",
+                               toast="sign-in window failed")
+            raise
+        await asyncio.sleep(3)  # let Edge release the profile before the next check opens it
 
 
 async def watch_loop():

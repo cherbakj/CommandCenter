@@ -1,5 +1,6 @@
 // Triage mode: a full-window overlay that walks through the reply-needed follow-ups one at a time,
-// urgent first, with single-key actions (R reply, S snooze, D done, T task, O Outlook, J/K or arrows to move).
+// urgent first, with single-key actions (R reply, S snooze, D done, T task, O Outlook, X spam (external senders,
+// spam.js), J/K or arrows to move).
 // Mail bodies are untrusted: everything goes in as text (CC.el / textContent), never as HTML, and nothing
 // about a message is logged. Bodies are fetched on demand and dropped when triage closes.
 (() => {
@@ -56,11 +57,13 @@
   let dlg, shell, topCount, topBar, card, keysBar, slotBtn;
 
   // ---- overlay skeleton -------------------------------------------------------------------------
-  const CLEARING = new Set(["r", "s", "d", "t"]);  // the actions that clear an item
+  const CLEARING = new Set(["r", "s", "d", "t", "x"]);  // the actions that clear an item
   const KEYS = [
     ["r", "R", "Reply"], ["s", "S", "Snooze"], ["d", "D", "Done"], ["t", "T", "Task"], ["o", "O", "Outlook"],
-    ["prev", "← K", "Prev"], ["next", "→ J", "Next"], ["exit", "Esc", "Exit"],
+    ["x", "X", "Spam"], ["prev", "← K", "Prev"], ["next", "→ J", "Next"], ["exit", "Esc", "Exit"],
   ];
+  // X (mark as spam, spam.js) only for external senders' emails; the key is hidden otherwise.
+  const spamOk = (item) => !!(item && item.src !== "teams" && CC.spam && CC.spam.eligible(item.m));
 
   function build() {
     topCount = el("span", { class: "tri-count", "aria-live": "polite" });
@@ -86,7 +89,7 @@
     const teams = item && item.src === "teams";
     const off = S.end || !item;
     const handled = !off && S.cleared.has(item.m.id);  // already cleared this session: only O and moving on
-    keysBar.replaceChildren(...KEYS.map(([id, key, label]) => {
+    keysBar.replaceChildren(...KEYS.filter(([id]) => id !== "x" || (!off && spamOk(item))).map(([id, key, label]) => {
       const text = id === "r" && teams ? "Open Teams" : label;
       const disabled = (S.reviewing && id !== "exit") || (off && !["prev", "exit"].includes(id)) || (S.busy && id !== "exit")
         || (handled && CLEARING.has(id));
@@ -118,7 +121,7 @@
   }
 
   function statusText(kind) {
-    return { done: "Done", snoozed: "Snoozed", replied: "Replied", task: "Task created" }[kind] || "Cleared";
+    return { done: "Done", snoozed: "Snoozed", replied: "Replied", task: "Task created", spam: "Marked as spam" }[kind] || "Cleared";
   }
 
   function renderItem() {
@@ -142,9 +145,9 @@
         m.high_importance && el("span", { class: "tag overdue" }, "High importance"),
         status && el("span", { class: "tri-status" }, `✓ ${statusText(status)}`)),
       el("h2", { class: "tri-subject" }, m.subject || "(no subject)"),
-      status && el("div", { class: "tri-handled", role: "status" },
+      status ? el("div", { class: "tri-handled", role: "status" },  // (replaceChildren would print a bare `undefined`)
         el("span", {}, `${statusText(status)} earlier in this session, so Reply, Snooze, Done and Task are off for it.`),
-        status === "snoozed" && el("button", { type: "button", class: "small subtle", onclick: undoSnooze }, "Undo snooze")),
+        status === "snoozed" && el("button", { type: "button", class: "small subtle", onclick: undoSnooze }, "Undo snooze")) : "",
       el("div", { class: "tri-from src-line" },
         CC.srcTag(item.src, item.src === "teams" ? `notification from ${m.sender || "Teams"}` : m.internal === false ? "external sender" : ""),
         el("span", { class: "tri-sender" }, sender),
@@ -471,9 +474,13 @@
         markCleared("done");
       });
     } else if (id === "o") run(() => api("/api/outlook/open", { id: item.m.id }));
+    else if (id === "x" && spamOk(item)) {
+      CC.spam.open(item.m, { onBlocked: () => { if (dlg.open && S.queue[S.i] === item) markCleared("spam"); },
+        onClose: () => { if (dlg.open) shell.focus({ preventScroll: true }); } });
+    }
   }
 
-  const KEYMAP = { r: "r", s: "s", d: "d", t: "t", o: "o", j: "next", k: "prev", arrowright: "next", arrowleft: "prev" };
+  const KEYMAP = { r: "r", s: "s", d: "d", t: "t", o: "o", x: "x", j: "next", k: "prev", arrowright: "next", arrowleft: "prev" };
 
   function onKey(e) {
     if (e.defaultPrevented || e.isComposing) return;

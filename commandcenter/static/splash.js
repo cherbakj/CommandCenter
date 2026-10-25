@@ -137,8 +137,12 @@
   function finish() {
     if (finished) return;
     finished = true;
-    const out = overlay.animate([{ opacity: 1 }, { opacity: 0 }], { duration: reduced ? 150 : 450, easing: "ease-in", fill: "forwards" });
-    if (!reduced) svg.animate([{ transform: "scale(1)" }, { transform: "scale(1.12)" }], { duration: 450, easing: "ease-in", fill: "forwards" });
+    const out = overlay.animate([{ opacity: 1 }, { opacity: 0 }], { duration: reduced ? 150 : 450, easing: "cubic-bezier(.4, 0, .2, 1)", fill: "forwards" });
+    if (!reduced) {
+      // The card lifts away softly while the app shows through.
+      overlay.querySelector(".sp-stage").animate([{ transform: "scale(1)", filter: "blur(0)" }, { transform: "scale(1.05)", filter: "blur(6px)" }],
+        { duration: 450, easing: "cubic-bezier(.4, 0, .2, 1)", fill: "forwards" });
+    }
     out.onfinish = () => overlay.remove();
   }
   overlay.addEventListener("click", finish);

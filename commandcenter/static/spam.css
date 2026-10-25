@@ -1,0 +1,83 @@
+/* Mark as spam / block (spam.js). Uses the shared tokens and the generic dialog / button / list / tag styles, so it
+   follows the app's look; only layout and a few accents live here. */
+
+/* The Spam action in Mail rows shows on hover, focus or the selected row, to keep the list calm. */
+.spam-row-btn { align-self: center; opacity: 0; transition: opacity .15s; }
+#mail-list li:hover .spam-row-btn, #mail-list li.selected .spam-row-btn, .spam-row-btn:focus-visible { opacity: 1; }
+@media (hover: none) { .spam-row-btn { opacity: 1; } }
+
+.spam-dlg { display: flex; flex-direction: column; gap: .75rem; min-width: 0; }
+.spam-dlg h3 { margin-bottom: 0; }
+.spam-dlg p { margin: 0; }
+
+.spam-mail {
+  padding: .6rem .8rem; border: 1px solid var(--line); border-radius: var(--r-card); background: rgb(255 255 255 / .03);
+  min-width: 0;
+}
+.spam-from { color: var(--text); font-size: .86rem; overflow-wrap: anywhere; }
+.spam-subj { margin-top: .2rem; font-weight: 600; color: #fff; overflow-wrap: anywhere; }
+
+.spam-kinds { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: .35rem; min-width: 0; }
+.spam-kinds legend { padding: 0; margin-bottom: .35rem; }
+.spam-kind {
+  display: flex; align-items: flex-start; gap: .6rem; padding: .5rem .7rem; cursor: pointer; min-width: 0;
+  border: 1px solid var(--line); border-radius: var(--r-btn); transition: border-color .15s, background .15s;
+}
+.spam-kind:hover { border-color: var(--control); }
+.spam-kind:has(input:checked) { border-color: var(--line-strong); background: rgb(var(--accent-rgb) / .07); }
+.spam-kind.off { cursor: not-allowed; opacity: .8; }
+.spam-kind.off:hover { border-color: var(--line); }
+.spam-dlg input[type=radio] {
+  width: 1rem; height: 1rem; flex: none; margin: .15rem 0 0; padding: 0; accent-color: var(--accent);
+}
+.spam-kind-text { display: flex; flex-direction: column; gap: .15rem; min-width: 0; flex: 1; }
+.spam-kind-text b { font-weight: 600; color: var(--text); }
+.spam-val { font: 500 .84rem var(--font-mono); color: var(--muted); overflow-wrap: anywhere; }
+.spam-why { font-size: .8rem; color: var(--amber); }
+.spam-dlg .spam-phrase { margin: .15rem 0 0; }
+
+.spam-preview {
+  padding: .55rem .75rem; border-left: 3px solid var(--line-strong); border-radius: .5rem;
+  background: rgb(255 255 255 / .03); min-width: 0;
+}
+.spam-count { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; font-size: .88rem; }
+.spam-count b { color: #fff; }
+.spam-count.err { color: var(--red); }
+.spam-samples { list-style: none; margin: .4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
+.spam-samples:empty { display: none; }
+.spam-samples li {
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto; gap: .6rem; align-items: baseline;
+  font-size: .8rem; padding: .15rem 0; border-top: 1px solid var(--line-soft);
+}
+.spam-samples li > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spam-samples li.spam-more { display: block; }
+.spam-s-when { white-space: nowrap; }
+
+.spam-move { display: flex; align-items: center; gap: .55rem; font-size: .88rem; cursor: pointer; }
+.spam-move:has(input:disabled) { color: var(--dim); cursor: default; }
+.spam-note { font-size: .82rem; }
+.spam-confirm { min-width: 9rem; }
+
+/* Manage list */
+.spam-rule { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; font-size: .86rem; }
+.spam-rule.bad { padding: .5rem .75rem; border-left: 3px solid var(--red); border-radius: .5rem; background: rgb(var(--red-rgb) / .08); }
+.spam-rule.bad b { color: var(--red); }
+.spam-list { max-height: min(55vh, 34rem); overflow-y: auto; margin: 0; padding: 0; }
+.spam-list li { display: flex; align-items: center; gap: .7rem; }
+.spam-list .grow { min-width: 0; flex: 1; }
+.spam-list-val { font-family: var(--font-mono); font-size: .86rem; overflow-wrap: anywhere; }
+.spam-kind-tag { flex: none; min-width: 6.5rem; text-align: center; }
+.spam-kind-tag.k-domain { color: var(--amber); border-color: rgb(var(--amber-rgb) / .6); }
+.spam-kind-tag.k-subject { color: var(--accent-2); border-color: rgb(var(--accent-2-rgb) / .6); }
+
+/* Toast with Undo (the shared #toast is text only) */
+#spam-toast {
+  position: fixed; right: 1.5rem; bottom: 1.5rem; z-index: 71; max-width: min(34rem, calc(100vw - 2rem));
+  display: flex; align-items: center; gap: .6rem; padding: .6rem .7rem .6rem 1.1rem;
+  font: 600 .9rem var(--font-ui); color: var(--text); border-radius: var(--r-card);
+  background: var(--glass-strong); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter);
+  border: 1px solid rgb(var(--accent-rgb) / .5); box-shadow: var(--shadow);
+  opacity: 0; transform: translateY(.5rem); transition: opacity .2s, transform .2s var(--ease); pointer-events: none;
+}
+#spam-toast.show { opacity: 1; transform: none; pointer-events: auto; }
+.spam-toast-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }

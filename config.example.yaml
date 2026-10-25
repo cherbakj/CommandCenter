@@ -44,6 +44,8 @@ followups:
   min_wait_hours: 4        # give people this long before it counts as "no reply"
   needs_reply_days: 5      # mail sent to you that you haven't replied to
   needs_reply_scope: internal          # internal = only coworkers (internal_domains); all = anyone
+  needs_reply_requires_mention: true  # only when the email names you (subject or new text, not quoted history)
+  mention_names: ["Joe", "Joe Cherbak"]  # plus your Outlook name and email address
   internal_domains: ["sonance.com"]
   urgent_people: []                    # names or emails; also editable in the app (Follow-ups > Urgent people)
   urgent_escalate_hours: 4             # one high-priority reminder if an urgent message is still unanswered
@@ -91,6 +93,21 @@ outlook:
       priority: normal
   meetings:
     remind_minutes: [10, 1]             # pop-ups this many minutes before a meeting (the first one has a Prep button)
+
+# ---------------------------------------------------------------------------
+# Mark as spam (Spam on an email from outside Sonance; manage under Mail > Spam blocks or Ctrl+K).
+# Blocks are kept (encrypted) until you unblock them. Blocked mail goes to Junk Email through two Outlook
+# rules named "Command Center spam blocks - senders / - subjects" (they work with Command Center closed),
+# and Command Center hides it everywhere. Internal senders, your own address and urgent people can't be blocked.
+# ---------------------------------------------------------------------------
+spam:
+  shared_providers:          # whole-domain blocks are refused for these (block the one sender instead)
+    [gmail.com, googlemail.com, outlook.com, hotmail.com, live.com, msn.com, yahoo.com, icloud.com,
+     me.com, aol.com, proton.me, protonmail.com]
+  subject_stoplist:          # a subject phrase made only of these words (and numbers) is too generic to block
+    [re, fw, fwd, "re:", "fw:", "fwd:", meeting, invoice, order, update, hello, hi, thanks, thank, you, your,
+     the, a, an, and, or, of, for, to, in, on, at, from, with, request, question, reminder, important, urgent,
+     info, new, message, follow, up, call, today, tomorrow, week, please, help, quote, po]
 
 # ---------------------------------------------------------------------------
 # Websites - read a value from a page and alert when it changes.

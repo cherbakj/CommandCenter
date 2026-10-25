@@ -219,6 +219,20 @@ def inventory() -> list[dict]:
         "The zip codes' place names and the latest forecast.", "None (not sensitive: zip codes only)", "Forecast: 10 minutes",
         connected=bool(zips), state=f"{len(zips)} location(s)")
 
+    try:
+        from . import spam
+        n_blocks = len(_try(spam.blocks, []) or [])
+        rule_ok = (_try(spam.rule_status, {}) or {}).get("ok")
+    except ImportError:
+        n_blocks = None
+    if n_blocks is not None:
+        add("spam", "Spam blocks", "Work",
+            "Emails you mark as spam: the sender address, domain or subject phrase you pick. Two Outlook rules named "
+            "“Command Center spam blocks” move matching mail to Junk Email.",
+            "The blocked addresses, domains and phrases (kv spam:blocks) and whether the Outlook rules saved. No "
+            "subjects or bodies of the emails themselves.", dpapi, "Until you unblock it", connected=None,
+            state=f"{n_blocks} block(s)" + ("" if not n_blocks or rule_ok else " · Outlook rule not saved"))
+
     n_alerts = _table_count("alerts")
     add("alerts", "Alerts and log", "Work",
         "Alerts raised by the other sources. The log file records ids, sources and errors, never titles or bodies.",

@@ -1,5 +1,6 @@
 // User profile: an initials avatar at the top right opens a panel to set name/initials, theme colors,
-// text size, density and effects. Saved server-side (/api/profile) and applied immediately.
+// text size, density and effects (glow, frosted glass, background motion, dot grid, animations).
+// Saved server-side (/api/profile) and applied immediately.
 (() => {
   const CC = window.CC;
   if (!CC) return;
@@ -15,6 +16,13 @@
   const avatar = el("button", { class: "pf-avatar", title: "Profile and appearance", "aria-label": "Profile and appearance", onclick: () => openPanel() }, "JC");
 
   const rgb = (hex) => { const n = parseInt(hex.slice(1), 16); return `${n >> 16} ${(n >> 8) & 255} ${n & 255}`; };
+  // Text on an accent fill: dark on a light accent, white on a dark custom one (whichever contrasts more).
+  const onAccent = (hex) => {
+    const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    const [r, g, b] = rgb(hex).split(" ").map(Number);
+    const lum = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    return lum > 0.18 ? "#031400" : "#ffffff";
+  };
 
   function apply(p) {
     const root = document.documentElement;
@@ -22,10 +30,12 @@
     root.style.setProperty("--accent-rgb", rgb(p.accent));
     root.style.setProperty("--accent-2", p.accent2);
     root.style.setProperty("--accent-2-rgb", rgb(p.accent2));
+    root.style.setProperty("--on-accent", onAccent(p.accent));
     root.style.setProperty("--pf-scale", String(p.text_scale / 100));
     root.classList.toggle("pf-compact", p.density === "compact");
     root.classList.toggle("pf-no-glow", !p.glow);
-    root.classList.toggle("pf-no-scanlines", !p.scanlines);
+    root.classList.toggle("pf-no-glass", p.glass === false);
+    root.classList.toggle("pf-no-aurora", p.aurora === false);
     root.classList.toggle("pf-no-grid", !p.grid);
     root.classList.toggle("pf-no-motion", !p.animations);
     avatar.textContent = p.initials || "JC";
@@ -146,8 +156,8 @@
           el("div", { class: "panel-label" }, "Style"),
           field("Text size", el("div", { class: "pf-scale" }, scale, scaleOut)),
           field("Spacing", density),
-          el("div", { class: "pf-toggles" }, toggle("glow", "Glow effects"), toggle("scanlines", "Scanlines"), toggle("grid", "Background grid"),
-            toggle("animations", "Animations"), toggle("splash", "Launch animation")),
+          el("div", { class: "pf-toggles" }, toggle("glow", "Glow effects"), toggle("glass", "Frosted glass"), toggle("aurora", "Background motion"),
+            toggle("grid", "Dot grid"), toggle("animations", "Animations"), toggle("splash", "Launch animation")),
           el("p", { class: "muted" }, "Changes preview live. Saved only on this PC."))),
       err, row);
   }

@@ -102,7 +102,8 @@
   function itemRow(x) {
     const open = () => {
       if (x.url) return CC.openExternal(x.url);
-      if (x.kind === "task" && x.source !== "asana") return guarded(() => api("/api/outlook/open", { id: x.id }));
+      if (x.source === "todo") return guarded(() => api("/api/outlook/open", { id: x.id }));  // To Do task
+      if (x.id && x.source !== "asana") return CC.showMail(x.id);  // flagged / snoozed / reply-check email itself
       CC.openTab("mail");
     };
     // What kind of date this is ("Due Oct 22", "Flag due Oct 24", "Reply check 3:00 PM") is a tag in the

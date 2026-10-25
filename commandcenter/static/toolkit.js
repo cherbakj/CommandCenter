@@ -992,6 +992,9 @@
 
   // ---- connection ---------------------------------------------------------------------------------
 
+  const CERT_ERROR = /certificate/i;
+  const fingerprint = (hex) => (hex || "").match(/.{1,4}/g)?.join(" ") || "";
+
   views.connection = {
     build(root) {
       const inp = (ph, cls = "mono") => el("input", { class: cls, autocomplete: "off", spellcheck: "false", placeholder: ph });
@@ -1004,6 +1007,7 @@
       this.pw.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); this.savePassword(); } });
       this.status = el("div", { class: "tk-conn-status" });
       this.info = el("div", { class: "tk-hint" });
+      this.cert = el("div", { class: "tk-cert" });
       const field = (label, input, hint) => el("div", { class: "tk-field" }, el("label", { class: "field-label" }, label), input, hint ? el("div", { class: "tk-hint" }, hint) : null);
       root.append(el("div", { class: "tk-conn" },
         el("div", { class: "panel" },
@@ -1014,6 +1018,7 @@
             el("div", { class: "tk-field" }, el("label", { class: "field-label" }, "Encryption"),
               el("label", { class: "tk-check-label" }, this.f.encrypt, "Encrypt connection"),
               el("label", { class: "tk-check-label" }, this.f.trust, "Trust server certificate without verifying it (not recommended; only if IT confirms the server)"))),
+          el("div", { class: "tk-field" }, el("label", { class: "field-label" }, "Certificate"), this.cert),
           el("div", { class: "tk-grid4" }, field("Staging DB", this.f.staging), field("Logi DB", this.f.logi), field("Dashboard DB", this.f.sys), field("Shipping schema", this.f.schema)),
           el("div", { class: "row" }, el("button", { type: "button", class: "primary", onclick: () => this.saveSettings() }, "Save settings"))),
         el("div", { class: "panel" },
@@ -1041,6 +1046,15 @@
           : !m.password_saved ? el("div", { class: "tk-error" }, `No password saved for ${s.username} on ${s.server}.`)
             : t ? el("div", { class: "tk-ok" }, `Connected as ${t.login} on ${t.server || s.server}/${t.database}`, el("span", { class: "muted" }, `  tested ${CC.when(t.at)}`))
               : el("div", { class: "tk-note" }, `Password saved for ${s.username} on ${s.server}. Not tested yet.`));
+      const pin = m.cert_pin;
+      this.cert.replaceChildren(
+        pin ? el("div", { class: "tk-ok" }, "Pinned: only this certificate is accepted")
+            : el("div", { class: "muted" }, "Not pinned: the server's certificate must come from a CA this PC trusts."),
+        pin && el("div", { class: "tk-hint" }, el("span", { class: "mono" }, fingerprint(pin.sha256)),
+          ` · ${pin.subject} · valid to ${pin.valid_to} · approved ${CC.when(pin.pinned_at)}`),
+        el("div", { class: "row" },
+          m.configured && el("button", { type: "button", class: "alt", onclick: () => this.certDialog() }, pin ? "Check certificate" : "Review & pin certificate"),
+          pin && el("button", { type: "button", class: "subtle", onclick: () => this.unpin() }, "Remove pin")));
       this.info.replaceChildren(
         el("div", {}, "Credential Manager entry: ", el("span", { class: "mono" }, `${m.keyring.service} / ${m.keyring.user || "<username>@<server>"}`)),
         el("div", {}, "Tree access table: ", el("span", { class: "mono" }, m.tables.logi_dash.name || "—"),
@@ -1058,21 +1072,63 @@
         await loadMeta();
       } catch (e) { await message("Settings not saved", e.message, true); }
     },
-    async savePassword() {
-      const pw = this.pw.value;
+    async savePassword(retry) {
+      const pw = retry || this.pw.value;
       if (!pw) { toast("Enter the password", true); return; }
+      this.pw.value = "";
       this.status.replaceChildren(spinner("Testing login…"));
       try {
         const r = await api("/api/toolkit/password", { password: pw });
-        this.pw.value = "";
         toast(`Connected as ${r.test.login}`);
-      } catch (e) { this.pw.value = ""; await message("Password not saved", e.message, true); }
+      } catch (e) {
+        // A certificate problem: offer to review and pin it, then retry with the same password (kept only for this).
+        if (CERT_ERROR.test(e.message) && await this.certDialog(e.message)) return this.savePassword(pw);
+        await message("Password not saved", e.message, true);
+      }
       await loadMeta();
     },
     async test() {
       this.status.replaceChildren(spinner("Testing connection…"));
       try { const r = await api("/api/toolkit/test", {}); toast(`Connected as ${r.login}`); }
-      catch (e) { await message("Connection failed", e.message, true); }
+      catch (e) {
+        if (CERT_ERROR.test(e.message) && await this.certDialog(e.message)) return this.test();
+        await message("Connection failed", e.message, true);
+      }
+      await loadMeta();
+    },
+    // Shows the certificate the server presents (no login is sent) and, after a deliberate click, pins it.
+    // Resolves true when a certificate was pinned.
+    async certDialog(problem) {
+      let r;
+      try { r = await api("/api/toolkit/cert/inspect", {}); }
+      catch (e) { await message("Couldn't read the certificate", e.message, true); return false; }
+      const c = r.cert, pin = r.pin;
+      if (r.matches) { await message("Certificate matches", `The server presents the certificate you approved (${fingerprint(c.sha256)}).`); return false; }
+      const kv = (k, v) => el("div", { class: "tk-cert-row" }, el("span", { class: "muted" }, k), el("span", { class: "mono" }, v));
+      const ok = await modal((close) => [
+        el("h3", {}, pin ? "SQL certificate changed" : "Pin the SQL server's certificate"),
+        problem && el("p", { class: "err" }, problem),
+        pin ? el("p", { class: "tk-warn" }, "This server now presents a different certificate than the one you approved. Approve it only if you expected it (SQL Server makes a new self-signed one when its service restarts, e.g. after patching). If you didn't expect it, check with IT first.")
+            : el("p", {}, c.self_signed
+              ? "The server uses a self-signed certificate (SQL Server's own), so no CA can vouch for it. Pinning makes Command Center accept only this exact certificate: anyone else presenting a different one is refused before your password is sent."
+              : "No CA this PC trusts issued this certificate. Pinning makes Command Center accept only this exact certificate."),
+        el("div", { class: "tk-cert" },
+          kv("Server", `${c.host}:${c.port}`), kv("Subject", c.subject), kv("Issuer", c.issuer),
+          kv("Valid", `${c.valid_from} → ${c.valid_to}`), kv("SHA-256", fingerprint(c.sha256)),
+          pin && kv("Approved before", fingerprint(pin.sha256))),
+        el("div", { class: "row" },
+          el("button", { type: "button", class: "subtle", onclick: () => close(false) }, "Cancel"),
+          el("button", { type: "button", class: pin ? "tk-danger" : "primary", onclick: () => close(true) }, pin ? "Approve new certificate" : "Pin this certificate")),
+      ], { focus: false });
+      if (!ok) return false;
+      try { await api("/api/toolkit/cert/pin", { sha256: c.sha256 }); toast("Certificate pinned"); }
+      catch (e) { await message("Not pinned", e.message, true); return false; }
+      await loadMeta();
+      return true;
+    },
+    async unpin() {
+      if (!await ask("Remove pin", "Stop accepting the pinned certificate? Connections will then need a certificate from a trusted CA.", "Remove", true)) return;
+      try { await api("/api/toolkit/cert/unpin", {}); toast("Pin removed"); } catch (e) { await message("Error", e.message, true); }
       await loadMeta();
     },
     async forget() {

@@ -1,47 +1,75 @@
 /* Profile avatar + panel (profile.js) and the appearance switches it sets on <html>. */
 .pf-avatar {
-  width: 2.2rem; height: 2.2rem; padding: 0; display: grid; place-items: center;
-  font: 800 .85rem var(--font-display); letter-spacing: .04em; color: var(--on-accent, #031400);
-  background: linear-gradient(135deg, var(--accent), var(--accent-2)); border: none;
-  clip-path: polygon(.5rem 0, 100% 0, 100% calc(100% - .5rem), calc(100% - .5rem) 100%, 0 100%, 0 .5rem);
+  width: 2.2rem; height: 2.2rem; padding: 0; display: grid; place-items: center; border-radius: 50%;
+  font: 800 .8rem var(--font-display); letter-spacing: .04em; color: var(--on-accent, #031400);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); border: 1px solid rgb(255 255 255 / .25);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .35), 0 0 .8rem rgb(var(--accent-rgb) / .25);
 }
-.pf-avatar:hover { filter: brightness(1.15); color: var(--on-accent, #031400); }
+.pf-avatar:hover { filter: brightness(1.1); color: var(--on-accent, #031400); border-color: rgb(255 255 255 / .5); box-shadow: inset 0 1px 0 rgb(255 255 255 / .35), var(--glow); }
+.pf-avatar:focus-visible { color: var(--on-accent, #031400); }
 
-.pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.4rem; }
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1.6rem; }
+.pf-grid > section { min-width: 0; }
+.pf-grid .panel-label { margin-bottom: .55rem; }
 .pf-row { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
 .pf-field { display: flex; flex-direction: column; align-items: stretch; gap: .25rem; margin-bottom: .5rem; text-align: left; }
 .pf-field .field-label { text-align: left; }
-.pf-field input[type=color] { height: 2.4rem; padding: .15rem; cursor: pointer; }
-.pf-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: .4rem; margin-bottom: .7rem; }
+.pf-field input[type=color] { height: 2.5rem; padding: .2rem; cursor: pointer; }
+.pf-field input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+.pf-field input[type=color]::-webkit-color-swatch { border: none; border-radius: .35rem; }
+.pf-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: .45rem; margin-bottom: .8rem; }
 .pf-preset {
-  display: flex; align-items: center; gap: .5rem; text-transform: none; letter-spacing: 0; font: 600 .82rem/1.2 var(--font-ui);
-  color: var(--text); white-space: normal; text-align: left; min-height: 2.6rem; border-width: 2px; border-color: rgb(176 205 189 / .3);
+  display: flex; align-items: center; gap: .6rem; font: 600 .84rem/1.2 var(--font-ui);
+  color: var(--text); white-space: normal; text-align: left; min-height: 2.8rem; border-radius: var(--r-card);
+  background: rgb(255 255 255 / .04); border-color: var(--control);
 }
-/* The selected theme: thick accent border, tint and a check mark. */
-.pf-preset.on { border-color: var(--accent); background: rgb(var(--accent-rgb) / .18); box-shadow: var(--glow), inset 0 0 0 1px var(--accent); color: #fff; }
-.pf-preset.on::after { content: "✓"; margin-left: auto; padding-left: .3rem; font: 900 1rem var(--font-ui); color: var(--accent); }
-.pf-actions.pf-confirm { align-items: center; padding: .55rem .7rem; border: 1px solid var(--amber); background: rgb(var(--amber-rgb) / .08); }
+.pf-preset:hover { transform: translateY(-1px); }
+/* The selected theme: accent border, tint and a check mark. */
+.pf-preset.on { border-color: var(--accent); background: rgb(var(--accent-rgb) / .14); box-shadow: inset 0 0 0 1px var(--accent), 0 0 1rem rgb(var(--accent-rgb) / .25); color: #fff; }
+.pf-preset.on::after { content: "✓"; margin-left: auto; padding-left: .3rem; font: 800 1rem var(--font-ui); color: var(--accent); }
+.pf-actions.pf-confirm { align-items: center; padding: .6rem .8rem; border-radius: var(--r-card); border: 1px solid rgb(var(--amber-rgb) / .7); background: rgb(var(--amber-rgb) / .08); }
 .pf-confirm-text { flex: 1 1 16rem; font-weight: 600; color: var(--text); }
 button.danger-solid { color: #fff; background: #c8102e; border-color: var(--red); }
-button.danger-solid:hover { background: #e0213f; color: #fff; box-shadow: 0 0 .6rem rgb(var(--red-rgb) / .6); }
-.pf-sw { display: inline-flex; flex-shrink: 0; }
-.pf-sw i { width: .8rem; height: 1.2rem; display: block; }
+button.danger-solid:hover { background: #e0213f; color: #fff; box-shadow: 0 0 .8rem rgb(var(--red-rgb) / .55); }
+/* Swatch: the two theme colors as a small rounded chip. */
+.pf-sw { display: inline-flex; flex-shrink: 0; border-radius: .45rem; overflow: hidden; box-shadow: 0 0 0 1px rgb(255 255 255 / .2); }
+.pf-sw i { width: .85rem; height: 1.5rem; display: block; }
 .pf-scale { display: flex; align-items: center; gap: .6rem; }
 .pf-scale input { margin: 0; flex: 1; accent-color: var(--accent); }
-.pf-scale-out { font: 600 .85rem var(--font-mono); color: var(--accent); min-width: 3rem; }
-.pf-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem .8rem; margin: .4rem 0 .6rem; }
-.pf-toggle { display: flex; align-items: center; gap: .5rem; font-weight: 600; }
+.pf-scale-out { font: 600 .85rem var(--font-mono); color: var(--accent); min-width: 3rem; font-variant-numeric: tabular-nums; }
+.pf-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .8rem; margin: .5rem 0 .7rem; }
+.pf-toggle {
+  display: flex; align-items: center; gap: .55rem; font-weight: 500; font-size: .88rem; padding: .45rem .6rem; border-radius: var(--r-btn);
+  background: rgb(255 255 255 / .035); border: 1px solid var(--line); cursor: pointer;
+}
+.pf-toggle:hover { border-color: rgb(var(--accent-rgb) / .45); }
+.pf-toggle:has(input:checked) { border-color: rgb(var(--accent-rgb) / .4); background: rgb(var(--accent-rgb) / .07); }
 
-/* appearance switches */
+/* ---- appearance switches ---- */
 /* Same fluid size as style.css, times the profile's text size. Everything is in rem, so it all scales. */
 html { font-size: calc(clamp(14px, calc(8px + .25vw + .35vh), 19px) * var(--pf-scale, 1)); }
+/* Compact spacing */
 html.pf-compact { --gap: .6rem; }
 html.pf-compact .panel { padding: .65rem .8rem; }
-html.pf-compact .list li { padding: .38rem .6rem; }
+html.pf-compact .list li { padding: .4rem .6rem; }
 html.pf-compact .stat { padding: .5rem .7rem; }
-html.pf-no-scanlines body::after { display: none; }
-html.pf-no-grid body { background-image: none; }
+html.pf-compact nav button { padding-block: .34rem; }
+/* Frosted glass off: solid panels, no blur (also the lightest setting for the GPU). */
+html.pf-no-glass { --panel: rgb(16 22 27 / .96); --glass-strong: rgb(17 24 29 / .98); --glass-filter: none; }
+html.pf-no-glass body > header { background: rgb(10 14 18 / .97); }
+html.pf-no-glass dialog, html.pf-no-glass .palette-box, html.pf-no-glass #toast { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html.pf-no-glass dialog::backdrop, html.pf-no-glass #palette { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgb(3 5 8 / .72); }
+/* Background motion off: the aurora stays put. */
+html.pf-no-aurora body::before { animation: none; will-change: auto; }
+/* Dot grid off */
+html.pf-no-grid body::after { display: none; }
+/* Glow off: no text glow, no glowing shadows (hover/focus still change color and border). */
 html.pf-no-glow * { text-shadow: none !important; }
-html.pf-no-glow .panel::before, html.pf-no-glow .stat::after { filter: none !important; box-shadow: none !important; }
-html.pf-no-glow button:hover, html.pf-no-glow nav button.active { box-shadow: none !important; }
+html.pf-no-glow .stat:hover, html.pf-no-glow .stat.alarm, html.pf-no-glow .dot.ok, html.pf-no-glow .dot.bad, html.pf-no-glow .badge,
+html.pf-no-glow .prio.high, html.pf-no-glow .tag.live, html.pf-no-glow .tag.urgent, html.pf-no-glow .nav-group::before,
+html.pf-no-glow #xp-fill, html.pf-no-glow .segments i.on, html.pf-no-glow .pf-avatar { box-shadow: none !important; }
+html.pf-no-glow button:hover, html.pf-no-glow button.primary, html.pf-no-glow button.send-btn { box-shadow: var(--hi) !important; }
+html.pf-no-glow .logo-jc { box-shadow: var(--hi); }
+/* Animations off */
 html.pf-no-motion *, html.pf-no-motion *::before, html.pf-no-motion *::after { animation: none !important; transition: none !important; }
+html.pf-no-motion .stat:hover, html.pf-no-motion .hot-slot:hover, html.pf-no-motion .pf-preset:hover { transform: none; }
