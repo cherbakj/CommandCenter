@@ -2,6 +2,54 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-25 (about 9 AM - 3:40 PM local)
+
+**Summary:** Fixed the boot error Joe hit ("Cannot read properties of null (reading 'replaceChildren')"). Then did the four open items from the last log: dead code removed, Today tools on one row, Pulse alerts open in the Pulse tab, and the preview artifact republished. Everything is committed and tested, and the tree is clean.
+
+### Done
+- `b95cd4a` Boot error fix. It happened whenever Calendar was the open COMMS tab at startup: app.js's old 24-hour calendar loader started, planner.js then replaced the tab, and the loader filled a list that no longer existed. Reproduced in the preview by pausing on caught exceptions over CDP, across all 70 tab and focus-layout combinations.
+- `6303c1f`:
+  - Removed the old 24-hour calendar list (markup, loader, `calMeetings`), the unused `.teams-grid` CSS and `static/vendor/` (xterm).
+  - Today's Follow-ups tools: Urgent people, Important senders, Snoozed and Muted senders now sit behind one **Manage ▾** menu (the buttons are kept hidden in `#fu-manage`; important.js still adds its button there).
+  - A narrow Today head tightens the tabs ("Agenda", Rescan as ↻; container queries on `.tw-head`), so the tools stay on one row at 1200 / 1600 / 1920 / 2560 px.
+  - Pulse alerts use a new action type `pulse` (pulse.py), and pulse.js opens them in the Pulse tab (the browser when there's no view).
+  - Preview mock data: Important senders (GET/POST, stars, follow-up group), `/api/window/teams`, the Pulse alert action.
+  - PROJECT.md updated.
+- `39f36a6` The preview build now swaps out the weather places, the surname and "Cherbak's Toolkit". The Urgent people placeholder uses a generic name instead of a coworker's.
+- Preview artifact "Command Center" republished (version 2, private): https://claude.ai/artifact/4nkSbtnowfNmg2ukvSqN2Q. The whole build was read before publishing. The old version had shown a real city and ZIP.
+- Tests: the preview check at 3 widths (no page errors, no blocked requests, no sideways scroll), the 70 startup layouts, and the Manage menu items and keyboard, stars, Important senders group and Pulse alert routing (browser and faked desktop). No test servers were started, and the live app wasn't touched.
+
+### Decisions
+- Joe asked for items 1-4 from the open list: preview artifact, dead code, Today wrap, Pulse alerts.
+- Today wrap: fixed with a Manage menu and compact tabs, not by letting the tools wrap.
+
+### Waiting on a restart
+- CC started at 9:00 AM, before all three commits. The next restart loads the Calendar boot fix, the Manage menu, the compact Today head, Pulse alerts opening in the Pulse tab, and the dead-code removal.
+- **Safe to restart now**: the tree is clean, and everything is committed and tested.
+
+### Waiting on Joe
+- [ ] Restart CC to load today's fixes.
+- [ ] Sharing: the shared-by-link page is still "JC Command Center" (https://claude.ai/artifact/AGg3kutmutf5r6UtVEpAAk, not updated today). The new preview is private; share it from its page's Share menu if wanted. Code comments in it still mention Sonance and Joe (offered to remove; not done).
+- [ ] Still open from 2026-10-24:
+  - Toolkit → Connection → Test.
+  - SSMS AutoRecover on.
+  - Sign in to the Pulse view (Prod and Dev) and the Teams web view.
+  - Mark important senders.
+  - Trust a folder in VS Code · Claude.
+  - Add the three weekday reminders.
+  - Google / iCloud calendar links.
+  - Urgent people, Asana token, Windows Hello.
+
+### In flight / not finished
+Nothing running or uncommitted. Optional next steps:
+- The Walkthrough artifact (https://claude.ai/artifact/NRrSk4oqSEfpQLZnLu5not) doesn't cover today's changes yet (Manage menu, compact Today head, Pulse alerts); offered to update it.
+- Remove the Sonance and Joe mentions from the preview's code comments (add them to `SCRUB` in `tools/preview/build.py`) before sharing it.
+
+### Known issues
+- Pulse alerts raised before today carry the old `url` action and still open in the browser. They age out within 30 days.
+- In a pane under about 40rem, the Follow-ups tools can still wrap when counts get long (3-digit numbers).
+- Carried over: the embedded VS Code terminal fails (0xC0000022); "Git Base not loaded" until the VS Code window reloads; a hard kill of CC takes a docked SSMS with it; the Okta / Teams sign-ins in the views are untested; a hung docked SSMS slows CC.
+
 ## 2026-10-24 (about 6 PM - 11 PM local; the first session crashed at 9 PM and was resumed)
 
 **Summary:** Big build day. Glass restyle, spam blocks, SQL certificate pin, Pulse site inside CC with a Pulse | Code focus layout, SSMS docked in the SQL tab, VS Code · Claude replacing the terminal Claude tab, a reworked Today, a Personal tab with pop-up reminders, Teams unread counts plus a full Teams chat view, Important senders, an off-hours log, meeting warnings at 15 / 5 / now, and many fixes. Everything is committed and tested. The tree is clean, so it's safe to restart.
