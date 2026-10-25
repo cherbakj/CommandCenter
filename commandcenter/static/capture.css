@@ -14,6 +14,7 @@ dialog.qc::before { /* corner bracket like the panels */
 
 .qc-head { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; margin-bottom: .6rem; }
 .qc-keys { margin-left: auto; font: 500 .74rem var(--font-mono); }
+html.cc-private .qc-personal-key { display: none; }  /* Personal isn't offered in Privacy mode */
 .qc kbd, .tri kbd {
   font: 600 .68rem var(--font-mono); border: 1px solid var(--line-strong); padding: 0 .3rem; color: var(--accent);
   background: rgb(var(--accent-rgb) / .06);

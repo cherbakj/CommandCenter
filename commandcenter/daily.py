@@ -1,10 +1,10 @@
 """Workday helpers on Today: Top 3 priorities, the uncommitted-work reminder, the "Yesterday" recap, and
-private meeting notes with action items.
+meeting notes with action items.
 
 Privacy: Top 3 items and meeting notes live only in the local SQLite database (inside the app's private data
-folder), their text encrypted with Windows DPAPI for the current user, the same way as personal calendar
-entries (planner.py). They are never written to Outlook, alerts or the log; the briefing and wrap-up alerts
-mention counts only. A meeting's notes are keyed by a hash of its Outlook EntryID + start time (recurring
+folder), their text encrypted with Windows DPAPI for the current user. They are work data: shown in Privacy
+mode and labelled "encrypted" in the UI, not "private". They are never written to Outlook, alerts or the log;
+the briefing and wrap-up alerts mention counts only. A meeting's notes are keyed by a hash of its Outlook EntryID + start time (recurring
 meetings share one EntryID), so the database shows neither the meeting nor its notes in plain text.
 An action item becomes an Outlook or Asana task only when Joe clicks the button for it.
 
@@ -230,7 +230,9 @@ async def save_top3(items: list = Body(..., embed=True)):
 
 
 @router.post("/top3/carry")
-async def carry_top3(accept: bool = Body(..., embed=True)):
+async def carry_top3(accept: bool = Body(..., embed=True), pick: list[int] | None = Body(None, embed=True)):
+    """Accepts or declines today's carry-over offer. `pick` (indexes into the offer) chooses which unfinished
+    items to carry when there are more than free slots; without it they're carried in order while they fit."""
     def run():
         today = date.today()
         items = top3_get(today.isoformat())
@@ -238,6 +240,10 @@ async def carry_top3(accept: bool = Body(..., embed=True)):
             offer = _carry_offer(today, items)
             if offer:
                 todo = list(offer["items"])
+                if pick is not None:
+                    if len(pick) > 3 or len(set(pick)) != len(pick) or not all(0 <= i < len(todo) for i in pick):
+                        raise HTTPException(400, "Pick from the unfinished priorities shown")
+                    todo = [todo[i] for i in pick]
                 items = [i if i else ({**todo.pop(0), "done": False, "from": offer["from"]} if todo else None) for i in items]
                 top3_set(today.isoformat(), _clean_items(items))
         db.kv_set("daily:carry_handled", today.isoformat())
@@ -443,7 +449,7 @@ async def recap(day: str | None = None, refresh: bool = False):
         d = previous_workday(today)
     cached = _recap_cache.get(d.isoformat())
     if cached and not refresh and time.time() - cached[0] < 120:
-        return cached[1]
+        return await _with_note_flags(cached[1])
 
     errors = {}
 
@@ -464,15 +470,19 @@ async def recap(day: str | None = None, refresh: bool = False):
         tasks += await asana_task
     from . import today as today_mod
     cleared = sum(1 for v in today_mod.dismissed().values() if v == d.isoformat())
-    keys = await asyncio.to_thread(_note_keys)
-    for m in meetings:
-        m["has_notes"] = _note_key(m["id"], m["start"]) in keys
     data = {"day": d.isoformat(), "commits": await commits, "meetings": meetings,
             "sent": {"count": len(sent), "items": sent[:100]}, "tasks": tasks, "followups_cleared": cleared,
             "pulse": await pulse_task, "errors": errors}
     _recap_cache.clear()
     _recap_cache[d.isoformat()] = (time.time(), data)
-    return data
+    return await _with_note_flags(data)
+
+
+async def _with_note_flags(data: dict) -> dict:
+    """The recap with each meeting's has_notes read now, not cached: notes saved or deleted since the recap was
+    built show up right away."""
+    keys = await asyncio.to_thread(_note_keys)
+    return {**data, "meetings": [{**m, "has_notes": _note_key(m["id"], m["start"]) in keys} for m in data["meetings"]]}
 
 
 # ---- meeting notes ----------------------------------------------------------------------------------
@@ -680,7 +690,7 @@ async def meeting_end_loop():
                     if existing and existing.get("actions"):
                         continue  # actions already captured
                     alerts.raise_alert("Calendar", f"Capture notes/actions for {m['subject']}?",
-                                       "Private notes pad: stays on this PC, encrypted, never written to Outlook.", "low",
+                                       "Notes pad: stays on this PC, encrypted, never written to Outlook.", "low",
                                        {"type": "meeting-notes", "id": m["id"], "start": m["start"], "end": m["end"]},
                                        toast="capture meeting notes?")
         except outlook.OutlookClosed:

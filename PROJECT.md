@@ -16,7 +16,7 @@ and for this Windows user only (127.0.0.1:8765 behind a per-launch session cooki
 ## Configure it
 `config.yaml` (created from `config.example.yaml`; every setting is commented). Secrets are never in config: work secrets live in
 Windows Credential Manager (services `CommandCenter-SQL`, `CommandCenter-Toolkit`, `CommandCenter-Pulse`, `CommandCenter-Asana`); personal ones in the personal vault.
-Appearance (colors, text size, density, effects) lives in the in-app **Profile** (avatar at top right), stored in SQLite.
+Appearance (colors, text size, density, effects) lives in the in-app **Profile** (avatar at top right), stored in SQLite (DPAPI-encrypted with the name and initials).
 
 ## Layout of the window
 - **Split workspace** (>= 1600px wide; toggle Split/Single in the header):
@@ -65,12 +65,13 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - **Verified sending:** every reply is reviewed before it sends.
   - `POST /api/mail/reply/preview` builds the reply in Outlook, reads its recipients and subject, discards it, and issues a single-use `approval_id` (5 min).
   - `POST /api/mail/reply` with `send:true` needs that approval for the exact same text, and Outlook re-checks the recipients right before Send.
-  - The UI (`CC.replyDialog`, triage) shows recipients, flagging anyone outside Sonance, then a deliberate Send click. Enter never sends.
+  - The UI (`CC.replyDialog`, triage) shows recipients, flagging anyone outside Sonance, then a deliberate Send click. Enter never sends; Ctrl+Enter only opens the review.
+  - No recipients in the preview: no Send button, only "open a draft in Outlook". A failed send goes back to the text ("Not sent: <reason>"), so the next Review gets a fresh approval. Unsent text is kept per message in memory until it's sent or opened as a draft.
   - Sent replies are logged locally in kv `mail:sent_log` (subject and recipients only, no bodies), encrypted.
-- **Workday (`daily.py`):** Top 3 for today (carry-over, briefing/wrap-up counts), uncommitted/unpushed work reminder (after `daily.uncommitted_after`), yesterday recap (commits, meetings, sent mail, tasks, Pulse closed; copy for stand-up), meeting notes + action items (→ To Do / Asana; "capture notes?" after each meeting). Top 3 and notes are DPAPI-encrypted.
-- **Triage (`triage.js`, Shift+T):** one-at-a-time queue with single-key actions; replies use the verified-send flow.
-- **Quick capture (`capture.js`, Ctrl+Alt+Space):** a global hotkey (`ui.capture_hotkey`) registered in `desktop.py`. Captures a task, or a personal note when the vault is unlocked. It respects the app lock. In Privacy mode a saved Personal choice is never turned into a task: it says "Personal is off (Privacy mode)" and saves only after Task is picked.
-- **Pulse aging:** business days a ticket has waited on Joe, warn/overdue buckets (`pulse.aging_*`), a daily alert, and a Today tile.
+- **Workday (`daily.py`):** Top 3 for today (carry-over; with more unfinished items than free slots Joe picks which, `pick` on `/api/daily/top3/carry`; briefing/wrap-up counts), uncommitted/unpushed work reminder (after `daily.uncommitted_after`), yesterday recap (commits, meetings, sent mail, tasks, Pulse closed; copy for stand-up), meeting notes + action items (→ To Do / Asana; "capture notes?" after each meeting). Top 3 and notes are DPAPI-encrypted work data: shown in Privacy mode and labelled "encrypted", not "private".
+- **Triage (`triage.js`, Shift+T):** one-at-a-time queue with single-key actions; replies use the verified-send flow. An item cleared this session keeps Reply/Snooze/Done/Task off when revisited (a snooze can be undone).
+- **Quick capture (`capture.js`, Ctrl+Alt+Space):** a global hotkey (`ui.capture_hotkey`) registered in `desktop.py`. Captures a task, or a personal note when the vault is unlocked; Task / Personal by click, Alt+1 / Alt+2 or the arrow keys on the choice (Tab just moves focus). It respects the app lock. In Privacy mode a saved Personal choice is never turned into a task: it says "Personal is off (Privacy mode)" and saves (Enter included) only after Task is picked.
+- **Pulse aging:** business days a ticket has waited on Joe, warn/overdue buckets (`pulse.aging_*`), a daily alert, and a Today tile (only while something is aging or overdue).
 - **Mail / Teams / Websites / SQL tabs:** as before. Teams unread count comes from a background browser profile once Joe logs in; chats open through `msteams:` links.
 
 ## Security model (security.py, desktop.py)
@@ -91,7 +92,7 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
   - Changing the passphrase re-encrypts under the same locks as every write, and stops (changing nothing) if a record can't be decrypted. Derived key bytes are wiped once the AES-GCM object exists (best effort).
   - The Privacy & Data panel lists every source (Work/Personal) with what's stored, how it's protected and how long it's kept.
   - Forgotten passphrase: "Delete all personal data" is the only option.
-- **Work data at rest (`db.py`):** alert text, the sent log, follow-up subjects/names, settings with names, and the Toolkit change log (pk, before, after, error) are DPAPI-encrypted (`ccsealed:v1:`). A startup + daily migration encrypts any plaintext. The connection uses `secure_delete=ON` with regular VACUUM. Sealing, VACUUM and moves of old copies run with the rollback journal in PERSIST mode, and the journal is overwritten with zeros afterwards (it holds the old plaintext pages; `db.scrubbed_journal`). Pulse ticket state is sealed too. What stays in clear (dates, ids, counts) is listed in Privacy & Data under "Unencrypted metadata".
+- **Work data at rest (`db.py`):** alert text, the sent log, follow-up subjects/names, settings with names (including the Profile), and the Toolkit change log (pk, before, after, error) are DPAPI-encrypted (`ccsealed:v1:`). A startup + daily migration encrypts any plaintext. The connection uses `secure_delete=ON` with regular VACUUM. Sealing, VACUUM and moves of old copies run with the rollback journal in PERSIST mode, and the journal is overwritten with zeros afterwards (it holds the old plaintext pages; `db.scrubbed_journal`). Pulse ticket state is sealed too. What stays in clear (dates, ids, counts) is listed in Privacy & Data under "Unencrypted metadata".
 - **Retention (`retention:` in config):** alerts 30 days, sent log 90, Toolkit change log 365, `seen` 30, dismissed follow-ups 60.
 - **Secrets:** only in Credential Manager, the personal vault or memory. Logs, the database and API responses were swept for secrets.
   Logi passwords never come back in lists (`has_password` only); one user's password is fetched on an explicit Show/Clipboard click (POST `/api/toolkit/logi/password`), logged as a `reveal` in `toolkit_changes` without the value. New Logi passwords: 16 random characters (crypto.getRandomValues), upper/lower/digit/symbol, no look-alikes.

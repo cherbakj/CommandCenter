@@ -53,7 +53,12 @@ button.t3-warn:hover { color: #fff; background: rgb(var(--amber-rgb) / .22); box
   border-top: 1px dashed rgb(var(--accent-2-rgb) / .45); font-size: .84rem;
 }
 .t3-carry-label { color: var(--accent-2); font: 700 .78rem var(--font-ui); letter-spacing: .06em; text-transform: uppercase; }
-.t3-carry-list { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; max-width: 100%; }
+.t3-carry-list { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 8rem; max-width: 100%; }
+.t3-carry-room { flex: none; white-space: nowrap; }
+.t3-carry-acts { display: flex; gap: .35rem; flex: none; margin-left: auto; }
+.t3-pick li { padding: .35rem .6rem; }
+.t3-pick-label { display: flex; align-items: center; gap: .55rem; width: 100%; cursor: pointer; overflow-wrap: anywhere; }
+.t3-pick-label input { flex: none; margin: 0; }
 
 /* Top 3 editor */
 .t3-edit-row { margin-bottom: .55rem; }
@@ -85,7 +90,7 @@ dialog h3.dl-title, dialog h3.mn-title { margin: .2rem 0 .3rem; font: 700 1.25re
 
 /* ---- meeting notes ---- */
 .mn-head .src { flex: none; margin-top: .2rem; }
-.src.src-personal { color: var(--hot); }
+.src.mn-enc { color: var(--accent); }
 .mn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; margin-top: .8rem; }
 .mn-col { min-width: 0; display: flex; flex-direction: column; }
 .mn-notes { min-height: 16rem; flex: 1; resize: vertical; font: 400 .95rem/1.5 var(--font-body); }

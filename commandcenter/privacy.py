@@ -229,7 +229,8 @@ def inventory() -> list[dict]:
     top3, notes = _table_count("daily_top3"), _table_count("meeting_notes")
     add("daily", "Top 3 and meeting notes", "Work", "What you type into Today's Top 3 and meeting notes.",
         f"{top3 or 0} day(s) of Top 3, {notes or 0} meeting note(s) in SQLite.", "Windows DPAPI (this Windows account)",
-        "Top 3: 120 days; meeting notes until deleted", connected=None, state="")
+        "Top 3: 120 days; meeting notes until deleted", connected=None,
+        state=f"{top3 or 0} day(s), {notes or 0} note(s) · visible in Privacy mode (work data)")
 
     seen_n, vault_n = _table_count("seen"), _table_count("vault_records")
     add("metadata", "Unencrypted metadata", "Work",
@@ -237,7 +238,7 @@ def inventory() -> list[dict]:
         "Dates, ids and counts only, no titles, names or text: alert time, source, priority and read flag; "
         "meeting-note start / last-edit times and Top 3 days; 'already alerted' keys (Outlook item ids, Pulse "
         "aging days) with their times; personal vault record ids and how many there are; operational settings "
-        "(status and error lines, watermarks, window size, weather places, appearance, timers).",
+        "(status and error lines, watermarks, window size, weather places, timers).",
         "None (private data folder, owner-only ACL)",
         f"Alerts {_days(r.get('alerts_days'))}; 'already alerted' keys {_days(r.get('seen_days'))}; the rest with its data",
         connected=None, state=f"{seen_n or 0} key(s), {vault_n or 0} vault record id(s)")

@@ -4,9 +4,9 @@ Work data is encrypted at rest with Windows DPAPI for the current Windows user (
 and planner.py), so the database file on its own shows no subjects, names, recipients or ticket text:
   * alerts: title, body and action (ids, ts, source, priority and the read flag stay clear for sorting).
   * kv: every value except the operational keys in CLEAR_KV / CLEAR_KV_PREFIXES (status, watermarks, weather,
-    appearance, timers). So the mail sent log, snoozes, reply watches, dismissed/muted follow-ups, urgent people,
-    the hotbar, the calendar focus block, website state, Asana account, Toolkit/Pulse settings, and any key a
-    new module adds are sealed by default.
+    timers). So the mail sent log, snoozes, reply watches, dismissed/muted follow-ups, urgent people, the
+    profile (name, initials and appearance), the hotbar, the calendar focus block, website state, Asana account,
+    Toolkit/Pulse settings, and any key a new module adds are sealed by default.
   * toolkit_changes (toolkit.py): pk, before_json, after_json and error.
 A sealed value is text: SEAL_PREFIX + base64(DPAPI blob). Readers accept sealed and legacy plaintext values,
 and seal_existing() (run at start and daily, see maintenance()) encrypts any plaintext left by older versions.
@@ -41,11 +41,11 @@ _SEAL_ENTROPY = b"CommandCenter.db.v1"
 _SEAL_LABEL = "CommandCenter"
 _CRYPTPROTECT_UI_FORBIDDEN = 0x1
 # Values that stay clear: purely operational state with no work data in it (and read on hot paths).
-CLEAR_KV = {"outlook:status", "outlook:watermark", "profile", "focus:until", "focus:skip", "urgent:checked",
+CLEAR_KV = {"outlook:status", "outlook:watermark", "focus:until", "focus:skip", "urgent:checked",
             "daily:carry_handled", "window:geometry", "capture:hotkey_alerted", "browser:ua", "pulse:status",
             "teams:state", "weather:selected"}
-# (pulse:state, the last ticket ids / numbers / statuses, is sealed like any other key; seal_existing() encrypts a
-# plaintext copy left by an older version, and kv_get reads either.)
+# (pulse:state, the last ticket ids / numbers / statuses, and profile, which holds Joe's name, are sealed like any
+# other key; seal_existing() encrypts a plaintext copy left by an older version, and kv_get reads either.)
 CLEAR_KV_PREFIXES = ("weather:loc:", "maint:")
 _EMPTY_JSON = {"null", "[]", "{}", '""'}  # nothing to hide; also keeps an older running copy working on empty values
 ALERT_SEALED = ("title", "body", "action")

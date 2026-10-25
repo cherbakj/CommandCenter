@@ -112,7 +112,7 @@
     const over = s.aging_overdue || 0, warn = s.aging_warn || 0;
     const level = over ? "over" : warn ? "warn" : "fresh";
     const parts = !s.aging_waiting ? ["Nothing waiting on you"] : [
-      `${over} overdue`,
+      over ? `${over} overdue` : null,  // zero buckets are left out
       warn ? `${warn} aging` : null,
       `${s.aging_waiting} waiting`,
       s.oldest_days != null ? `oldest ${s.oldest_days} day${s.oldest_days === 1 ? "" : "s"}` +

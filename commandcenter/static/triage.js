@@ -56,6 +56,7 @@
   let dlg, shell, topCount, topBar, card, keysBar, slotBtn;
 
   // ---- overlay skeleton -------------------------------------------------------------------------
+  const CLEARING = new Set(["r", "s", "d", "t"]);  // the actions that clear an item
   const KEYS = [
     ["r", "R", "Reply"], ["s", "S", "Snooze"], ["d", "D", "Done"], ["t", "T", "Task"], ["o", "O", "Outlook"],
     ["prev", "← K", "Prev"], ["next", "→ J", "Next"], ["exit", "Esc", "Exit"],
@@ -84,9 +85,11 @@
     const item = S.queue[S.i];
     const teams = item && item.src === "teams";
     const off = S.end || !item;
+    const handled = !off && S.cleared.has(item.m.id);  // already cleared this session: only O and moving on
     keysBar.replaceChildren(...KEYS.map(([id, key, label]) => {
       const text = id === "r" && teams ? "Open Teams" : label;
-      const disabled = (S.reviewing && id !== "exit") || (off && !["prev", "exit"].includes(id)) || (S.busy && id !== "exit");
+      const disabled = (S.reviewing && id !== "exit") || (off && !["prev", "exit"].includes(id)) || (S.busy && id !== "exit")
+        || (handled && CLEARING.has(id));
       return el("button", { type: "button", class: `tri-key ${id === "d" ? "k-done" : ""} ${id === "r" ? "k-reply" : ""} ${S.pane === id ? "on" : ""}`,
         disabled, "data-key": id, onclick: () => act(id) }, el("kbd", {}, key), el("span", {}, text));
     }));
@@ -139,6 +142,9 @@
         m.high_importance && el("span", { class: "tag overdue" }, "High importance"),
         status && el("span", { class: "tri-status" }, `✓ ${statusText(status)}`)),
       el("h2", { class: "tri-subject" }, m.subject || "(no subject)"),
+      status && el("div", { class: "tri-handled", role: "status" },
+        el("span", {}, `${statusText(status)} earlier in this session, so Reply, Snooze, Done and Task are off for it.`),
+        status === "snoozed" && el("button", { type: "button", class: "small subtle", onclick: undoSnooze }, "Undo snooze")),
       el("div", { class: "tri-from src-line" },
         CC.srcTag(item.src, item.src === "teams" ? `notification from ${m.sender || "Teams"}` : m.internal === false ? "external sender" : ""),
         el("span", { class: "tri-sender" }, sender),
@@ -217,6 +223,19 @@
     S.drafts.delete(item.m.id);
     S.changed = true;
     advance();
+  }
+
+  // The one clearing action that can be taken back (the server has /api/unsnooze); the item is then open again.
+  function undoSnooze() {
+    const item = S.queue[S.i];
+    if (!item || S.cleared.get(item.m.id) !== "snoozed") return;
+    run(async () => {
+      await api("/api/unsnooze", { id: item.m.id });
+      S.cleared.delete(item.m.id);
+      S.changed = true;
+      toast("Snooze undone");
+      renderItem();
+    });
   }
 
   // ---- panes (reply / snooze / task) under the message ------------------------------------------
@@ -438,6 +457,7 @@
     if (id === "next") { if (S.end) return; if (S.i < S.queue.length - 1) go(S.i + 1); else renderEnd(); return; }
     const item = S.queue[S.i];
     if (!item || S.end || S.busy) return;
+    if (CLEARING.has(id) && S.cleared.has(item.m.id)) return;  // handled already (its keys are disabled too)
     if (S.pane === id) { closePane(); return; }
     if (id === "r") {
       if (item.src === "teams") { CC.openExternal("msteams:"); return; }

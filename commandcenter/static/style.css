@@ -683,5 +683,6 @@ header.nav-wrap .navs { order: 3; flex-basis: 100%; }
 .rv-person.external { color: var(--amber); font-weight: 700; }
 .rv-body { margin: .3rem 0 0; padding-top: .55rem; border-top: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere;
   font: 400 .98rem/1.55 var(--font-body); color: var(--text); max-height: 40vh; overflow-y: auto; }
+#dialog button kbd { font: 600 .65rem var(--font-mono); border: 1px solid currentColor; padding: 0 .3rem; margin-left: .3rem; opacity: .75; }
 button.send-btn { background: var(--accent-2); color: #001418; border-color: var(--accent-2); min-width: 7rem; }
 button.send-btn:hover { filter: brightness(1.15); color: #001418; }

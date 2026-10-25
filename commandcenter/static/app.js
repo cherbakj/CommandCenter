@@ -604,9 +604,21 @@ async function orderDialog(number) {
 
 // Replies are always verified before sending: Review shows exactly who gets it and what it says, and the
 // server only sends a reply that came from that review (single-use approval, recipients re-checked).
-function replyDialog(m, replyAll, draft = "", remindDays = 0) {
+// Unsent text is kept per message in memory only (Esc / Cancel don't lose it), and dropped once it's sent or
+// opened as an Outlook draft.
+const replyDrafts = new Map();
+const REPLY_DRAFTS_MAX = 25;
+function keepDraft(id, text) {
+  replyDrafts.delete(id);
+  if (!text.trim()) return;
+  replyDrafts.set(id, text);
+  if (replyDrafts.size > REPLY_DRAFTS_MAX) replyDrafts.delete(replyDrafts.keys().next().value);
+}
+
+function replyDialog(m, replyAll, draft = null, remindDays = 0, notice = "") {
   const text = el("textarea", { placeholder: "Your reply…", "aria-label": "Reply text" });
-  text.value = draft;
+  text.value = draft ?? replyDrafts.get(m.id) ?? "";
+  text.addEventListener("input", () => keepDraft(m.id, text.value));
   const remind = el("select", { id: "remind-days" },
     [0, 1, 2, 3, 5].map((n) => el("option", { value: n }, n ? `${n} day${n > 1 ? "s" : ""}` : "Don't remind me")));
   remind.value = String(remindDays);
@@ -614,13 +626,21 @@ function replyDialog(m, replyAll, draft = "", remindDays = 0) {
   const openDraft = () => guardedIn(err, async () => {
     if (!text.value.trim()) { text.focus(); return; }
     await api("/api/mail/reply", { id: m.id, text: text.value, reply_all: replyAll, send: false });
+    replyDrafts.delete(m.id);
     $("#dialog").close();
     showMessage("Draft opened", "Check it and press Send in Outlook.");
   });
   const review = () => guardedIn(err, async () => {
     if (!text.value.trim()) { text.focus(); return; }
-    const p = await api("/api/mail/reply/preview", { id: m.id, text: text.value, reply_all: replyAll });
-    reviewReply(m, replyAll, p, Number(remind.value));
+    const typed = text.value;
+    const p = await api("/api/mail/reply/preview", { id: m.id, text: typed, reply_all: replyAll });
+    reviewReply(m, replyAll, p, Number(remind.value), typed);
+  });
+  // Ctrl+Enter only opens the review (as in triage); Ctrl+Shift+Enter opens an Outlook draft. Nothing here sends.
+  text.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || e.isComposing) return;
+    e.preventDefault();
+    e.shiftKey ? openDraft() : review();
   });
   showDialog(
     el("h3", {}, `${replyAll ? "Reply all" : "Reply"}: ${m.subject}`), text,
@@ -631,40 +651,56 @@ function replyDialog(m, replyAll, draft = "", remindDays = 0) {
     el("div", { class: "row" },
       el("button", { value: "cancel" }, "Cancel"),
       el("button", { type: "button", onclick: openDraft }, "Open draft in Outlook"),
-      el("button", { type: "button", class: "primary", onclick: review }, "Review")));
+      el("button", { type: "button", class: "primary", onclick: review }, "Review ", el("kbd", {}, "Ctrl+Enter"))));
+  err.textContent = notice;
   text.focus();
 }
 
-function reviewReply(m, replyAll, p, remindDays) {
+function reviewReply(m, replyAll, p, remindDays, typed = p.text) {
   const err = el("div", { class: "err", role: "alert" });
-  const outside = p.recipients.filter((r) => r.external);
+  const recips = Array.isArray(p.recipients) ? p.recipients.filter(Boolean) : [];
+  const outside = recips.filter((r) => r.external);
   const person = (r) => el("span", { class: `rv-person ${r.external ? "external" : ""}`, title: r.external ? "Outside Sonance" : "" },
     r.external ? "⚠ " : "", r.name && r.email && r.name !== r.email ? `${r.name} <${r.email}>` : (r.email || r.name));
   const line = (label, type) => {
-    const list = p.recipients.filter((r) => r.type === type);
+    const list = recips.filter((r) => r.type === type);
     return list.length ? el("div", { class: "rv-line" }, el("span", { class: "rv-label" }, label), el("div", { class: "rv-people" }, list.map(person))) : null;
   };
+  const edit = (notice = "") => replyDialog(m, replyAll, typed, remindDays, notice);
   const sendBtn = el("button", { type: "button", class: "send-btn" }, "Send");
-  sendBtn.addEventListener("click", () => guardedIn(err, async () => {
+  sendBtn.addEventListener("click", async () => {
     sendBtn.disabled = true;
     try {
       await api("/api/mail/reply", { id: m.id, text: p.text, reply_all: replyAll, send: true, remind_days: remindDays, approval_id: p.approval_id });
-    } catch (e) { sendBtn.disabled = false; throw e; }
+    } catch (e) {
+      // The approval is single-use and may be spent or expired: back to the text, so the next Review gets a fresh one.
+      edit(`Not sent: ${e.message || "something went wrong"}`);
+      return;
+    }
+    replyDrafts.delete(m.id);
     $("#dialog").close();
     showMessage("Sent", `Your reply was sent from Outlook.${remindDays ? ` If nobody replies within ${remindDays} day${remindDays > 1 ? "s" : ""}, you'll get an alert.` : ""}`);
-  }));
+  });
+  // No recipients (e.g. Outlook couldn't resolve them): nothing to send to, so no Send button; a draft is offered.
+  const openDraft = () => guardedIn(err, async () => {
+    await api("/api/mail/reply", { id: m.id, text: typed, reply_all: replyAll, send: false });
+    replyDrafts.delete(m.id);
+    $("#dialog").close();
+    showMessage("Draft opened", "Check the recipients and press Send in Outlook.");
+  });
   showDialog(
     el("h3", {}, "Review before sending"),
     outside.length ? el("div", { class: "rv-warn" }, `⚠ ${outside.length} recipient${outside.length > 1 ? "s are" : " is"} outside Sonance`) : null,
+    recips.length ? null : el("div", { class: "rv-warn" }, "No recipients — open a draft in Outlook instead."),
     el("div", { class: "rv-card" },
       line("To", "To"), line("CC", "CC"), line("BCC", "BCC"),
       el("div", { class: "rv-line" }, el("span", { class: "rv-label" }, "Subject"), el("div", {}, p.subject)),
       el("pre", { class: "rv-body" }, p.text)),
-    el("p", { class: "muted" }, "The earlier thread is included below your text, as Outlook normally does.", remindDays ? ` No-reply reminder: ${remindDays} day${remindDays > 1 ? "s" : ""}.` : ""),
+    el("p", { class: "muted" }, "The earlier thread is included below your text, as Outlook normally does.", remindDays && recips.length ? ` No-reply reminder: ${remindDays} day${remindDays > 1 ? "s" : ""}.` : ""),
     err,
     el("div", { class: "row" },
-      el("button", { type: "button", class: "subtle", onclick: () => replyDialog(m, replyAll, p.text, remindDays) }, "← Edit"),
-      sendBtn));
+      el("button", { type: "button", class: "subtle", onclick: () => edit() }, "← Edit"),
+      recips.length ? sendBtn : el("button", { type: "button", class: "primary", onclick: openDraft }, "Open draft in Outlook")));
 }
 
 $("#mail-unread").addEventListener("change", loaders.mail);
@@ -1013,10 +1049,10 @@ function renderStats(d) {
     tile.style.cursor = "pointer";
     tile.addEventListener("click", () => openTab("pulse"));
     $("#stats").append(tile);
-    if (p.aging_waiting) {  // tickets waiting on Joe longer than the warn/overdue thresholds (business days)
-      const over = p.aging_overdue || 0, warn = p.aging_warn || 0;
-      const aging = stat(over || warn, over ? "Pulse overdue" : "Pulse aging",
-        over ? "var(--red)" : warn ? "var(--amber)" : "var(--accent)", over ? "alarm" : "");
+    // Tickets waiting on Joe longer than the warn/overdue thresholds (business days); no tile while all are fresh.
+    const over = p.aging_overdue || 0, warn = p.aging_warn || 0;
+    if (p.aging_waiting && (over || warn)) {
+      const aging = stat(over || warn, over ? "Pulse overdue" : "Pulse aging", over ? "var(--red)" : "var(--amber)", over ? "alarm" : "");
       aging.title = p.oldest_days != null
         ? `Oldest waiting ${p.oldest_days} business day${p.oldest_days === 1 ? "" : "s"}` + (p.oldest_ticket_no != null ? ` (#${p.oldest_ticket_no})` : "")
         : `${p.aging_waiting} waiting on you`;

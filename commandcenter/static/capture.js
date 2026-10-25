@@ -1,6 +1,7 @@
 // Quick capture: a small box for "get this out of my head" notes. Type, pick Task (Outlook / To Do) or
-// Personal (a private calendar note on this PC), Enter to save. Dates typed at the start or end of the text
-// ("call Ben fri", "tomorrow: pick up parts", "renew badge 10/30") become the due date / the day.
+// Personal (a private calendar note on this PC) with a click, Alt+1 / Alt+2 or the arrow keys on the choice,
+// Enter to save. Tab moves focus as usual. Dates typed at the start or end of the text ("call Ben fri",
+// "tomorrow: pick up parts", "fri: call Ben", "renew badge 10/30") become the due date / the day.
 // Opens from the global hotkey (desktop.py, ui.capture_hotkey, default Ctrl+Alt+Space) and the palette.
 // Everything is inserted as text; nothing typed here is logged.
 (() => {
@@ -44,7 +45,8 @@
   const validYmd = (y, m, d) => { const t = new Date(y, m, d); return t.getFullYear() === y && t.getMonth() === m && t.getDate() === d ? t : null; };
 
   // One date phrase -> Date (local midnight) or null. `strict` (used at the start of the text) leaves out
-  // the short weekday names, which are often ordinary words there ("sat down…", "sun shade…").
+  // the short weekday names, which are often ordinary words there ("sat down…", "sun shade…"); a colon after
+  // one ("fri: call Ben") makes it a date again, like "tomorrow: …".
   function phraseDate(p, now, strict) {
     const today = addDays(now, 0);
     let m;
@@ -97,8 +99,9 @@
         const title = rest.join(" ").replace(/[\s,;:–—-]+$/, "");
         if (title) return { title, date: d };
       }
-      const head = lower.slice(0, n).join(" ").replace(/:$/, "");
-      const d2 = phraseDate(head.replace(/^(on|by|due) /, ""), now, true);
+      const headRaw = lower.slice(0, n).join(" ");
+      const head = headRaw.replace(/:$/, "");
+      const d2 = phraseDate(head.replace(/^(on|by|due) /, ""), now, head === headRaw);
       if (d2 && words.length > n) {
         const title = words.slice(n).join(" ").replace(/^[\s,;:–—-]+/, "");
         if (title) return { title, date: d2 };
@@ -112,25 +115,28 @@
     task: { label: "Task", where: "Outlook / To Do", save: "Add task" },
     personal: { label: "Personal", where: "Calendar note · personal vault", save: "Add note" },
   };
+  const MODE_KEYS = { 1: "task", 2: "personal" };  // Alt+1 / Alt+2
   let dlg = null, input, chip, err, saveBtn, modeBtns = {}, restore = null, busy = false;
   let mode = store.get("cc.capture.mode") === "personal" ? "personal" : "task";
 
   function build() {
     input = el("input", { class: "qc-input", type: "text", maxlength: "200", autocomplete: "off", spellcheck: "true",
       placeholder: "Capture a task or note…  (try “call Ben fri”)", "aria-label": "What to capture",
-      oninput: preview, onkeydown: onKey });
+      oninput: preview, onkeydown: (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); save(); } } });
     chip = el("span", { class: "qc-when", "aria-live": "polite" });
     err = el("div", { class: "err qc-err", role: "alert" });
     for (const id of Object.keys(MODES)) {
       modeBtns[id] = el("button", { type: "button", class: "qc-mode", "data-mode": id, "aria-pressed": "false",
-        onclick: () => { setMode(id); input.focus(); } },
+        title: `${MODES[id].label} (Alt+${Object.keys(MODE_KEYS).find((k) => MODE_KEYS[k] === id)})`,
+        onclick: () => { pick(id); input.focus(); } },
         el("b", {}, MODES[id].label), el("span", {}, MODES[id].where));
     }
     saveBtn = el("button", { type: "button", class: "primary", onclick: save }, "Add task");
     dlg = el("dialog", { class: "qc", "aria-label": "Quick capture" },
       el("div", { class: "qc-head" },
         el("span", { class: "panel-label" }, "QUICK CAPTURE"),
-        el("span", { class: "qc-keys muted" }, el("kbd", {}, "Enter"), " save ", el("kbd", {}, "Tab"), " switch ", el("kbd", {}, "Esc"), " close")),
+        el("span", { class: "qc-keys muted" }, el("kbd", {}, "Enter"), " save ", el("kbd", {}, "Alt+1"), " task ",
+          el("span", { class: "qc-personal-key" }, el("kbd", {}, "Alt+2"), " personal "), el("kbd", {}, "Esc"), " close")),
       input,
       el("div", { class: "qc-row" },
         el("div", { class: "qc-modes", role: "group", "aria-label": "Save as" }, Object.values(modeBtns)),
@@ -140,13 +146,15 @@
         el("button", { type: "button", class: "subtle", onclick: () => close(true) }, "Cancel"),
         saveBtn));
     dlg.addEventListener("cancel", (e) => { e.preventDefault(); close(true); });
+    dlg.addEventListener("keydown", onKey);
     dlg.addEventListener("close", () => { busy = false; });
     document.body.append(dlg);
   }
 
   // Privacy mode hides the Personal option, but a saved "personal" choice is never turned into a task behind
-  // Joe's back (a personal note must not end up in Outlook): the box says Personal is off and saves nothing until
-  // Task is picked explicitly. Choices made while Privacy mode is on aren't saved as the default.
+  // Joe's back (a personal note must not end up in Outlook): the box says Personal is off and saves nothing (Enter
+  // included) until Task is picked explicitly (click, Alt+1 or an arrow key on the choice). Choices made while
+  // Privacy mode is on aren't saved as the default.
   const personalBlocked = () => mode === "personal" && !!CC.privacy?.isPrivate();
 
   function setMode(id) {
@@ -163,7 +171,8 @@
   function preview() {
     const { date } = parseQuick(input.value);
     const blocked = personalBlocked();
-    if (blocked) chip.textContent = "Personal is off (Privacy mode). Pick Task to save it as an Outlook task";
+    input.placeholder = `Capture a ${CC.privacy?.isPrivate() ? "task" : "task or note"}…  (try “call Ben fri”)`;  // no personal notes in Privacy mode
+    if (blocked) chip.textContent = "Personal is off (Privacy mode). Pick Task (Alt+1) to save it as an Outlook task";
     else if (mode === "task") chip.textContent = date ? `Due ${dayLabel(date)}` : "No due date";
     else chip.textContent = `On ${dayLabel(date || new Date())}${date ? "" : " (today)"}`;
     chip.classList.toggle("set", !!date && !blocked);
@@ -173,13 +182,30 @@
   }
   document.addEventListener("cc:privacy", () => { if (dlg?.open) preview(); });
 
+  // An explicit choice. Personal can't be picked in Privacy mode (it isn't offered).
+  function pick(id) {
+    if (id === "personal" && CC.privacy?.isPrivate()) return false;
+    setMode(id);
+    return true;
+  }
+
+  // Alt+1 / Alt+2 anywhere in the box; Left/Right (Up/Down) on a focused choice moves to the other one and picks
+  // it, like a radio group. Tab and Shift+Tab are left alone, so Cancel and Add are reachable from the keyboard.
   function onKey(e) {
-    if (e.isComposing) return;
-    if (e.key === "Enter") { e.preventDefault(); save(); }
-    else if (e.key === "Tab") {
+    if (e.isComposing || e.defaultPrevented) return;
+    if (e.altKey && !e.ctrlKey && !e.metaKey && MODE_KEYS[e.key]) {
       e.preventDefault();
-      // Privacy mode: Tab is the explicit way to pick Task (Personal isn't offered)
-      setMode(CC.privacy?.isPrivate() || mode === "personal" ? "task" : "personal");
+      e.stopPropagation();
+      pick(MODE_KEYS[e.key]);
+      return;
+    }
+    const on = e.target instanceof Element && e.target.closest(".qc-mode");
+    if (on && !e.altKey && !e.ctrlKey && !e.metaKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+      e.preventDefault();
+      const ids = Object.keys(MODES).filter((id) => id === "task" || !CC.privacy?.isPrivate());
+      const i = ids.indexOf(on.dataset.mode);
+      const next = ids[(Math.max(0, i) + (e.key === "ArrowLeft" || e.key === "ArrowUp" ? ids.length - 1 : 1)) % ids.length];
+      if (pick(next)) modeBtns[next].focus();
     }
   }
 
@@ -188,7 +214,7 @@
     const { title, date } = parseQuick(input.value);
     err.textContent = "";
     if (personalBlocked()) {
-      err.textContent = "Personal is off (Privacy mode), so nothing was saved. Click Task (or press Tab) to save it as an Outlook task, or turn Privacy mode off (Ctrl+Shift+P).";
+      err.textContent = "Personal is off (Privacy mode), so nothing was saved. Click Task (or press Alt+1) to save it as an Outlook task, or turn Privacy mode off (Ctrl+Shift+P).";
       return;
     }
     if (!title) { input.focus(); err.textContent = "Type what you want to capture."; return; }
@@ -256,5 +282,6 @@
 
   CC.quickCapture = quickCapture;
   CC.parseQuickDate = parseQuick;
-  CC.addPaletteSource(() => [{ group: "Commands", label: "Quick capture", hint: "task or personal calendar note", run: () => quickCapture() }]);
+  CC.addPaletteSource(() => [{ group: "Commands", label: "Quick capture",
+    hint: CC.privacy?.isPrivate() ? "Outlook task" : "task or personal calendar note", run: () => quickCapture() }]);
 })();

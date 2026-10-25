@@ -1,5 +1,6 @@
 // Workday helpers on Today: Top 3 priorities (strip at the top of Today), the uncommitted-work indicator,
-// the "Yesterday" recap with a stand-up copy, and private meeting notes with action items.
+// the "Yesterday" recap with a stand-up copy, and meeting notes with action items. Top 3 and notes are work data,
+// DPAPI-encrypted on this PC (labelled "encrypted", not "private"), so they stay visible in Privacy mode.
 // Everything is drawn with CC.el / textContent (never innerHTML): task, mail and meeting text is untrusted.
 (() => {
   const CC = window.CC;
@@ -104,18 +105,72 @@
         onclick: () => top3Dialog(i) }, "✎"));
   }
 
+  // Carry over: everything when it fits; with more unfinished items than free slots Joe picks which ones,
+  // and is told what stays behind (on that day's list) instead of the extras quietly disappearing.
+  function carryOver() {
+    const c = state.carry;
+    if (!c || !c.items?.length) return;
+    const free = state.items.filter((x) => !x).length;
+    if (c.items.length <= free) {
+      guarded(async () => {
+        applyTop3(await api("/api/daily/top3/carry", { accept: true }));
+        toast(`${plural(c.items.length, "priority", "priorities")} carried over`);
+      });
+      return;
+    }
+    carryPickDialog(c, free);
+  }
+
+  function carryPickDialog(c, free) {
+    const err = el("p", { class: "err", role: "alert" });
+    const boxes = c.items.map((x, i) => {
+      const box = el("input", { type: "checkbox", id: `t3-pick-${i}` });
+      box.checked = i < free;
+      return box;
+    });
+    const go = el("button", { type: "button", class: "primary" });
+    const sync = () => {
+      const n = boxes.filter((b) => b.checked).length;
+      for (const b of boxes) b.disabled = !b.checked && n >= free;  // no more than the free slots
+      go.textContent = n ? `Carry ${n}` : "Pick one";
+      go.disabled = !n;
+    };
+    boxes.forEach((b) => b.addEventListener("change", sync));
+    go.addEventListener("click", () => guarded(async () => {
+      const pick = boxes.map((b, i) => (b.checked ? i : -1)).filter((i) => i >= 0);
+      if (!pick.length) return;
+      let r;
+      try { r = await api("/api/daily/top3/carry", { accept: true, pick }); } catch (e) { err.textContent = e.message; return; }
+      dialog().close();
+      applyTop3(r);
+      const left = c.items.length - pick.length;
+      toast(`${pick.length} carried, ${left} didn't fit (still on ${dayLabel(c.from)}'s list)`);
+    }));
+    sync();
+    CC.showDialog(el("h3", {}, "Carry over"),
+      el("p", { class: "muted" }, `${plural(c.items.length, "unfinished priority", "unfinished priorities")} from ${dayLabel(c.from)}, `
+        + `room for ${free} today. Pick which to carry; the rest stay on ${dayLabel(c.from)}'s list.`),
+      el("ul", { class: "list dialog-list t3-pick" }, c.items.map((x, i) => el("li", {},
+        el("label", { class: "t3-pick-label", for: `t3-pick-${i}` }, boxes[i], el("span", {}, x.text))))),
+      err,
+      el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Cancel"), go));
+    boxes[0].focus();
+  }
+
   function carryRow() {
     const c = state.carry;
     if (!c || !c.items?.length) return null;
     const free = state.items.filter((x) => !x).length;
+    const tight = free < c.items.length;
     return el("div", { class: "t3-carry", role: "group", "aria-label": "Carry over unfinished priorities" },
       el("span", { class: "t3-carry-label" }, `↻ ${plural(c.items.length, "unfinished priority", "unfinished priorities")} from ${dayLabel(c.from)}:`),
       el("span", { class: "t3-carry-list" }, c.items.map((x) => x.text).join(" · ")),
-      el("span", { class: "spacer" }),
-      el("button", { type: "button", class: "small alt", title: free < c.items.length ? `Room for ${free} today` : "",
-        onclick: () => guarded(async () => applyTop3(await api("/api/daily/top3/carry", { accept: true }))) }, "Carry over"),
-      el("button", { type: "button", class: "small subtle",
-        onclick: () => guarded(async () => applyTop3(await api("/api/daily/top3/carry", { accept: false }))) }, "Not today"));
+      tight && el("span", { class: "muted t3-carry-room" }, `room for ${free}`),
+      el("span", { class: "t3-carry-acts" },  // the two buttons stay together (and wrap together on a narrow pane)
+        el("button", { type: "button", class: "small alt", title: tight ? `Room for ${free} today: pick which to carry` : "",
+          onclick: carryOver }, tight ? "Carry over…" : "Carry over"),
+        el("button", { type: "button", class: "small subtle",
+          onclick: () => guarded(async () => applyTop3(await api("/api/daily/top3/carry", { accept: false }))) }, "Not today")));
   }
 
   function uncommittedChip() {
@@ -139,7 +194,7 @@
         el("div", { class: "t3-tools" },
           uncommittedChip(),
           el("button", { type: "button", class: "small subtle", title: "What you did on the last workday, ready for stand-up", onclick: () => recapDialog() }, "Yesterday"),
-          el("button", { type: "button", class: "small subtle", title: "Private meeting notes and action items", onclick: notesListDialog }, "Notes"))),
+          el("button", { type: "button", class: "small subtle", title: "Meeting notes and action items (encrypted on this PC)", onclick: notesListDialog }, "Notes"))),
       carryRow() || "");
   }
 
@@ -198,7 +253,7 @@
       dialog().close();
     });
     CC.showDialog(el("h3", {}, "Top 3 for today"),
-      el("p", { class: "muted" }, "The three things that make today a win. Private: saved only on this PC, encrypted with your Windows account."),
+      el("p", { class: "muted" }, "The three things that make today a win. Encrypted: saved only on this PC with your Windows account (work data, so it stays visible in Privacy mode)."),
       rows.map((r) => el("div", { class: "t3-edit-row" },
         el("label", { class: "field-label", for: `t3-text-${r.i}` }, `Priority ${r.i + 1}`),
         r.text,
@@ -338,7 +393,8 @@
         el("div", {},
           sec("Meetings", (r.meetings || []).length, (r.meetings || []).length ? el("ul", { class: "list compact" }, r.meetings.map((m) => el("li", {},
             el("span", { class: "mono dl-time" }, clock(m.start)), el("span", { class: "grow" }, m.subject),
-            el("button", { type: "button", class: `small subtle cc-notes-btn ${m.has_notes ? "has" : ""}`, onclick: () => notesDialog(m) }, m.has_notes ? "Notes ✓" : "Notes"))))
+            el("button", { type: "button", class: `small subtle cc-notes-btn ${m.has_notes ? "has" : ""}`, "data-mid": m.id, "data-start": m.start,
+              onclick: () => notesDialog(m) }, m.has_notes ? "Notes ✓" : "Notes"))))
             : empty("No meetings that day."), errs.meetings),
           sec("Emails sent", r.sent?.count ?? 0, r.sent?.count ? el("details", { class: "dl-sent" },
             el("summary", {}, `Show ${plural(r.sent.count, "subject")}`),
@@ -380,7 +436,7 @@
     if (!m || !OUTLOOK_ID.test(m.id || "") || !START_RE.test(m.start || "")) return null;
     const has = state.noteKeys.has(noteKey(m.id, m.start));
     return el("button", { type: "button", class: `small subtle cc-notes-btn ${has ? "has" : ""}`, "data-mid": m.id, "data-start": m.start,
-      title: "Private notes and action items (only on this PC)", onclick: () => notesDialog(m) }, has ? "Notes ✓" : "Notes");
+      title: "Meeting notes and action items (encrypted, only on this PC)", onclick: () => notesDialog(m) }, has ? "Notes ✓" : "Notes");
   });
 
   let notesSeq = 0;
@@ -413,9 +469,11 @@
     const due = el("input", { type: "date", id: "mn-due", "aria-label": "Due date for tasks you create" });
 
     const payload = () => ({ id: m.id, start: m.start, end: st.end, subject: st.subject, notes: notes.value, actions: st.actions });
+    const delBtn = el("button", { type: "button", class: "subtle", hidden: !st.exists, onclick: () => remove() }, "Delete notes");
     async function save() {
       const r = await api("/api/daily/notes", payload());
       st.exists = r.exists;
+      delBtn.hidden = !st.exists;  // shown from the first save, not only after reopening
       status.classList.remove("err");
       status.textContent = r.exists ? `Saved ${CC.when(r.updated)}` : "Nothing to save";
       const k = noteKey(m.id, m.start);
@@ -492,10 +550,10 @@
     CC.wideDialog(
       el("div", { class: "mn-head" },
         el("div", { class: "grow" },
-          el("div", { class: "panel-label" }, "MEETING NOTES // PRIVATE"),
+          el("div", { class: "panel-label" }, "MEETING NOTES // ENCRYPTED"),
           el("h3", { class: "mn-title" }, st.subject),
           el("div", { class: "muted" }, `${when.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} · ${clock(m.start)}${st.end ? ` – ${clock(st.end)}` : ""}`)),
-        el("span", { class: "src src-personal", title: "Only on this PC, encrypted with your Windows account, never written to Outlook" }, "Private")),
+        el("span", { class: "src mn-enc", title: "Work data: only on this PC, encrypted with your Windows account, never written to Outlook. Stays visible in Privacy mode." }, "Work · encrypted")),
       el("div", { class: "mn-grid" },
         el("section", { class: "mn-col" }, el("label", { class: "field-label" }, "Notes"), notes),
         el("section", { class: "mn-col" },
@@ -505,7 +563,7 @@
           el("div", { class: "mn-due" }, el("label", { class: "field-label", for: "mn-due" }, "Due date for new tasks (optional)"), due))),
       el("div", { class: "row" },
         status, el("span", { class: "spacer" }),
-        st.exists && el("button", { type: "button", class: "subtle", onclick: remove }, "Delete notes"),
+        delBtn,
         el("button", { value: "close", class: "subtle" }, "Close"),
         el("button", { type: "button", class: "primary", onclick: async () => {
           st.dirty = true;
@@ -538,7 +596,7 @@
     };
     q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(load, 200); });
     CC.wideDialog(el("h3", {}, "Meeting notes"),
-      el("p", { class: "muted" }, "Private notes pads: only on this PC, encrypted with your Windows account, never written to Outlook."),
+      el("p", { class: "muted" }, "Meeting notes pads (work data): only on this PC, encrypted with your Windows account, never written to Outlook."),
       q, list, closeRow());
     q.focus();
     load();
@@ -560,14 +618,13 @@
       { group: "Commands", label: "Set Top 3 for today", hint: "today's priorities", run: () => top3Dialog(Math.max(0, state.items.findIndex((x) => !x))) },
       { group: "Commands", label: "Yesterday recap", hint: "commits, meetings, mail, closed work", run: () => recapDialog() },
       { group: "Commands", label: "Copy stand-up for yesterday", hint: "plain-text bullets", run: copyStandup },
-      { group: "Commands", label: "Meeting notes", hint: "private notes and action items", run: notesListDialog },
+      { group: "Commands", label: "Meeting notes", hint: "notes and action items, encrypted on this PC", run: notesListDialog },
       { group: "Commands", label: "Uncommitted work", hint: "projects not committed or pushed", run: uncommittedDialog },
     ];
     state.items.forEach((t, i) => {
       if (t && !t.locked) out.push({ group: "Top 3", label: `${t.done ? "Reopen" : "Done"}: ${t.text}`, hint: `priority ${i + 1}`, run: () => toggle(i) });
     });
-    if (state.carry) out.push({ group: "Top 3", label: "Carry over unfinished priorities", hint: dayLabel(state.carry.from),
-      run: () => guarded(async () => applyTop3(await api("/api/daily/top3/carry", { accept: true }))) });
+    if (state.carry) out.push({ group: "Top 3", label: "Carry over unfinished priorities", hint: dayLabel(state.carry.from), run: carryOver });
     const agenda = Array.isArray(CC.todayData?.agenda) ? CC.todayData.agenda : [];
     for (const m of agenda) {
       if (!m.all_day && START_RE.test(m.start || "")) out.push({ group: "Agenda", label: `Notes: ${m.subject}`, hint: clock(m.start), run: () => notesDialog(m) });

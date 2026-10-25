@@ -47,6 +47,10 @@ dialog.tri::backdrop { background: var(--bg); }
 .tri-group { font: 700 .78rem var(--font-ui); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
 .tri-group.hot { color: var(--red); text-shadow: 0 0 .5rem rgb(var(--red-rgb) / .6); }
 .tri-status { font: 700 .74rem var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--on-accent); background: var(--accent); padding: .05rem .45rem; }
+.tri-handled {
+  display: flex; align-items: center; gap: .4rem .8rem; flex-wrap: wrap; flex: none; margin: 0 0 .35rem; padding: .35rem .6rem;
+  border: 1px solid rgb(var(--accent-rgb) / .45); background: rgb(var(--accent-rgb) / .07); color: var(--text); font-size: .88rem;
+}
 .tri-subject { margin: .35rem 0 .3rem; font: 700 clamp(1.15rem, 1rem + .6vw, 1.6rem)/1.25 var(--font-body); color: #fff; overflow-wrap: anywhere; flex: none; }
 .tri-from { font-size: .95rem; flex: none; }
 .tri-sender { font-weight: 600; color: var(--text); }

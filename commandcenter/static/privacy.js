@@ -465,9 +465,14 @@
     }).observe(dialogBody, { childList: true });
   }
 
-  CC.addPaletteSource(() => [
+  // In Privacy mode the palette doesn't mention the vault or personal data (the vault is locked then anyway);
+  // turning Privacy mode off is the way back.
+  CC.addPaletteSource(() => state.privacy ? [
+    { group: "Commands", label: "Privacy & Data", hint: "data sources", run: () => guarded(openPanel) },
+    { group: "Commands", label: "Privacy mode: turn off", hint: "Ctrl+Shift+P", run: togglePrivacy },
+  ] : [
     { group: "Commands", label: "Privacy & Data", hint: "data sources, personal vault", run: () => guarded(openPanel) },
-    { group: "Commands", label: state.privacy ? "Privacy mode: turn off" : "Privacy mode: turn on", hint: "Ctrl+Shift+P", run: togglePrivacy },
+    { group: "Commands", label: "Privacy mode: turn on", hint: "Ctrl+Shift+P", run: togglePrivacy },
     state.unlocked ? { group: "Commands", label: "Lock personal vault", hint: "", run: () => guarded(lockVault) }
       : { group: "Commands", label: state.set_up ? "Unlock personal vault" : "Set up personal vault", hint: "personal calendars", run: () => ensureUnlocked() },
   ]);
