@@ -4,7 +4,7 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
 
 ## 2026-10-24 (about 6 PM - 11 PM local; the first session crashed at 9 PM and was resumed)
 
-**Summary:** Big build day. Glass restyle, spam blocks, SQL certificate pin, Pulse site inside CC with a Pulse | Code focus layout, SSMS docked in the SQL tab, VS Code · Claude replacing the terminal Claude tab, a reworked Today, a Personal tab with pop-up reminders, Teams unread counts, an off-hours log, and many fixes. Three pieces of work were still being built when Joe left (see In flight).
+**Summary:** Big build day. Glass restyle, spam blocks, SQL certificate pin, Pulse site inside CC with a Pulse | Code focus layout, SSMS docked in the SQL tab, VS Code · Claude replacing the terminal Claude tab, a reworked Today, a Personal tab with pop-up reminders, Teams unread counts plus a full Teams chat view, Important senders, an off-hours log, meeting warnings at 15 / 5 / now, and many fixes. Everything is committed and tested. The tree is clean, so it's safe to restart.
 
 ### Done
 - `25b4121` Glass launcher restyle (Inter + Orbitron, frosted panels, Profile switches); spam blocks (sender / domain / subject phrase, preview, Junk Email via two Outlook rules plus an app filter, Undo, Spam blocks list); Toolkit SQL certificate pin (`connectors/sqlcert.py`); "Needs your reply" only when the email names Joe outside the quoted history; Open in Outlook brings the window forward; View on flagged opens that email; Teams sign-in startup retry.
@@ -25,8 +25,16 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
   - Teams: unread DMs + mentions badge, counts and Recent list, an alert per new DM or mention.
   - Fixes from the security review (no high-severity findings): reminder off/on no false "missed"; VS Code mirror can't delete outside `data/vscode` or wipe copies on an empty desktop list, copies Marketplace extensions only, skips secret-like settings; Asana priorities past 100 tasks; Pulse view links need a real click, rate-limited; Ctrl+Shift+P forwarded; `.xls` downloads removed; Alerts badge no longer shows 0.
 - Pulse read-only DB login (`commandcenter_ro`) created in production Pulse through Cortex, verified read-only, TLS `verify-full` with `data/certs/supabase-prod-ca-2021.crt`.
-- Skills `start-session` / `close-session` and this log (`.claude/skills/`, `SESSIONS.md`).
-- Artifact "JC Command Center" (shared by link) republished: glass look, generic wording only.
+- `2f248cb`:
+  - Teams chat view: Teams on the web in a native view beside the counts and Recent list (`siteview.py`, `teamsview.js`, profile `data/webview-teams`). "Open chat" opens the full conversation.
+  - Important senders: kv `people:important`, ★ Mark important, high-priority alerts, "Important senders" follow-up group, manage dialog. Spam blocks refuse important senders.
+  - Meeting reminders 15 / 5 / 0.
+- `d649d4b` Preview artifact build tooling moved into the repo (`tools/preview/`; output in the git-ignored `tools/preview/out/`).
+- Skills `start-session` / `close-session` and this log (`.claude/skills/`, `SESSIONS.md`); CLAUDE.md points to them.
+- Artifacts republished:
+  - "JC Command Center" (shared by link): glass look, generic wording only. https://claude.ai/artifact/AGg3kutmutf5r6UtVEpAAk
+  - "Command Center Walkthrough" (private): 18 chapters covering everything through today. https://claude.ai/artifact/NRrSk4oqSEfpQLZnLu5not
+- Final test pass on `2f248cb`: compile and import, spam suite, reminders suite, Important senders suite (57), and the all-tab click-through. All pass, no page errors.
 
 ### Decisions
 - SQL server's self-signed certificate: **pin it** (not "trust without verifying", not "wait for IT").
@@ -51,35 +59,36 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
 - New sections `spam:` and `offhours:` (work hours 08:00-17:00 Mon-Fri)
 
 ### Waiting on a restart
-- CC was last restarted at 10:20 PM, before `08c3b60` (10:29 PM) finished. The next restart loads all of `08c3b60` plus the in-flight work below once it's committed.
-- **Not safe to restart right now**: agents were mid-edit when Joe left. Restart only after a commit with a clean tree (`git status` empty apart from `config.yaml`).
-- Uncommitted main-session edits that go with it: meeting reminders 15/5/now plus a fix so "now" can't be skipped (`connectors/outlook.py`, `config.example.yaml`, `PROJECT.md`).
+- CC was last restarted at 10:20 PM, before `08c3b60` landed. The next restart loads `08c3b60` and `2f248cb`: Pulse / SSMS / VS Code mirror finishing touches, Teams chat view, Important senders, meeting warnings, Teams every 1 min, and the Alerts badge fix.
+- **Safe to restart now**: the tree is clean and everything is committed and tested. The first start takes about 30 s longer while VS Code copies extensions.
 
 ### Waiting on Joe
 - [ ] Restart CC once the in-flight work is committed; the first start takes about 30 s longer while it copies VS Code extensions.
 - [ ] Toolkit → Connection → **Test** (certificate is pinned and the password is saved, but no successful test yet).
 - [ ] SSMS: check Tools → Options → Environment → **AutoRecover** is on (1-5 min). In the connect dialog: Encryption Mandatory + Trust server certificate (his saved connections already have both).
-- [ ] Sign in to Pulse in the Pulse tab (Okta), and to the Teams chat view once it's built.
+- [ ] Sign in to Pulse in the Pulse tab (Okta, Prod and Dev), and to the Teams web view on the right of the Teams tab (Microsoft, then Okta).
+- [ ] Mark a few important senders (☆ Mark important on their email, or Ctrl+K → Important senders). The old config VIP list only held placeholders.
 - [ ] VS Code · Claude: open a project and **Trust** the folder.
 - [ ] Personal tab: add the three weekday reminders he described. Do it after the restart; the vault is already set up.
 - [ ] Calendar → Calendars: add the Google / iCloud links (he was doing iCloud).
 - [ ] Still open from the account setup list: urgent people, Asana token, Windows Hello.
 
 ### In flight / not finished
-These were all running when Joe left. If this session ended, they stopped too: check what landed and resume or redo.
-- **Important senders**: in-app VIP list (kv `people:important`), "★ Mark important" on mail / follow-ups (sender or `@domain`, never shared providers or internal domains), high-priority alerts, "Important senders" follow-up group, manage dialog, `/api/people/important`. Files: people.py, outlook.py, today.py, app.py, app.js, privacy.py.
-- **Teams chat view**: native Teams web view in the Teams tab (own profile `data/webview-teams`); clicking a Recent DM or mention opens the full chat; sign-in allowlist; no camera or mic. Files: desktop.py, security.py, overlay.py / new `siteview.py`, nativestage.js, app.js Teams section, teams.css.
-- **Interactive preview artifact** ("Command Center", private): rebuilt and passing every check (651 KB; all tabs, KPI tiles, palette, triage and capture at 3 screen sizes; no outside requests except Google Fonts). Not published yet. Rebuild it after the Teams view and Important senders land, then read the whole file and publish it to https://claude.ai/artifact/4nkSbtnowfNmg2ukvSqN2Q. Rebuild command: `.venv\Scripts\python.exe <scratchpad>\preview\build.py`. The scratchpad is `C:\Users\JoeC\AppData\Local\Temp\claude\c--sonance-internal-CommandCenter\f5ff0096-e873-4797-8626-cbcf06267293\scratchpad`; it is temporary, so copy `preview\` into the repo if it should outlive this session. The page still contains the word "Sonance" and "Joe" in code comments; it's private.
-- **Walkthrough artifact** ("Command Center Walkthrough", private): draft written (`scratchpad\artifacts\walkthrough.html`, 18 chapters). Held back so the Teams chat view and Important senders can be added first. Not published yet.
-- After these land: review, run the test suites (spam, reminders, the all-tab smoke test), commit, then tell Joe to restart.
+Nothing is running or uncommitted. Open items:
+- **Interactive preview artifact** ("Command Center", private, https://claude.ai/artifact/4nkSbtnowfNmg2ukvSqN2Q): **not republished yet**; the live page is still the old HUD-era preview.
+  - Build with `.venv\Scripts\python.exe tools\preview\build.py`, then check with `tools\preview\check.py`.
+  - The build of `2f248cb` is 675 KB and clean: no errors, all 12 tabs and 10 tiles at 3 widths, no outside requests except Google Fonts.
+  - To do first: add sample data in `tools/preview/mock.js` for the 3 new endpoints (`/api/people/important` and the Teams view's `/api/window/teams`).
+  - Then rebuild, **read the whole output** (the publish rule), and publish to the URL above. The page still has "Sonance" / "Joe" in code comments; it's private.
+- Small follow-ups: remove the unused `.teams-grid` rules in style.css and `static/vendor/` (xterm).
 
 ### Known issues
 - The terminal inside CC's embedded VS Code fails to start (PowerShell exits with 0xC0000022, access denied). This predates today; cause unknown (not the copied extensions).
 - "Git Base not loaded" errors in embedded VS Code after trusting a folder, until the window reloads.
 - A hard crash or kill of CC takes a docked SSMS down with it. Normal exits hand SSMS back.
-- Untested: real Okta sign-in in the Pulse view; Ctrl+Shift+P while SSMS has focus; Teams "Open" deep links on an actually-unread chat; Teams channel-message links may not open.
+- Untested until Joe signs in: real Okta sign-in in the Pulse and Teams views (and whether Teams sign-in uses any host beyond the allowlist; add it under `teams.view_hosts` if a link opens in the browser instead); a deep link opening the chat itself; Ctrl+Shift+P while SSMS has focus; Teams channel-message links may not open.
 - "Open in Pulse" on alerts still opens the default browser.
-- `static/vendor/` (xterm) is now unused and can be deleted.
+- A docked SSMS that hangs can make CC feel slow until it recovers. Undock ends it.
 - The Today tools row wraps under the tabs in the narrow split COMMS pane.
 
 ### Incidents
