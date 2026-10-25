@@ -107,6 +107,15 @@
   let watches = [{ id: sentMail[0].id, subject: sentMail[0].subject, to: "Avery Chen", due: dayAt(2, 9), conversation: "conv-1" }];
   let muted = ["offers@bulkdeals-mailer.example"];
   let urgentPeople = ["Lena Ortiz"];
+  // Important senders (people.py): an address or a whole @domain; mail from them gets a star (important: true).
+  let importantSenders = ["lena.ortiz@example.com", "@northwind-audio.example"];
+  const SHARED_PROVIDERS = ["gmail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com"];
+  const isImportant = (m) => {
+    const a = String(m.sender || "").toLowerCase();
+    return !!a && importantSenders.some((e) => (e.startsWith("@") ? a.endsWith(e) : a === e));
+  };
+  const importantState = () => ({ senders: importantSenders.slice(), from_config: [], internal_domains: ["example.com"],
+    shared_providers: SHARED_PROVIDERS, max: 200 });
   let focus = { active: false };
   let asanaConnected = true;
 
@@ -183,18 +192,19 @@
   let weatherZip = "92001";
   const pick = (m, keys) => Object.fromEntries(keys.filter((k) => m[k] !== undefined).map((k) => [k, m[k]]));
   const MAILKEYS = ["id", "subject", "sender_name", "sender", "received", "unread", "internal", "preview", "high_importance", "flagged"];
+  const mailOut = (m, keys = MAILKEYS) => ({ ...pick(m, keys), important: isImportant(m) });
   function followups() {
     const urgentNames = new Set(urgentPeople.map((p) => p.toLowerCase()));
     const isUrgent = (m) => urgentNames.has(String(m.sender_name).toLowerCase()) || urgentNames.has(String(m.sender).toLowerCase());
     const reply = [M.pricing, M.po, M.onboarding, M.freight].filter(open);
     const flagged = [M.rma, M.invoice, M.survey].filter((m) => m.flagged && open(m));
     return {
-      urgent_reply: reply.filter(isUrgent).map((m) => pick(m, MAILKEYS)),
-      needs_reply: reply.filter((m) => !isUrgent(m)).map((m) => pick(m, MAILKEYS)),
-      teams_reply: Object.values(T).filter((m) => m.unread && open(m)).map((m) => ({ ...pick(m, MAILKEYS), from_name: m.from_name, urgent: m.urgent || urgentNames.has(m.from_name.toLowerCase()) })),
+      urgent_reply: reply.filter(isUrgent).map((m) => mailOut(m)),
+      needs_reply: reply.filter((m) => !isUrgent(m)).map((m) => mailOut(m)),
+      teams_reply: Object.values(T).filter((m) => m.unread && open(m)).map((m) => ({ ...mailOut(m), from_name: m.from_name, urgent: m.urgent || urgentNames.has(m.from_name.toLowerCase()) })),
       awaiting_reply: sentMail.filter(open).map((m) => pick(m, ["id", "subject", "to", "sent"])),
-      flagged: flagged.map((m, i) => ({ ...pick(m, MAILKEYS), due: [day(-1), day(0), null][i] })),
-      unread_vip: [M.vip].filter((m) => m.unread && open(m)).map((m) => pick(m, MAILKEYS)),
+      flagged: flagged.map((m, i) => ({ ...mailOut(m), due: [day(-1), day(0), null][i] })),
+      unread_vip: Object.values(M).filter((m) => m.unread && isImportant(m) && open(m)).map((m) => mailOut(m)),
       flagged_hidden: { automated: 37, older: 112, more: 0, before: 1284, since: day(-90), total: 1436 },
     };
   }
@@ -212,7 +222,7 @@
     alert("Calendar", `Coming up at ${new Date(agenda[2].start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: Vendor call: Contoso Supply`, "Microsoft Teams", "high", { type: "meeting", id: agenda[2].id, join_url: agenda[2].join_url, prep: true }, 0.05),
     alert("Urgent", "Urgent Teams message from Lena Ortiz", "Ping me when the pricing sheet is final, leadership call moved up.", "high", { type: "teams", url: "https://teams.microsoft.com/l/chat/0/0?users=lena.ortiz@example.com" }, 0.2),
     alert("Outlook", "VIP: Q4 dealer pricing: sign-off needed today", "From Lena Ortiz", "high", { type: "mail", id: M.pricing.id }, 0.6),
-    alert("Pulse", "Pulse #1047 assigned to you", "Dealer locator shows closed stores", "normal", { type: "url", url: "https://pulse.example.com/feedback/1047" }, 1.1),
+    alert("Pulse", "Pulse #1047 assigned to you", "Dealer locator shows closed stores", "normal", { type: "pulse", url: "https://pulse.example.com/feedback?ticket=1047", label: "Open in Pulse" }, 1.1),
     alert("Order", "Order 4410287 changed: Released → Shipped", "Northwind Audio · 2 lines", "normal", { type: "order", number: "4410287" }, 1.6),
     alert("Website", "Carrier tracking PRO 77812: value changed", "In transit → Out for delivery", "normal", { type: "url", url: "https://tracking.example.com/pro/77812" }, 2.4),
     alert("Calendar", "Forecast review ended: capture notes?", "Notes and action items, encrypted on this PC", "normal", { type: "meeting-notes", id: agenda[1].id, start: agenda[1].start, end: agenda[1].end }, 2.9, true),
@@ -527,8 +537,8 @@
         teams: teamsState(), focus, ui: { accent: profile.accent, workday: ["08:00", "17:00"] }, desktop: false, config_path: "config.yaml" });
       case "/alerts": return json({ alerts: (q.get("unread_only") === "true" ? alerts.filter((a) => !a.read) : alerts).slice().sort((a, b) => b.ts.localeCompare(a.ts)), unread: unreadAlerts() });
       case "/today": return json(todayData(), 200, 120);
-      case "/mail": return json({ mail: inbox().filter((m) => q.get("unread_only") !== "true" || m.unread).map((m) => pick(m, [...MAILKEYS, "from_name", "to", "folder"])) });
-      case "/mail/item": { const m = findMail(q.get("id")); return m ? json({ ...m, body: m.body || `(Sent item)\n\n${m.subject}`, to: m.to, cc: m.cc || "" }) : fail(404, "That message isn't in the preview's sample data."); }
+      case "/mail": return json({ mail: inbox().filter((m) => q.get("unread_only") !== "true" || m.unread).map((m) => mailOut(m, [...MAILKEYS, "from_name", "to", "folder"])) });
+      case "/mail/item": { const m = findMail(q.get("id")); return m ? json({ ...m, important: isImportant(m), body: m.body || `(Sent item)\n\n${m.subject}`, to: m.to, cc: m.cc || "" }) : fail(404, "That message isn't in the preview's sample data."); }
       case "/meetings": { const hours = Number(q.get("hours") || 24), end = new Date(Date.now() + hours * 3600000);
         const list = [...agenda, ...futureMeetings(1)].filter((m) => new Date(m.end) > new Date() && new Date(m.start) < end).sort((a, b) => a.start.localeCompare(b.start));
         return json({ meetings: list }); }
@@ -567,6 +577,8 @@
       }
       case "/window/pulse": return json({ available: false, sites: { prod: "https://pulse.example.com/", dev: "https://dev.pulse.example.com/" }, views: {} });
       case "/window/ssms": return json({ available: false });
+      case "/window/teams": return json({ available: false, views: {} });
+      case "/people/important": return json(importantState());
       case "/window/state": return json({ fullscreen: false });
       case "/followups/urgent": return json({ people: urgentPeople, from_config: ["Lena Ortiz"], internal_domains: ["example.com"] });
       case "/followups/muted": return json({ muted });
@@ -703,7 +715,27 @@
       case "/vscode/stop": return json({ status: "stopped" });
       case "/projects/launch": case "/projects/new": case "/app/restart": case "/session/lock":
       case "/window/fullscreen": case "/window/minimize": case "/window/hide": return fail(409, DESKTOP_ONLY);
-      case "/window/pulse/action": case "/window/ssms/action": return fail(409, DESKTOP_ONLY);
+      case "/window/pulse/action": case "/window/ssms/action": case "/window/teams/action": return fail(409, DESKTOP_ONLY);
+      case "/people/important": {
+        let list = Array.isArray(b.senders) ? b.senders.slice() : importantSenders.slice();
+        if (Array.isArray(b.remove)) { const drop = new Set(b.remove.map((r) => String(r).trim().toLowerCase())); list = list.filter((e) => !drop.has(e)); }
+        if (b.add != null) list.push(b.add);
+        const out = [];
+        for (const raw of list) {
+          const e = String(raw || "").trim().toLowerCase();
+          if (!e) continue;
+          if (e.startsWith("@")) {
+            const d = e.slice(1);
+            if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)) return fail(400, `Not an address or @domain: ${raw}`);
+            if (d === "example.com") return fail(400, "Whole internal domains can't be important senders: pick the people.");
+            if (SHARED_PROVIDERS.includes(d)) return fail(400, `@${d} is a shared mail provider: add the address instead.`);
+          } else if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(e)) return fail(400, `Not an address or @domain: ${raw}`);
+          if (!out.includes(e)) out.push(e);
+        }
+        if (out.length > 200) return fail(400, "At most 200 important senders.");
+        importantSenders = out;
+        return json(importantState());
+      }
       case "/pulse/setup": return json({ ok: true, configured: true });
       case "/pulse/disconnect": return json({ ok: true });
       // Toolkit: read calls answer from the sample tables; every change is refused (the confirmation still shows).

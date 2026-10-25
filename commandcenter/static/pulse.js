@@ -288,6 +288,12 @@
 
   CC.registerTab({ id: "pulse-feedback", label: "Pulse Feedback", render, onShow: () => guarded(load), pane: "comms" });
 
+  // Pulse alerts (action type "pulse", pulse.py) open the ticket in the Pulse tab, like "Open in Pulse" on a row.
+  // (Older alerts, from before this type, carry a plain "url" action and still open in the browser.)
+  CC.registerAlertAction("pulse", (act) => typeof act.url === "string" && act.url.startsWith("https://")
+    ? el("button", { type: "button", class: "small", onclick: () => openPulse(act.url) }, act.label === "Open Pulse" ? "Open Pulse" : "Open in Pulse")
+    : null);
+
   // "Go to Pulse Feedback" comes from the core palette (one entry per nav tab), so it isn't repeated here.
   CC.addPaletteSource(() => [
     ...state.tickets.slice(0, 50).map((t) => ({

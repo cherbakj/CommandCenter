@@ -80,7 +80,7 @@
           <div class="tw-head">
             <div class="tw-tabs" role="tablist" aria-label="Today">
               <button type="button" role="tab" id="tw-tab-agenda" data-tw="agenda" aria-controls="tw-agenda" aria-selected="true">
-                <span class="tw-name">Today's Agenda</span><span id="agenda-count" class="chip"></span></button>
+                <span class="tw-name"><span class="tw-long">Today's </span>Agenda</span><span id="agenda-count" class="chip"></span></button>
               <button type="button" role="tab" id="tw-tab-tasks" data-tw="tasks" aria-controls="tw-tasks" aria-selected="false" tabindex="-1">
                 <span class="tw-name">Tasks</span><span id="tasks-count" class="chip"></span><span id="tasks-high" class="tw-urgent" hidden></span></button>
               <button type="button" role="tab" id="tw-tab-follow" data-tw="follow" aria-controls="tw-follow" aria-selected="false" tabindex="-1">
@@ -95,10 +95,13 @@
             </div>
             <div class="tw-tools" data-for="follow" hidden>
               <span id="followups-slot" class="slot"></span>
-              <button id="urgent-btn" class="small subtle" title="People whose mail and Teams messages count as urgent">Urgent people</button>
-              <button id="snoozed-btn" class="small subtle">Snoozed (0)</button>
-              <button id="muted-btn" class="small subtle">Muted senders</button>
-              <button id="today-refresh" class="small">↻ Rescan</button>
+              <!-- the lists behind "Manage ▾" (app.js); modules add theirs here too (important.js) -->
+              <span id="fu-manage" hidden>
+                <button id="urgent-btn" class="small subtle" title="People whose mail and Teams messages count as urgent">Urgent people</button>
+                <button id="snoozed-btn" class="small subtle">Snoozed (0)</button>
+                <button id="muted-btn" class="small subtle">Muted senders</button>
+              </span>
+              <button id="today-refresh" class="small" title="Rescan" aria-label="Rescan">↻<span class="tw-word"> Rescan</span></button>
             </div>
           </div>
           <div class="tw-panel a-agenda" role="tabpanel" id="tw-agenda" aria-labelledby="tw-tab-agenda">
@@ -148,10 +151,7 @@
     </section>
 
     <!-- CALENDAR -->
-    <section id="tab-calendar" class="tab">
-      <div class="toolbar"><span class="panel-label">NEXT 24 HOURS</span><span class="spacer"></span><button id="cal-refresh">↻ Refresh</button></div>
-      <ul id="cal-list" class="list panel-list flow"></ul>
-    </section>
+    <section id="tab-calendar" class="tab"></section>  <!-- the 10-day calendar (planner.js) -->
 
     <!-- TEAMS -->
     <section id="tab-teams" class="tab" data-view="web">

@@ -474,7 +474,7 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 
 /* ---- Today's main panel: tabs ---- */
 .a-work { padding: .7rem .9rem .75rem; }
-.tw-head { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem .75rem; margin-bottom: .55rem; }
+.tw-head { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem .5rem; margin-bottom: .55rem; container: twhead / inline-size; }
 .tw-tabs {
   display: inline-flex; gap: .2rem; padding: .2rem; max-width: 100%; overflow-x: auto; scrollbar-width: none;
   border-radius: var(--r-pill); border: 1px solid var(--line); background: rgb(255 255 255 / .035); box-shadow: var(--hi);
@@ -496,6 +496,18 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
   color: #fff; background: #c8102e; border: 1px solid var(--red); box-shadow: 0 0 .5rem rgb(var(--red-rgb) / .5); text-shadow: none;
 }
 .tw-tools { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; margin-left: auto; }
+.tw-tools .slot { display: contents; }  /* module buttons in a slot get the row's gap */
+/* A narrow head (split COMMS pane): tighter tabs, so the tools still fit beside them. */
+@container twhead (max-width: 54rem) {
+  .tw-tabs [role=tab] { padding: .38rem .6rem; gap: .35rem; font-size: .86rem; }
+  .tw-long { display: none; }  /* "Today's Agenda" -> "Agenda" */
+}
+@container twhead (max-width: 44rem) {
+  .tw-word { display: none; }  /* Rescan -> ↻ */
+  .tw-tabs [role=tab] { padding-inline: .5rem; }
+  .tw-tabs { gap: .1rem; }
+  .tw-tools { gap: .3rem; }
+}
 /* While a task is dragged: the agenda tab says "hover here", and opens. */
 body.drag-task #tw-tab-agenda[aria-selected=false] { color: var(--accent); border: 1px dashed var(--accent); background: rgb(var(--accent-rgb) / .08); }
 
@@ -680,8 +692,6 @@ th, td { border: 1px solid var(--line-soft); padding: .38rem .65rem; text-align:
 th { position: sticky; top: 0; background: var(--panel-solid); color: var(--accent); letter-spacing: .04em; font-weight: 600; }
 tr:nth-child(even) td { background: rgb(255 255 255 / .025); }
 .card { border: 1px solid var(--line); border-radius: var(--r-card); padding: .65rem .8rem; margin-bottom: .5rem; background: rgb(0 0 0 / .2); }
-.teams-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }
-@container pane (min-width: 50rem) { .teams-grid { grid-template-columns: minmax(18rem, 1fr) minmax(0, 2fr); } }
 .big-number { font: 800 3rem/1 var(--font-display); color: var(--accent-2); text-shadow: 0 0 1.2rem rgb(var(--accent-2-rgb) / .4); margin: .5rem 0; font-variant-numeric: tabular-nums; }
 
 /* ---- dialog: strong glass, scales in ---- */

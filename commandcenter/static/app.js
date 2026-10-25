@@ -818,26 +818,6 @@ $("#mail-refresh").addEventListener("click", loaders.mail);
 
 // ---- calendar ----------------------------------------------------------------
 
-let calMeetings = [];
-
-loaders.calendar = () => guarded(async () => {
-  const { meetings } = await api("/api/meetings?hours=24");
-  calMeetings = meetings;
-  // planner.js takes the tab over at load (its 10-day view replaces this list); a load started before that finds no list
-  const list = $("#cal-list");
-  if (!list) return;
-  fill(list, meetings.map((m) => el("li", {},
-    el("div", { class: "grow" },
-      el("div", { class: "title" }, m.subject),
-      el("div", {}, `${when(m.start)} – ${new Date(m.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`),
-      el("div", { class: "muted src-line" }, srcTag(m.join_url ? "meeting" : "calendar"), [m.location, m.organizer && `organizer ${m.organizer}`].filter(Boolean).join(" · "))),
-    el("div", { class: "actions" },
-      m.join_url && linkButton(m.join_url, "Join", "small primary"),
-      el("button", { class: "small alt", onclick: () => prepDialog(m.id, m) }, "Prep"),
-      el("button", { class: "small", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open")),
-  )), "Nothing in the next 24 hours");
-});
-
 // ---- meeting prep ------------------------------------------------------------------
 
 const RESPONSE = {
@@ -867,7 +847,7 @@ async function prepDialog(id, meta) {
     return;
   }
   if (!d.open) return;
-  meta = meta || (Array.isArray(todayData?.agenda) ? todayData.agenda : []).concat(calMeetings).find((m) => m.id === id);
+  meta = meta || (Array.isArray(todayData?.agenda) ? todayData.agenda : []).find((m) => m.id === id);
   const now = new Date();
   let timeText = "";
   if (meta?.start) {
@@ -920,7 +900,6 @@ async function prepDialog(id, meta) {
         section("Meeting notes", el("pre", { class: "prep-notes" }, p.agenda || "No notes in the invite.")))),
     el("div", { class: "row" }, el("button", {}, "Close")));
 }
-$("#cal-refresh")?.addEventListener("click", () => loaders.calendar());
 
 // ---- websites ----------------------------------------------------------------
 
@@ -1819,9 +1798,15 @@ function asanaDialog() {
   token.focus();
 }
 
+// In a narrow Today head the word is hidden (style.css .tw-word) and the button is just ↻; the name stays for hover and screen readers.
+function rescanLabel(btn, word) {
+  btn.replaceChildren("↻", el("span", { class: "tw-word" }, ` ${word}`));
+  btn.title = word; btn.setAttribute("aria-label", word);
+}
+
 loaders.today = (refresh = false) => guarded(async () => {
   const btn = $("#today-refresh");
-  btn.disabled = true; btn.textContent = "Scanning…";
+  btn.disabled = true; rescanLabel(btn, "Scanning…");
   try {
     todayData = await api(`/api/today?refresh=${refresh}`);
     renderWeather(todayData.weather);
@@ -1835,7 +1820,7 @@ loaders.today = (refresh = false) => guarded(async () => {
     // Feature modules (static/<module>.js) can react to fresh Today data without editing this file.
     document.dispatchEvent(new CustomEvent("cc:today", { detail: todayData }));
   } finally {
-    btn.disabled = false; btn.textContent = "↻ Rescan";
+    btn.disabled = false; rescanLabel(btn, "Rescan");
   }
 });
 
@@ -1905,6 +1890,12 @@ document.addEventListener("pointerdown", (e) => { if (menuOpen && !menuOpen.menu
 // (A scroll right after opening is the button being scrolled into view: ignored.)
 document.addEventListener("scroll", (e) => { if (menuOpen && !menuOpen.menu.contains(e.target) && performance.now() - menuOpen.at > 250) closeMenu(); }, true);
 window.addEventListener("resize", () => closeMenu());
+
+// The Follow-ups lists (urgent people, important senders, snoozed, muted) sit behind one "Manage" menu so the
+// tools stay on the tabs' row; each item clicks its button in #fu-manage, which keeps its own label and handler.
+$("#today-refresh").before(menuButton("Manage ▾", "Manage follow-up lists",
+  () => [...$("#fu-manage").querySelectorAll("button")].map((b) =>
+    el("button", { type: "button", title: b.title, onclick: () => b.click() }, b.textContent)), "small subtle"));
 
 // ---- Today's main panel: Today's Agenda / Tasks / Follow-ups tabs ------------------------------------------
 // ARIA tabs (arrow keys, Home / End; the tools next to them follow the open tab). The tab last picked is

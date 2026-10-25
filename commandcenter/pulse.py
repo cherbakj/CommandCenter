@@ -473,7 +473,7 @@ def diff_alerts(old: dict | None, tickets: list[dict], me: set[str]) -> tuple[li
         since = now.timestamp() - 3600
     for t in tickets:
         prev = old["tickets"].get(t["id"])
-        action = {"type": "url", "url": t["url"], "label": "Open in Pulse"}
+        action = {"type": "pulse", "url": t["url"], "label": "Open in Pulse"}  # pulse.js: the Pulse tab
         label = f"#{t['ticket_no']} {t['title'][:80]}"
         if prev is None:
             if t["mine"] and t["status"] != "Resolved" and s.get("alert_new", True):
@@ -535,7 +535,7 @@ def daily_aging_alert(tickets: list[dict], s: dict | None = None, now: datetime 
     a = {"title": f"{_plural(len(late), 'ticket')} waiting on you (oldest {_plural(late[0]['age_days'], 'day')})",
          "body": " · ".join(shown),
          "priority": "high" if any(t["aging"] == "overdue" for t in late) else "normal",
-         "action": {"type": "url", "url": ticket_url(None), "label": "Open Pulse"}}
+         "action": {"type": "pulse", "url": ticket_url(None), "label": "Open Pulse"}}
     alerts.raise_alert("Pulse", a["title"], a["body"], a["priority"], a["action"],
                        toast=f"{_plural(len(late), 'ticket')} need you")
     return a
@@ -549,7 +549,7 @@ async def poll_once() -> dict:
         alerts.raise_alert("Pulse", a["title"], a["body"], a["priority"], a["action"], toast=a.get("toast"))
     if len(found) > 10:
         alerts.raise_alert("Pulse", f"{len(found) - 10} more ticket updates", "Open the Pulse Feedback tab to see them.", "low",
-                           {"type": "url", "url": ticket_url(None)}, toast="more ticket updates")
+                           {"type": "pulse", "url": ticket_url(None), "label": "Open Pulse"}, toast="more ticket updates")
     db.kv_set("pulse:state", state)
     try:
         daily_aging_alert(tickets, s)
