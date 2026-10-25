@@ -1442,6 +1442,8 @@ loaders.today = (refresh = false) => guarded(async () => {
     renderStats(todayData);
     renderSnoozedButton(todayData);
     loadTodayAlerts();
+    // Feature modules (static/<module>.js) can react to fresh Today data without editing this file.
+    document.dispatchEvent(new CustomEvent("cc:today", { detail: todayData }));
   } finally {
     btn.disabled = false; btn.textContent = "↻ Rescan";
   }
