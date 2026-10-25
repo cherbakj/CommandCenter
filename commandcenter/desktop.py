@@ -161,6 +161,121 @@ def _on_navigation(sender, args):
         log.warning("Blocked navigation to %s", uri[:80])
 
 
+# ---- global quick-capture hotkey -------------------------------------------------------------
+# RegisterHotKey on a dedicated thread with its own message loop: WM_HOTKEY lands in that thread's
+# queue (no window needed), and UnregisterHotKey must run on the same thread, so it does, on exit.
+MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 0x1, 0x2, 0x4, 0x8, 0x4000
+WM_HOTKEY, WM_QUIT = 0x0312, 0x0012
+ERROR_HOTKEY_ALREADY_REGISTERED = 1409
+DEFAULT_CAPTURE_HOTKEY = "Ctrl+Alt+Space"
+_HOTKEY_MODS = {"ctrl": MOD_CONTROL, "control": MOD_CONTROL, "alt": MOD_ALT, "shift": MOD_SHIFT,
+                "win": MOD_WIN, "windows": MOD_WIN}
+_HOTKEY_KEYS = {
+    "space": 0x20, "enter": 0x0D, "return": 0x0D, "tab": 0x09, "backspace": 0x08, "insert": 0x2D,
+    "delete": 0x2E, "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22, "up": 0x26, "down": 0x28,
+    "left": 0x25, "right": 0x27, "pause": 0x13, ";": 0xBA, "=": 0xBB, ",": 0xBC, "-": 0xBD, ".": 0xBE,
+    "/": 0xBF, "`": 0xC0, "[": 0xDB, "\\": 0xDC, "]": 0xDD, "'": 0xDE,
+}
+_MOD_NAMES = ((MOD_CONTROL, "Ctrl"), (MOD_ALT, "Alt"), (MOD_SHIFT, "Shift"), (MOD_WIN, "Win"))
+
+
+def parse_hotkey(text: str) -> tuple[int, int, str]:
+    """'Ctrl+Alt+Space' -> (modifiers, virtual key, canonical name). At least one of Ctrl/Alt/Win is required
+    (a bare key or Shift+key would swallow normal typing in every app). ValueError if it isn't a hotkey."""
+    parts = [p.strip() for p in str(text or "").split("+")]
+    if len(parts) < 2 or not all(parts):
+        raise ValueError("use modifiers and a key, e.g. Ctrl+Alt+Space")
+    mods = 0
+    for p in parts[:-1]:
+        bit = _HOTKEY_MODS.get(p.lower())
+        if not bit or mods & bit:
+            raise ValueError(f"unknown or repeated modifier {p[:12]!r}")
+        mods |= bit
+    key = parts[-1]
+    low = key.lower()
+    if len(key) == 1 and key.isascii() and key.isalnum():
+        vk, label = ord(key.upper()), key.upper()
+    elif low in _HOTKEY_KEYS:
+        vk, label = _HOTKEY_KEYS[low], key if len(key) == 1 else low.capitalize()
+    elif low[:1] == "f" and low[1:].isdigit() and 1 <= int(low[1:]) <= 24:
+        vk, label = 0x6F + int(low[1:]), key.upper()
+    else:
+        raise ValueError(f"unknown key {key[:12]!r}")
+    if not mods & (MOD_CONTROL | MOD_ALT | MOD_WIN):
+        raise ValueError("include Ctrl, Alt or Win")
+    name = "+".join([n for bit, n in _MOD_NAMES if mods & bit] + [label])
+    return mods, vk, name
+
+
+class GlobalHotkey:
+    """One system-wide hotkey. start() registers it (False + .error if another app already has it);
+    on_press runs on a short-lived thread so the message loop never blocks; stop() unregisters it."""
+
+    def __init__(self, text: str, on_press, hotkey_id: int = 0xCC01):
+        self.mods, self.vk, self.name = parse_hotkey(text)
+        self.on_press = on_press
+        self.id = hotkey_id
+        self.error = ""
+        self.error_code = 0
+        self.registered = False
+        self._tid = 0
+        self._thread = None
+        self._ready = threading.Event()
+        self._busy = threading.Lock()
+
+    def start(self, timeout: float = 5) -> bool:
+        self._thread = threading.Thread(target=self._loop, name="capture-hotkey", daemon=True)
+        self._thread.start()
+        if not self._ready.wait(timeout):
+            self.error = "the hotkey thread didn't start"
+        return self.registered
+
+    def _loop(self):
+        from ctypes import wintypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.RegisterHotKey.argtypes = (wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT)
+        user32.UnregisterHotKey.argtypes = (wintypes.HWND, ctypes.c_int)
+        user32.GetMessageW.argtypes = (ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT)
+        user32.PeekMessageW.argtypes = (ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT)
+        msg = wintypes.MSG()
+        user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)  # creates this thread's message queue
+        self._tid = ctypes.windll.kernel32.GetCurrentThreadId()
+        try:
+            if not user32.RegisterHotKey(None, self.id, self.mods | MOD_NOREPEAT, self.vk):
+                self.error_code = ctypes.get_last_error()
+                self.error = ("already used by another app" if self.error_code == ERROR_HOTKEY_ALREADY_REGISTERED
+                              else f"Windows error {self.error_code}")
+                return
+            self.registered = True
+        finally:
+            self._ready.set()
+        try:
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:  # 0 = WM_QUIT, -1 = error
+                if msg.message == WM_HOTKEY and msg.wParam == self.id:
+                    self._fire()
+        finally:
+            user32.UnregisterHotKey(None, self.id)
+            self.registered = False
+
+    def _fire(self):
+        if not self._busy.acquire(blocking=False):
+            return  # the previous press is still being handled
+
+        def run():
+            try:
+                self.on_press()
+            except Exception as e:
+                log.warning("Quick-capture hotkey handler failed: %s", type(e).__name__)
+            finally:
+                self._busy.release()
+        threading.Thread(target=run, name="capture-hotkey-press", daemon=True).start()
+
+    def stop(self, timeout: float = 3):
+        if self._thread and self._thread.is_alive() and self._tid:
+            ctypes.windll.user32.PostThreadMessageW(self._tid, WM_QUIT, 0, 0)
+            self._thread.join(timeout)
+
+
 class DesktopApp:
     def __init__(self, start_hidden=False, after_pid=None):
         ui = config.section("ui", {})
@@ -183,6 +298,7 @@ class DesktopApp:
         self.tray = None
         self.server = None
         self._server_thread = None
+        self.hotkey = None
 
     # ---- window (security.shell uses these for the /api/window/* routes) ----
     def show(self):
@@ -328,8 +444,63 @@ class DesktopApp:
         )
         return pystray.Icon("CommandCenter", icon_image(64), TITLE, menu)
 
+    # ---- quick capture (global hotkey) ----
+    def _start_hotkey(self):
+        raw = config.section("ui", {}).get("capture_hotkey", DEFAULT_CAPTURE_HOTKEY)
+        if raw is None or raw is False or str(raw).strip().lower() in ("", "off", "none", "false"):
+            log.info("Quick-capture hotkey is off (ui.capture_hotkey)")
+            return
+        try:
+            hotkey = GlobalHotkey(str(raw), self._on_capture_hotkey)
+        except ValueError as e:
+            log.warning("ui.capture_hotkey isn't a usable hotkey: %s", e)
+            self._hotkey_alert(str(raw)[:40], f"“{str(raw)[:40]}” isn't a hotkey Command Center understands ({e}).")
+            return
+        if hotkey.start():
+            self.hotkey = hotkey
+            log.info("Quick-capture hotkey %s registered", hotkey.name)
+            db.kv_set("capture:hotkey_alerted", None)  # a later conflict alerts again
+        else:
+            log.warning("Quick-capture hotkey %s not registered: %s", hotkey.name, hotkey.error)
+            self._hotkey_alert(hotkey.name, f"{hotkey.name} is {hotkey.error}, so quick capture can't use it.")
+
+    @staticmethod
+    def _hotkey_alert(name, problem):
+        if db.kv_get("capture:hotkey_alerted") == name:
+            return  # once per hotkey, not on every launch
+        db.kv_set("capture:hotkey_alerted", name)
+        alerts.raise_alert("System", "Quick-capture hotkey unavailable",
+                           f"{problem} Set another one with ui.capture_hotkey in config.yaml (e.g. Ctrl+Alt+Shift+N), "
+                           "or use Quick capture in the command palette (Ctrl+K).", "low")
+
+    def _stop_hotkey(self):
+        hotkey, self.hotkey = self.hotkey, None
+        if hotkey:
+            hotkey.stop()
+
+    def _on_capture_hotkey(self):
+        """Shows the window and opens the capture box. While locked it only brings up the lock screen
+        (and Windows Hello): nothing from the dashboard runs or shows before unlock."""
+        if not self.window or self.quitting:
+            return
+        user32 = ctypes.windll.user32
+        hwnd = self._hwnd()
+        restore = None if not hwnd else "hide" if not user32.IsWindowVisible(hwnd) else "minimize" if user32.IsIconic(hwnd) else None
+        ready = self.unlocked and not self.lock_showing
+        self.show()
+        if not ready:
+            return
+        try:
+            user32.SetForegroundWindow(hwnd)  # allowed: this process just received the hotkey input
+        except Exception:
+            pass
+        if self.unlocked and not self.lock_showing and not self.quitting:  # still unlocked (no Lock in between)
+            # run_js, not evaluate_js: evaluate_js wraps the script in eval(), which the page's CSP (no 'unsafe-eval') blocks.
+            self.window.run_js(f"window.CC && CC.quickCapture && CC.quickCapture({{restore: {json.dumps(restore)}}})")
+
     def quit(self):
         self.quitting = True
+        self._stop_hotkey()
         self._cancel.set()  # closes a pending Windows Hello prompt
         if self.server:
             self.server.should_exit = True
@@ -395,9 +566,14 @@ class DesktopApp:
 
             self.tray = self._build_tray()
             self.tray.run_detached()
+            try:
+                self._start_hotkey()
+            except Exception as e:  # never keep the app from starting
+                log.warning("Quick-capture hotkey not started: %s", type(e).__name__)
             webview.start(debug=False, private_mode=False, storage_path=str(config.DATA_DIR / "webview"))
             # webview.start returns once the window is destroyed (Quit / Restart)
         finally:
+            self._stop_hotkey()
             security.shell = None
             security.remove_instance(self.port)
             if self.server:

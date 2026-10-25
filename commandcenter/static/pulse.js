@@ -10,8 +10,20 @@
   css.href = "/static/pulse.css";
   document.head.append(css);
 
-  const state = { filter: "mine", search: "", tickets: [], status: null, loading: false };
+  const SORT_KEY = "cc.pulse.sort";
+  const SORTS = [["newest", "Newest first"], ["oldest", "Oldest waiting"]];
+  const state = { filter: "mine", search: "", sort: savedSort(), tickets: [], status: null, summary: null, loading: false };
   let root, body, timer, searchTimer;
+
+  // The sort choice is a per-viewer convenience: localStorage may be missing or blocked.
+  function savedSort() {
+    try { return localStorage.getItem(SORT_KEY) === "oldest" ? "oldest" : "newest"; } catch { return "newest"; }
+  }
+  function setSort(v, render = true) {
+    state.sort = v === "oldest" ? "oldest" : "newest";
+    try { localStorage.setItem(SORT_KEY, state.sort); } catch { /* ignore */ }
+    if (render) renderList();
+  }
 
   const FILTERS = [["mine", "Mine"], ["open", "Open"], ["all", "All"]];
   const STATUS_TAG = { "Open": "p-open", "Waiting on reporter": "p-wait", "On hold": "p-hold", "Resolved": "p-done" };
@@ -59,8 +71,63 @@
     } catch (e) {
       state.error = e.message;
     }
+    // One after the other: the read-only login has a small connection limit. The summary is
+    // normally the poller's cached copy, so this rarely touches the database.
+    try {
+      const sum = await api("/api/pulse/summary");
+      state.summary = sum.configured && !sum.error ? sum : null;
+    } catch { state.summary = null; }
     state.loading = false;
     renderList();
+  }
+
+  // ---- aging ------------------------------------------------------------------
+
+  const AGING_CLASS = { fresh: "p-age-fresh", warn: "p-age-warn", overdue: "p-age-over", unknown: "p-age-unknown" };
+  const days = (n) => `${n} business day${n === 1 ? "" : "s"}`;
+
+  function agingText(t) {
+    if (t.age_days == null) return "Waiting (age unknown)";
+    return t.age_days === 0 ? "Waiting since today" : `Waiting ${days(t.age_days)}`;
+  }
+
+  function agingChip(t) {
+    if (!t.waiting_on_me) return null;
+    const since = t.waiting_since ? `Waiting on you since ${new Date(t.waiting_since).toLocaleString()}` : "No date on this ticket";
+    return el("span", { class: `tag p-age ${AGING_CLASS[t.aging] || ""}`, title: `${since} (weekends not counted)` }, agingText(t));
+  }
+
+  // Oldest waiting: tickets waiting on Joe, oldest first (unknown ages after them), then the rest as the server sent them.
+  function sorted(list) {
+    if (state.sort !== "oldest") return list;
+    const rank = (t) => (!t.waiting_on_me ? 2 : t.age_days == null ? 1 : 0);
+    return list.map((t, i) => [t, i]).sort(([a, i], [b, j]) =>
+      rank(a) - rank(b) || (b.age_days ?? 0) - (a.age_days ?? 0) ||
+      String(a.waiting_since || "").localeCompare(String(b.waiting_since || "")) || i - j).map(([t]) => t);
+  }
+
+  function agingBar() {
+    const s = state.summary;
+    if (!s || s.aging_waiting == null) return null;
+    const over = s.aging_overdue || 0, warn = s.aging_warn || 0;
+    const level = over ? "over" : warn ? "warn" : "fresh";
+    const parts = !s.aging_waiting ? ["Nothing waiting on you"] : [
+      `${over} overdue`,
+      warn ? `${warn} aging` : null,
+      `${s.aging_waiting} waiting`,
+      s.oldest_days != null ? `oldest ${s.oldest_days} day${s.oldest_days === 1 ? "" : "s"}` +
+        (s.oldest_ticket_no != null ? ` (#${s.oldest_ticket_no})` : "") : null,
+    ].filter(Boolean);
+    return el("button", {
+      type: "button", class: `pulse-aging p-age-bar-${level}`,
+      title: `Business days waiting on you (weekends skipped). Amber from ${s.aging_warn_days}, red from ${s.aging_overdue_days}. Click to sort oldest first.`,
+      onclick: () => {
+        if (state.filter === "mine") { setSort("oldest"); return; }
+        state.filter = "mine";
+        setSort("oldest", false);
+        loadTickets();
+      },
+    }, el("span", { class: "pulse-aging-dot", "aria-hidden": "true" }), parts.join(" · "));
   }
 
   // ---- ticket list ----------------------------------------------------------
@@ -78,8 +145,10 @@
         class: `small ${state.filter === k ? "primary" : "subtle"}`, "aria-pressed": String(state.filter === k),
         onclick: () => { state.filter = k; loadTickets(); },
       }, label)));
+    const sort = el("select", { class: "pulse-sort", "aria-label": "Sort", onchange: (e) => setSort(e.target.value) },
+      SORTS.map(([k, label]) => el("option", { value: k, selected: state.sort === k }, label)));
     const st = state.status || {};
-    return el("div", { class: "toolbar" }, seg, search, el("span", { class: "spacer" }),
+    return el("div", { class: "toolbar" }, seg, search, sort, el("span", { class: "spacer" }),
       st.error ? el("span", { class: "err", title: st.error }, "Last poll failed") :
         st.last_ok ? el("span", { class: "muted" }, `Polled ${when(st.last_ok)}`) : null,
       el("button", { class: "small", onclick: () => loadTickets() }, "↻ Refresh"),
@@ -93,7 +162,7 @@
     return el("li", { class: `pulse-row${t.mine && t.status === "Open" ? " pulse-mine" : ""}` },
       el("div", { class: "pulse-no" }, t.ticket_no != null ? `#${t.ticket_no}` : "—"),
       el("div", { class: "grow" },
-        el("div", { class: "title" }, t.title,
+        el("div", { class: "title" }, t.title, agingChip(t),
           el("span", { class: `tag ${STATUS_TAG[t.status] || ""}` }, t.status), pr,
           el("span", { class: "tag p-type" }, TYPE_LABEL[t.type] || t.type || "")),
         t.detail && t.detail !== t.title ? el("div", { class: "pulse-detail" }, t.detail) : null,
@@ -113,14 +182,14 @@
     const list = el("ul", { class: "list panel-list pulse-list" });
     if (state.error) fill(list, [el("li", { class: "err" }, state.error)], "");
     else if (state.loading && !state.tickets.length) fill(list, [], "Loading tickets…");
-    else fill(list, state.tickets.map(row), state.search ? "No tickets match that search." :
+    else fill(list, sorted(state.tickets).map(row), state.search ? "No tickets match that search." :
       state.filter === "mine" ? "Nothing waiting on you. Inbox zero." : "No tickets.");
     const counts = el("span", { class: "chip" }, `${state.tickets.length} TICKET${state.tickets.length === 1 ? "" : "S"}`);
-    body.replaceChildren(toolbar(),
+    body.replaceChildren(...[toolbar(), agingBar(),
       el("div", { class: "panel pulse-panel" },
         el("div", { class: "panel-head" }, el("span", { class: "panel-label" }, "PULSE // FEEDBACK TICKETS"), counts,
           state.loading ? el("span", { class: "muted" }, "refreshing…") : null),
-        list));
+        list)].filter(Boolean));
   }
 
   // ---- setup ----------------------------------------------------------------

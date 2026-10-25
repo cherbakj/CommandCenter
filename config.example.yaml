@@ -29,6 +29,7 @@ today:
 ui:
   accent: "#39ff14"        # main accent color (neon green); any hex color works
   start_minimized: false   # true = open to the tray only
+  capture_hotkey: "Ctrl+Alt+Space"   # global quick-capture hotkey (desktop app); "off" to disable
 
 teams:
   enabled: true            # checks Teams once you've logged in on the Teams tab
@@ -172,6 +173,11 @@ pulse:
   recent_days: 7                       # resolved tickets stay visible to the poller this long
   alert_new: true                      # alert when a new ticket lands on you
   alert_changes: true                  # alert when one of yours changes status or priority
+  # Ticket aging: business days (weekends skipped) a ticket has waited on you, counted from the
+  # latest of created / monkey handed to you / admin reply / taken off hold. On-hold tickets pause.
+  aging_warn_days: 2                   # amber from this many business days
+  aging_overdue_days: 5                # red from this many business days
+  aging_alert_time: "08:00"            # one weekday-morning alert if any are amber/red; off to turn off
   # host: aws-0-us-west-1.pooler.supabase.com   # Supabase > Connect > Session pooler
   # port: 5432
   # database: postgres
@@ -225,3 +231,8 @@ vscode:
                                        # (VS Code web keeps settings and folder trust per port)
   # install_dir: C:\Users\you\AppData\Local\Programs\Microsoft VS Code   # desktop VS Code, used to match its version
   # commit: <40-char commit>           # pin a specific VS Code build instead of matching desktop VS Code
+
+# Workday helpers (Top 3, uncommitted-work reminder, yesterday recap, meeting notes)
+daily:
+  uncommitted_after: "15:00"     # show the "projects with uncommitted work" chip after this time on workdays
+  meeting_notes_prompt: true     # ask "capture notes/actions?" when a meeting ends

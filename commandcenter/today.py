@@ -237,7 +237,18 @@ async def _briefing(now):
     agenda = data["agenda"] if isinstance(data["agenda"], list) else []
     first = next((m for m in agenda if m["start"] >= now.isoformat(timespec="minutes")), None)
     body = f"First up: {first['subject']} at {datetime.fromisoformat(first['start']):%I:%M %p}" if first else ""
-    alerts.raise_alert("Today", summary(data), body, "normal", {"type": "today"})
+    top3 = await _daily_note("briefing_note")
+    alerts.raise_alert("Today", summary(data), " · ".join(p for p in (body, top3) if p), "normal", {"type": "today"})
+
+
+async def _daily_note(name) -> str:
+    """Top 3 line for the briefing / wrap-up from daily.py (counts only; "" if that module isn't there)."""
+    try:
+        from . import daily
+        return await asyncio.to_thread(getattr(daily, name))
+    except Exception:
+        log.exception("Top 3 summary failed")
+        return ""
 
 
 async def _wrapup(now):
@@ -251,9 +262,19 @@ async def _wrapup(now):
     first = tomorrow[0] if tomorrow else None
     parts = [f"{len(open_due)} task(s) still due", f"{len(f.get('needs_reply', []))} reply(ies) owed",
              f"{len(f.get('awaiting_reply', []))} waiting on others"]
+    top3 = await _daily_note("wrapup_note")
+    if top3:
+        parts.insert(0, top3)
     body = (f"{label}: {len(tomorrow)} meeting(s), first is {first['subject']} at "
             f"{datetime.fromisoformat(first['start']):%I:%M %p}" if first else f"{label}: no meetings")
     alerts.raise_alert("Wrap-up", " · ".join(parts), body, "normal", {"type": "today"})
+    try:  # projects with uncommitted / unpushed work: a separate high-priority alert
+        from . import daily
+        await daily.wrapup_uncommitted()
+    except ImportError:
+        pass
+    except Exception:
+        log.exception("Uncommitted-work check failed")
 
 
 async def briefing_loop():

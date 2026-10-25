@@ -241,16 +241,62 @@ def meetings_range(days=10) -> list[dict]:
 
 # ---- actions -----------------------------------------------------------------
 
-def reply(entry_id, text, reply_all=False, send=True) -> dict:
-    """Returns the conversation and recipients, so a no-reply reminder can watch the thread."""
+OL_DISCARD = 1
+OL_TO, OL_CC, OL_BCC = 1, 2, 3
+
+
+def _recipients(msg) -> list[dict]:
+    out = []
+    for r in msg.Recipients:
+        email = ""
+        try:
+            entry = r.AddressEntry
+            user = entry.GetExchangeUser() if entry else None
+            email = (user.PrimarySmtpAddress if user else r.Address) or ""
+        except pywintypes.com_error:
+            email = r.Address or ""
+        out.append({"name": r.Name or email, "email": email,
+                    "type": {OL_TO: "To", OL_CC: "CC", OL_BCC: "BCC"}.get(r.Type, "To"),
+                    "external": bool(email) and "@" in email and not people.is_internal(email)})
+    return out
+
+
+def recipients_signature(subject, recipients) -> str:
+    """What the review screen promised: subject + who gets it. A send must match this exactly."""
+    who = sorted(f"{r['type']}:{(r['email'] or r['name']).lower()}" for r in recipients)
+    return (subject or "") + "|" + ";".join(who)
+
+
+def reply_preview(entry_id, text, reply_all=False) -> dict:
+    """Builds the reply exactly as Outlook would send it, reports subject/recipients, then discards it."""
     item = _ns().GetItemFromID(entry_id)
     msg = item.ReplyAll() if reply_all else item.Reply()
+    try:
+        recips = _recipients(msg)
+        subject = msg.Subject or ""
+    finally:
+        msg.Close(OL_DISCARD)
+    return {"subject": subject, "recipients": recips, "text": text,
+            "signature": recipients_signature(subject, recips)}
+
+
+def reply(entry_id, text, reply_all=False, send=True, expect_signature=None) -> dict:
+    """Returns the conversation and recipients, so a no-reply reminder can watch the thread.
+    Sending requires `expect_signature` from reply_preview(); it's re-checked right before Send()."""
+    item = _ns().GetItemFromID(entry_id)
+    msg = item.ReplyAll() if reply_all else item.Reply()
+    if send:
+        recips = _recipients(msg)
+        if expect_signature is None or recipients_signature(msg.Subject or "", recips) != expect_signature:
+            msg.Close(OL_DISCARD)
+            raise ValueError("The recipients or subject changed since you reviewed this reply. Review it again.")
     if msg.BodyFormat == OL_FORMAT_HTML:
         snippet = "<div>" + html.escape(text).replace("\n", "<br>") + "</div><br>"
         msg.HTMLBody = re.sub(r"(<body[^>]*>)", lambda m: m.group(1) + snippet, msg.HTMLBody, count=1, flags=re.I)
     else:
         msg.Body = text + "\n\n" + msg.Body
-    info = {"conversation": msg.ConversationID, "subject": msg.Subject or "", "to": msg.To or ""}
+    info = {"conversation": msg.ConversationID, "subject": msg.Subject or "", "to": msg.To or "",
+            "recipients": [r["email"] or r["name"] for r in _recipients(msg)]}
     if send:
         msg.Send()
     else:

@@ -373,9 +373,19 @@ $("#project-refresh").addEventListener("click", loadProjectList);
 
 // ---- alerts ------------------------------------------------------------------
 
+// Feature modules handle their own alert action types (CC.registerAlertAction), e.g. "meeting-notes".
+const alertActionTypes = {};
+// ...and add buttons to meeting rows (Today agenda, prep card, Calendar tab): CC.addMeetingAction(fn(meeting, where)).
+const meetingActionSources = [];
+function meetingActions(m, where) {
+  return meetingActionSources.flatMap((fn) => { try { return [fn(m, where)].flat().filter(Boolean); } catch { return []; } });
+}
 function alertAction(a) {
   const act = a.action;
   if (!act) return null;
+  if (Object.hasOwn(alertActionTypes, act.type)) {
+    try { return alertActionTypes[act.type](act, a); } catch { return null; }
+  }
   if (act.type === "today") return el("button", { class: "small", onclick: () => openTab("today") }, "Open Today");
   if (act.type === "mail") return el("button", { class: "small", onclick: () => { openTab("mail"); showMail(act.id); } }, "View mail");
   if (act.type === "url") return linkButton(act.url, "Open site");
@@ -592,19 +602,25 @@ async function orderDialog(number) {
   }
 }
 
-function replyDialog(m, replyAll) {
+// Replies are always verified before sending: Review shows exactly who gets it and what it says, and the
+// server only sends a reply that came from that review (single-use approval, recipients re-checked).
+function replyDialog(m, replyAll, draft = "", remindDays = 0) {
   const text = el("textarea", { placeholder: "Your reply…", "aria-label": "Reply text" });
+  text.value = draft;
   const remind = el("select", { id: "remind-days" },
     [0, 1, 2, 3, 5].map((n) => el("option", { value: n }, n ? `${n} day${n > 1 ? "s" : ""}` : "Don't remind me")));
+  remind.value = String(remindDays);
   const err = el("div", { class: "err", role: "alert" });
-  const send = async (sendNow) => guardedIn(err, async () => {
+  const openDraft = () => guardedIn(err, async () => {
     if (!text.value.trim()) { text.focus(); return; }
-    const days = sendNow ? Number(remind.value) : 0;
-    await api("/api/mail/reply", { id: m.id, text: text.value, reply_all: replyAll, send: sendNow, remind_days: days });
+    await api("/api/mail/reply", { id: m.id, text: text.value, reply_all: replyAll, send: false });
     $("#dialog").close();
-    showMessage(sendNow ? "Sent" : "Draft opened", sendNow
-      ? `Your reply was sent from Outlook.${days ? ` If nobody replies within ${days} day${days > 1 ? "s" : ""}, you'll get an alert.` : ""}`
-      : "Review and send it in Outlook.");
+    showMessage("Draft opened", "Check it and press Send in Outlook.");
+  });
+  const review = () => guardedIn(err, async () => {
+    if (!text.value.trim()) { text.focus(); return; }
+    const p = await api("/api/mail/reply/preview", { id: m.id, text: text.value, reply_all: replyAll });
+    reviewReply(m, replyAll, p, Number(remind.value));
   });
   showDialog(
     el("h3", {}, `${replyAll ? "Reply all" : "Reply"}: ${m.subject}`), text,
@@ -614,9 +630,41 @@ function replyDialog(m, replyAll) {
     err,
     el("div", { class: "row" },
       el("button", { value: "cancel" }, "Cancel"),
-      el("button", { type: "button", onclick: () => send(false) }, "Open draft in Outlook"),
-      el("button", { type: "button", class: "primary", onclick: () => send(true) }, "Send")));
+      el("button", { type: "button", onclick: openDraft }, "Open draft in Outlook"),
+      el("button", { type: "button", class: "primary", onclick: review }, "Review")));
   text.focus();
+}
+
+function reviewReply(m, replyAll, p, remindDays) {
+  const err = el("div", { class: "err", role: "alert" });
+  const outside = p.recipients.filter((r) => r.external);
+  const person = (r) => el("span", { class: `rv-person ${r.external ? "external" : ""}`, title: r.external ? "Outside Sonance" : "" },
+    r.external ? "⚠ " : "", r.name && r.email && r.name !== r.email ? `${r.name} <${r.email}>` : (r.email || r.name));
+  const line = (label, type) => {
+    const list = p.recipients.filter((r) => r.type === type);
+    return list.length ? el("div", { class: "rv-line" }, el("span", { class: "rv-label" }, label), el("div", { class: "rv-people" }, list.map(person))) : null;
+  };
+  const sendBtn = el("button", { type: "button", class: "send-btn" }, "Send");
+  sendBtn.addEventListener("click", () => guardedIn(err, async () => {
+    sendBtn.disabled = true;
+    try {
+      await api("/api/mail/reply", { id: m.id, text: p.text, reply_all: replyAll, send: true, remind_days: remindDays, approval_id: p.approval_id });
+    } catch (e) { sendBtn.disabled = false; throw e; }
+    $("#dialog").close();
+    showMessage("Sent", `Your reply was sent from Outlook.${remindDays ? ` If nobody replies within ${remindDays} day${remindDays > 1 ? "s" : ""}, you'll get an alert.` : ""}`);
+  }));
+  showDialog(
+    el("h3", {}, "Review before sending"),
+    outside.length ? el("div", { class: "rv-warn" }, `⚠ ${outside.length} recipient${outside.length > 1 ? "s are" : " is"} outside Sonance`) : null,
+    el("div", { class: "rv-card" },
+      line("To", "To"), line("CC", "CC"), line("BCC", "BCC"),
+      el("div", { class: "rv-line" }, el("span", { class: "rv-label" }, "Subject"), el("div", {}, p.subject)),
+      el("pre", { class: "rv-body" }, p.text)),
+    el("p", { class: "muted" }, "The earlier thread is included below your text, as Outlook normally does.", remindDays ? ` No-reply reminder: ${remindDays} day${remindDays > 1 ? "s" : ""}.` : ""),
+    err,
+    el("div", { class: "row" },
+      el("button", { type: "button", class: "subtle", onclick: () => replyDialog(m, replyAll, p.text, remindDays) }, "← Edit"),
+      sendBtn));
 }
 
 $("#mail-unread").addEventListener("change", loaders.mail);
@@ -696,6 +744,7 @@ async function prepDialog(id, meta) {
           p.organizer && el("span", {}, el("b", {}, "Organizer "), p.organizer))),
       el("div", { class: "actions" },
         p.join_url && linkButton(p.join_url, "Join", "primary"),
+        meetingActions({ id, subject: p.subject, start: meta?.start || p.start, end: meta?.end || p.end }, "prep"),
         el("button", { type: "button", onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook"))),
     el("div", { class: "prep-grid" },
       el("div", {},
@@ -964,6 +1013,17 @@ function renderStats(d) {
     tile.style.cursor = "pointer";
     tile.addEventListener("click", () => openTab("pulse"));
     $("#stats").append(tile);
+    if (p.aging_waiting) {  // tickets waiting on Joe longer than the warn/overdue thresholds (business days)
+      const over = p.aging_overdue || 0, warn = p.aging_warn || 0;
+      const aging = stat(over || warn, over ? "Pulse overdue" : "Pulse aging",
+        over ? "var(--red)" : warn ? "var(--amber)" : "var(--accent)", over ? "alarm" : "");
+      aging.title = p.oldest_days != null
+        ? `Oldest waiting ${p.oldest_days} business day${p.oldest_days === 1 ? "" : "s"}` + (p.oldest_ticket_no != null ? ` (#${p.oldest_ticket_no})` : "")
+        : `${p.aging_waiting} waiting on you`;
+      aging.style.cursor = "pointer";
+      aging.addEventListener("click", () => openTab("pulse"));
+      $("#stats").append(aging);
+    }
     balanceStats();
   }).catch(() => {});
   balanceStats();
@@ -1039,6 +1099,7 @@ function renderAgenda(agenda) {
       el("div", { class: "actions" },
         m.join_url && end > now && linkButton(m.join_url, "Join", "small primary"),
         end > now && el("button", { class: "small alt", title: "Attendees, recent mail and notes", onclick: () => prepDialog(m.id, m) }, "Prep"),
+        meetingActions(m, "agenda"),
         el("button", { class: "small", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open"))) };
   });
   // Ties go to the open slot first: a slot always ends where the next meeting starts.
@@ -1889,6 +1950,7 @@ setInterval(refresh, 5000);
 //   CC.addPaletteSource(() => [{ group: "Toolkit", label: "...", hint: "...", run() {...} }])
 window.CC = {
   $, el, api, guarded, fill, when, timeOf, srcTag, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
+  replyDialog,  // verified reply: compose -> review (recipients, subject, text) -> Send
   get todayData() { return todayData; },
   // The project picked in "Working on:" (right pane), or null. Changes fire document "cc:project" {detail:{path,name}}.
   get activeProject() { return activeProject(); },
@@ -1918,6 +1980,12 @@ window.CC = {
   },
   addPaletteSource(fn) { extraPaletteSources.push(fn); },
   wideDialog(...content) { $("#dialog").classList.add("wide"); showDialog(...content); },
+  showMail(id) { openTab("mail"); showMail(id); },
+  registerAlertAction(type, fn) {  // the built-in types can't be replaced
+    if (/^[a-z0-9-]{1,40}$/.test(String(type)) && !["today", "mail", "url", "meeting", "order"].includes(type) && typeof fn === "function") alertActionTypes[type] = fn;
+  },
+  addMeetingAction(fn) { if (typeof fn === "function") meetingActionSources.push(fn); },
+  meetingActions,
 };
 $("#dialog").addEventListener("close", () => $("#dialog").classList.remove("wide"));
 document.dispatchEvent(new Event("cc:ready"));

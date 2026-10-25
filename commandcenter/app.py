@@ -1,9 +1,12 @@
 """FastAPI app: JSON API + the dashboard page. Listens on 127.0.0.1 only."""
 import asyncio
+import hashlib
 import importlib
 import logging
 import os
 import re
+import secrets
+import time
 import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,7 +26,7 @@ STATIC = Path(__file__).parent / "static"
 def _load_feature_modules():
     """Optional feature modules (each in its own file) that add API routes and background jobs."""
     found = []
-    for name in ("security", "toolkit", "pulse", "terminal", "vscode", "planner", "profile", "feeds", "daily"):
+    for name in ("security", "toolkit", "pulse", "terminal", "vscode", "planner", "profile", "feeds", "daily", "vault", "privacy"):
         try:
             found.append(importlib.import_module(f".{name}", __package__))
         except ModuleNotFoundError as e:
@@ -308,13 +311,64 @@ async def mail_item(id: str):
     return await outlook.call(outlook.get_message, id)
 
 
+# ---- verified sending: nothing is sent unless it was reviewed first ------------------------------
+# /preview builds the reply as Outlook would send it and returns a single-use approval for exactly that
+# text and those recipients. /reply with send=true only works with that approval (5-minute lifetime),
+# and Outlook re-checks the recipients right before sending. Opening a draft (send=false) needs no approval
+# because Joe presses Send in Outlook himself.
+APPROVAL_SECONDS = 300
+_approvals: dict[str, dict] = {}
+
+
+def _approval_key(id, text, reply_all) -> str:
+    return hashlib.sha256(f"{id}\0{reply_all}\0{text}".encode("utf-8")).hexdigest()
+
+
+@app.post("/api/mail/reply/preview")
+async def mail_reply_preview(id: str = Body(...), text: str = Body(...), reply_all: bool = Body(False)):
+    if not text.strip():
+        raise HTTPException(400, "Write a reply first")
+    if len(text) > 20000:
+        raise HTTPException(400, "Reply is too long")
+    preview = await outlook.call(outlook.reply_preview, id, text, reply_all)
+    now = time.time()
+    for k in [k for k, v in _approvals.items() if v["expires"] < now]:
+        _approvals.pop(k)
+    approval_id = secrets.token_urlsafe(18)
+    _approvals[approval_id] = {"key": _approval_key(id, text, reply_all), "signature": preview["signature"],
+                               "expires": now + APPROVAL_SECONDS}
+    return {"approval_id": approval_id, "subject": preview["subject"], "recipients": preview["recipients"],
+            "text": text, "expires_in": APPROVAL_SECONDS}
+
+
 @app.post("/api/mail/reply")
 async def mail_reply(id: str = Body(...), text: str = Body(...), reply_all: bool = Body(False), send: bool = Body(True),
-                     remind_days: float = Body(0)):
-    info = await outlook.call(outlook.reply, id, text, reply_all, send)
-    if send and remind_days > 0:
-        today.watch_for_reply(info, remind_days, id)
+                     remind_days: float = Body(0), approval_id: str | None = Body(None)):
+    signature = None
+    if send:
+        approval = _approvals.pop(approval_id or "", None)  # single use, even if it then fails
+        if not approval or approval["expires"] < time.time():
+            raise HTTPException(409, "Review the reply before sending (the review expired or was already used)")
+        if approval["key"] != _approval_key(id, text, reply_all):
+            raise HTTPException(409, "The reply changed after you reviewed it. Review it again.")
+        signature = approval["signature"]
+    try:
+        info = await outlook.call(outlook.reply, id, text, reply_all, send, signature)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    if send:
+        log = db.kv_get("mail:sent_log", [])
+        log.insert(0, {"ts": db.now(), "subject": info["subject"], "to": info["recipients"][:20], "via": "Command Center"})
+        db.kv_set("mail:sent_log", log[:200])
+        if remind_days > 0:
+            today.watch_for_reply(info, remind_days, id)
     return {"ok": True}
+
+
+@app.get("/api/mail/sent-log")
+async def mail_sent_log():
+    """Replies sent from Command Center: when, subject and recipients (no message bodies)."""
+    return {"sent": db.kv_get("mail:sent_log", [])}
 
 
 @app.post("/api/mail/read")

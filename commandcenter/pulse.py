@@ -11,6 +11,23 @@ waiting on the person who filed it). Pulse has no assignee or priority columns, 
                  normal; everything else -> low)
 Ticket link: https://pulse.sonance.com/feedback?ticket=<ticket_no>
 
+Ticket aging (tickets waiting on Joe):
+  - "waiting on Joe" = a "mine" ticket that is open (not resolved) and not on hold. A hold
+    pauses the wait, the same as open_mine in the summary.
+  - It has been waiting since the LATEST of these columns (whichever are present):
+      created_at  - filed (the monkey starts with the admins)
+      monkey_at   - the monkey last moved; it's on Joe's side now, so that move handed it over
+      replied_at  - the latest admin reply (Pulse's cache of the last admin message)
+      hold_at     - only when NOT on hold: when it came off hold (Pulse stamps hold_at on release)
+    Pulse doesn't record when a ticket is reopened (resolved_at is cleared), so a reopened
+    ticket ages from its last monkey move / reply / creation.
+  - Age = business days since then: weekdays strictly after the start date, up to and including
+    today, with a weekend start counted from the Monday. Same day = 0, Friday -> Monday = 1,
+    Saturday -> Monday = 0. Holidays aren't known, so they count.
+  - Buckets: fresh (< pulse.aging_warn_days), warn, overdue (>= pulse.aging_overdue_days);
+    "unknown" if the row has none of the columns above.
+  - One daily alert on workday mornings (pulse.aging_alert_time) if any are warn/overdue.
+
 Security:
   - Connects as a dedicated Postgres login that can only SELECT the listed columns of
     data_reviews (setup SQL: SETUP_SQL below / the Pulse tab). Setup refuses a login that
@@ -23,7 +40,7 @@ Security:
 import asyncio
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import keyring
@@ -50,6 +67,9 @@ DEFAULTS = {
     "recent_days": 7,
     "alert_new": True,
     "alert_changes": True,
+    "aging_warn_days": 2,
+    "aging_overdue_days": 5,
+    "aging_alert_time": "08:00",
 }
 CONNECTION_KEYS = ("host", "port", "database", "user", "ssl_root_cert")
 COLUMNS = ("id", "ticket_no", "type", "page", "section", "sub_section", "flagged_by", "note",
@@ -287,7 +307,69 @@ def is_mine(r: dict, me: set[str]) -> bool:
     return r.get("monkey_with") in ("admin", None)
 
 
-def shape(r: dict, s: dict, me: set[str]) -> dict:
+def _when(v) -> datetime | None:
+    """A timestamp column as an aware datetime (naive = local time), or None."""
+    if isinstance(v, str):
+        try:
+            v = datetime.fromisoformat(v.strip())
+        except ValueError:
+            return None
+    if not isinstance(v, datetime):
+        return None
+    return v.astimezone()
+
+
+def waiting_since(r: dict) -> datetime | None:
+    """When an open ticket started waiting on its current side (see the module docstring)."""
+    cols = ["created_at", "monkey_at", "replied_at"] + ([] if r.get("on_hold") else ["hold_at"])
+    times = [t for t in (_when(r.get(c)) for c in cols) if t is not None]
+    return max(times) if times else None
+
+
+def business_days(start: datetime, now: datetime) -> int:
+    """Weekdays strictly after start's date up to and including now's date (a weekend start
+    counts from Monday), in now's time zone. 0 for the same day or a start in the future."""
+    now = _when(now)
+    first = _when(start).astimezone(now.tzinfo).date()
+    last = now.date()
+    if first.weekday() >= 5:  # Saturday/Sunday -> the Monday after
+        first += timedelta(days=7 - first.weekday())
+    if last <= first:
+        return 0
+    weeks, rest = divmod((last - first).days, 7)
+    return weeks * 5 + sum(1 for i in range(1, rest + 1) if (first + timedelta(days=i)).weekday() < 5)
+
+
+def _int_setting(v, default: int, lo: int, hi: int) -> int:
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return default
+    return min(max(v, lo), hi)
+
+
+def aging_thresholds(s: dict) -> tuple[int, int]:
+    """(warn_days, overdue_days) from config; overdue is never below warn."""
+    warn = _int_setting(s.get("aging_warn_days"), DEFAULTS["aging_warn_days"], 1, 60)
+    overdue = _int_setting(s.get("aging_overdue_days"), DEFAULTS["aging_overdue_days"], 1, 365)
+    return warn, max(warn, overdue)
+
+
+def aging_bucket(age_days: int | None, warn: int, overdue: int) -> str:
+    if age_days is None:
+        return "unknown"
+    return "overdue" if age_days >= overdue else "warn" if age_days >= warn else "fresh"
+
+
+def waiting_on_me(r: dict, me: set[str]) -> bool:
+    return not r.get("resolved") and not r.get("on_hold") and is_mine(r, me)
+
+
+def shape(r: dict, s: dict, me: set[str], now: datetime | None = None) -> dict:
+    now = now or datetime.now().astimezone()
+    waiting = waiting_on_me(r, me)
+    since = waiting_since(r) if waiting else None
+    age = business_days(since, now) if since else None
     return {
         "id": str(r["id"]),
         "ticket_no": r.get("ticket_no"),
@@ -305,6 +387,10 @@ def shape(r: dict, s: dict, me: set[str]) -> dict:
                                             r.get("replied_at"), r.get("resolved_at")) if v), default=None)),
         "resolved_by": r.get("resolved_by"),
         "url": ticket_url(r.get("ticket_no")),
+        "waiting_on_me": waiting,
+        "waiting_since": since.isoformat(timespec="seconds") if since else None,
+        "age_days": age,
+        "aging": aging_bucket(age, *aging_thresholds(s)) if waiting else None,
     }
 
 
@@ -313,7 +399,33 @@ def fetch(*, status="open", mine=False, search="", limit=100) -> list[dict]:
     me = _me(s)
     sql, params = build_query(status=status, mine=mine, me=me, search=search, limit=limit,
                               recent_days=s.get("recent_days"))
-    return [shape(r, s, me) for r in query(sql, params)]
+    now = datetime.now().astimezone()
+    return [shape(r, s, me, now) for r in query(sql, params)]
+
+
+AGING_BUCKETS = ("fresh", "warn", "overdue", "unknown")
+
+
+def aging_report(tickets: list[dict], s: dict | None = None) -> dict:
+    """Tickets waiting on Joe (shaped), bucketed by age, oldest first (unknown ages last)."""
+    warn, overdue = aging_thresholds(s or settings())
+    waiting = [t for t in tickets if t.get("waiting_on_me")]
+    waiting.sort(key=lambda t: (t["age_days"] is None, -(t["age_days"] or 0), t["waiting_since"] or "",
+                                t["ticket_no"] or 0))
+    counts = {b: sum(1 for t in waiting if t["aging"] == b) for b in AGING_BUCKETS}
+    oldest = waiting[0] if waiting and waiting[0]["age_days"] is not None else None
+    return {"warn_days": warn, "overdue_days": overdue, "total": len(waiting), "counts": counts,
+            "oldest_days": oldest["age_days"] if oldest else None,
+            "oldest_ticket_no": oldest["ticket_no"] if oldest else None, "tickets": waiting}
+
+
+def _aging_summary(rep: dict) -> dict:
+    """The numbers only (no ticket text): the summary is cached in the kv status row."""
+    c = rep["counts"]
+    return {"aging_fresh": c["fresh"], "aging_warn": c["warn"], "aging_overdue": c["overdue"],
+            "aging_unknown": c["unknown"], "aging_waiting": rep["total"], "oldest_days": rep["oldest_days"],
+            "oldest_ticket_no": rep["oldest_ticket_no"], "aging_warn_days": rep["warn_days"],
+            "aging_overdue_days": rep["overdue_days"]}
 
 
 def summarize(tickets: list[dict]) -> dict:
@@ -332,6 +444,7 @@ def summarize(tickets: list[dict]) -> dict:
         "high_priority": sum(1 for t in open_ if t["priority"] == "high"),
         "open_total": len(open_),
         "on_hold": sum(1 for t in open_ if t["status"] == "On hold"),
+        **_aging_summary(aging_report(tickets)),
     }
 
 
@@ -387,6 +500,43 @@ def diff_alerts(old: dict | None, tickets: list[dict], me: set[str]) -> tuple[li
     return out, new_state
 
 
+def _alert_window(at, now: datetime, hours=4) -> bool:
+    """True from `at` ("HH:MM", local) for `hours`, on weekdays only. "" or a bad value = off."""
+    if now.weekday() >= 5:
+        return False
+    m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", str(at or ""))
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        return False
+    start = now.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+    return start <= now < start + timedelta(hours=hours)
+
+
+def _plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def daily_aging_alert(tickets: list[dict], s: dict | None = None, now: datetime | None = None) -> dict | None:
+    """Raises at most one "waiting on you" alert per workday morning; returns it, or None.
+    The day is only used up (db.seen) when there's something to say."""
+    s = s or settings()
+    now = now or datetime.now().astimezone()
+    if not _alert_window(s.get("aging_alert_time", DEFAULTS["aging_alert_time"]), now):
+        return None
+    rep = aging_report(tickets, s)
+    late = [t for t in rep["tickets"] if t["aging"] in ("warn", "overdue")]
+    if not late or db.seen(f"pulse:aging:{now.date().isoformat()}"):
+        return None
+    shown = [f"#{t['ticket_no']} {t['title'][:80]}" for t in late[:3]]
+    if len(late) > 3:
+        shown.append(f"+{len(late) - 3} more")
+    a = {"title": f"{_plural(len(late), 'ticket')} waiting on you (oldest {_plural(late[0]['age_days'], 'day')})",
+         "body": " · ".join(shown),
+         "priority": "high" if any(t["aging"] == "overdue" for t in late) else "normal",
+         "action": {"type": "url", "url": ticket_url(None), "label": "Open Pulse"}}
+    alerts.raise_alert("Pulse", a["title"], a["body"], a["priority"], a["action"])
+    return a
+
+
 async def poll_once() -> dict:
     s = settings()
     tickets = await asyncio.to_thread(fetch, status="recent", limit=2000)
@@ -397,6 +547,10 @@ async def poll_once() -> dict:
         alerts.raise_alert("Pulse", f"{len(found) - 10} more ticket updates", "Open the Pulse tab to see them.", "low",
                            {"type": "url", "url": ticket_url(None)})
     db.kv_set("pulse:state", state)
+    try:
+        daily_aging_alert(tickets, s)
+    except Exception:
+        log.exception("Pulse aging alert failed")
     summary = summarize(tickets)
     _set_status(ok=True, error=None, last_poll=db.now(), last_ok=db.now(), summary=summary)
     return summary
@@ -532,6 +686,18 @@ async def tickets(mine: bool = False, status: str = "open", search: str = "", li
     except Exception as e:
         raise HTTPException(502, str(e)[:300]) from None
     return {"configured": True, "tickets": rows}
+
+
+@router.get("/api/pulse/aging")
+async def aging():
+    """Tickets waiting on Joe: counts per bucket (fresh / warn / overdue / unknown), oldest first."""
+    if not is_configured():
+        return {"configured": False}
+    try:
+        rows = await asyncio.to_thread(fetch, status="open", mine=True, limit=2000)
+    except Exception as e:
+        raise HTTPException(502, str(e)[:300]) from None
+    return {"configured": True, **aging_report(rows), "as_of": db.now()}
 
 
 @router.get("/api/pulse/summary")

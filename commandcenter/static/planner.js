@@ -32,6 +32,7 @@
           [m.all_day ? "" : `until ${clock(m.end)}`, m.location, m.status && m.status !== "busy" ? m.status : ""].filter(Boolean).join(" · "))),
       el("div", { class: "pl-acts" },
         m.join_url && new Date(m.end) > now && el("button", { class: "small primary", onclick: () => CC.openExternal(m.join_url) }, "Join"),
+        !m.all_day && CC.meetingActions ? CC.meetingActions(m, "planner") : null,
         el("button", { class: "small subtle", title: "Open in Outlook", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open")));
   }
 

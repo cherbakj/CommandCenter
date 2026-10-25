@@ -672,3 +672,15 @@ header.nav-wrap .navs { order: 3; flex-basis: 100%; }
 .src-sql { color: #7fffd4; }
 .src-website { color: #d2d8de; }
 .src-system { color: var(--muted); }
+
+/* ---- reply review (verify before sending) ---- */
+.rv-warn { padding: .5rem .7rem; margin-bottom: .6rem; font-weight: 700; color: #1a1000; background: var(--amber); }
+.rv-card { border: 1px solid var(--line-strong); background: rgb(0 0 0 / .35); padding: .7rem .8rem; display: flex; flex-direction: column; gap: .45rem; }
+.rv-line { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: .5rem; align-items: baseline; }
+.rv-label { font: 700 .72rem var(--font-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.rv-people { display: flex; flex-wrap: wrap; gap: .3rem .6rem; overflow-wrap: anywhere; }
+.rv-person.external { color: var(--amber); font-weight: 700; }
+.rv-body { margin: .3rem 0 0; padding-top: .55rem; border-top: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 400 .98rem/1.55 var(--font-body); color: var(--text); max-height: 40vh; overflow-y: auto; }
+button.send-btn { background: var(--accent-2); color: #001418; border-color: var(--accent-2); min-width: 7rem; }
+button.send-btn:hover { filter: brightness(1.15); color: #001418; }
