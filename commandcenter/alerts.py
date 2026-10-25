@@ -1,4 +1,11 @@
-"""Raises an alert: stores it for the dashboard feed, shows a Windows toast, plays a sound."""
+"""Raises an alert: stores it for the dashboard feed, shows a Windows toast, plays a sound.
+
+Windows keeps toast text in its notification database (wpndatabase.db) in plaintext, outside Command Center's
+encryption. So by default (alerts.toast_detail: generic) a toast says only "<Source>: <category>", e.g.
+"Calendar: meeting starting" or "Pulse: tickets waiting on you", never a subject, name or ticket text: each
+raise_alert call passes a short `toast` label for that, or the toast says "<Source>: new alert". The full title
+and body are shown in the app (and stored encrypted). alerts.toast_detail: full shows them in the toast too.
+"""
 import logging
 import threading
 import webbrowser
@@ -36,7 +43,7 @@ def _toast(title: str, body: str):
         toast.on_activated = lambda _: open_dashboard()
         _toaster.show_toast(toast)
     except Exception as e:  # toasts are best-effort; the feed still has the alert
-        log.warning("Toast failed: %s", e)
+        log.warning("Toast failed: %s", type(e).__name__)
 
 
 def _sound():
@@ -67,8 +74,19 @@ def set_focus(minutes: int):
         db.kv_set("focus:calendar", None)
 
 
-def raise_alert(source: str, title: str, body: str = "", priority: str = "normal", action: dict | None = None):
+def toast_text(source: str, title: str, body: str, toast: str | None, detail: str) -> tuple[str, str]:
+    """(heading, body) for the Windows toast. detail "full": the alert itself. Anything else ("generic", the
+    default): "<Source>: <category>" and no body; `toast` must be a fixed category, never item text."""
+    if detail == "full":
+        return f"{source}: {title}", body
+    label = toast.strip() if isinstance(toast, str) and toast.strip() else "new alert"
+    return f"{source}: {label[:60]}", ""
+
+
+def raise_alert(source: str, title: str, body: str = "", priority: str = "normal", action: dict | None = None,
+                toast: str | None = None):
     """priority: low | normal | high. action: optional dict the dashboard turns into a button.
+    toast: short fixed category for the Windows toast in generic mode (e.g. "meeting starting"); no item text.
     In focus mode only high-priority alerts pop up; everything still lands in the feed."""
     settings = config.section("alerts", {})
     alert_id = db.add_alert(source, title, body, priority, action)
@@ -77,6 +95,7 @@ def raise_alert(source: str, title: str, body: str = "", priority: str = "normal
     if priority != "high" and focus_state()["active"]:
         return
     if settings.get("toast", True) and priority != "low":
-        _toast(f"{source}: {title}", body)
+        detail = "full" if str(settings.get("toast_detail", "generic")).strip().lower() == "full" else "generic"
+        _toast(*toast_text(source, title, body, toast, detail))
     if priority in settings.get("sound_for", ["high"]):
         _sound()

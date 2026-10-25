@@ -133,6 +133,8 @@ def _harden_webview():
     original_ready = edgechromium.EdgeChrome.on_webview_ready
 
     def on_webview_ready(self, sender, args):
+        if args.IsSuccess:  # before pywebview's handler loads the first page
+            _no_autofill(sender.CoreWebView2.Settings, sender.CoreWebView2)
         original_ready(self, sender, args)
         if args.IsSuccess:
             sender.CoreWebView2.NavigationStarting += _on_navigation
@@ -145,6 +147,24 @@ def _harden_webview():
 
     edgechromium.EdgeChrome.on_webview_ready = on_webview_ready
     edgechromium.EdgeChrome.on_new_window_request = on_new_window_request
+
+
+def _no_autofill(settings, core=None):
+    """WebView2 must not remember what is typed (form autofill) or offer to save passwords: the vault passphrase,
+    Logi passwords and Toolkit fields would otherwise land in the profile in data/webview. CoreWebView2Settings 4+
+    (the bundled Microsoft.Web.WebView2.Core has both properties). Anything an older version let it save is
+    cleared from the profile once per launch."""
+    for name in ("IsGeneralAutofillEnabled", "IsPasswordAutosaveEnabled"):
+        try:
+            setattr(settings, name, False)
+        except Exception as e:
+            log.warning("WebView2: couldn't turn off %s (%s)", name, type(e).__name__)
+    if core is not None:
+        try:
+            from Microsoft.Web.WebView2.Core import CoreWebView2BrowsingDataKinds as kinds
+            core.Profile.ClearBrowsingDataAsync(kinds.GeneralAutofill | kinds.PasswordAutosave)  # fire and forget
+        except Exception as e:
+            log.warning("WebView2: couldn't clear saved autofill data (%s)", type(e).__name__)
 
 
 def _on_navigation(sender, args):
@@ -471,7 +491,8 @@ class DesktopApp:
         db.kv_set("capture:hotkey_alerted", name)
         alerts.raise_alert("System", "Quick-capture hotkey unavailable",
                            f"{problem} Set another one with ui.capture_hotkey in config.yaml (e.g. Ctrl+Alt+Shift+N), "
-                           "or use Quick capture in the command palette (Ctrl+K).", "low")
+                           "or use Quick capture in the command palette (Ctrl+K).", "low",
+                           toast="quick-capture hotkey unavailable")
 
     def _stop_hotkey(self):
         hotkey, self.hotkey = self.hotkey, None

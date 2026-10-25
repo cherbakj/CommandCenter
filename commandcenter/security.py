@@ -711,7 +711,8 @@ def folder_alert():
     alerts.raise_alert(
         "Security", "Other accounts can change the folders above Command Center",
         f"{who}. Anyone who can rename or replace these folders can swap in code that runs as you. "
-        f"Fix it from a Command Prompt (as you; you need to own the folder or have full control): {status['fix']}", "high")
+        f"Fix it from a Command Prompt (as you; you need to own the folder or have full control): {status['fix']}", "high",
+        toast="folder permissions need fixing")
 
 
 # ---- Windows Hello, with the Windows password as the fallback ----------------------------------

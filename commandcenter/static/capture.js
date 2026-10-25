@@ -144,36 +144,53 @@
     document.body.append(dlg);
   }
 
+  // Privacy mode hides the Personal option, but a saved "personal" choice is never turned into a task behind
+  // Joe's back (a personal note must not end up in Outlook): the box says Personal is off and saves nothing until
+  // Task is picked explicitly. Choices made while Privacy mode is on aren't saved as the default.
+  const personalBlocked = () => mode === "personal" && !!CC.privacy?.isPrivate();
+
   function setMode(id) {
-    if (id === "personal" && CC.privacy?.isPrivate()) id = "task";  // Privacy mode: no personal option
-    mode = id;
-    store.set("cc.capture.mode", id);
+    mode = id === "personal" ? "personal" : "task";
+    if (!CC.privacy?.isPrivate()) store.set("cc.capture.mode", mode);
     for (const [k, b] of Object.entries(modeBtns)) {
-      b.classList.toggle("on", k === id);
-      b.setAttribute("aria-pressed", String(k === id));
+      b.classList.toggle("on", k === mode);
+      b.setAttribute("aria-pressed", String(k === mode));
     }
-    saveBtn.textContent = MODES[id].save;
-    dlg.dataset.mode = id;
+    dlg.dataset.mode = mode;
     preview();
   }
 
   function preview() {
     const { date } = parseQuick(input.value);
-    if (mode === "task") chip.textContent = date ? `Due ${dayLabel(date)}` : "No due date";
+    const blocked = personalBlocked();
+    if (blocked) chip.textContent = "Personal is off (Privacy mode). Pick Task to save it as an Outlook task";
+    else if (mode === "task") chip.textContent = date ? `Due ${dayLabel(date)}` : "No due date";
     else chip.textContent = `On ${dayLabel(date || new Date())}${date ? "" : " (today)"}`;
-    chip.classList.toggle("set", !!date);
+    chip.classList.toggle("set", !!date && !blocked);
+    chip.classList.toggle("qc-blocked", blocked);
+    saveBtn.textContent = blocked ? "Pick Task first" : MODES[mode].save;
+    saveBtn.disabled = blocked || busy;
   }
+  document.addEventListener("cc:privacy", () => { if (dlg?.open) preview(); });
 
   function onKey(e) {
     if (e.isComposing) return;
     if (e.key === "Enter") { e.preventDefault(); save(); }
-    else if (e.key === "Tab") { e.preventDefault(); setMode(mode === "task" ? "personal" : "task"); }
+    else if (e.key === "Tab") {
+      e.preventDefault();
+      // Privacy mode: Tab is the explicit way to pick Task (Personal isn't offered)
+      setMode(CC.privacy?.isPrivate() || mode === "personal" ? "task" : "personal");
+    }
   }
 
   async function save() {
     if (busy) return;
     const { title, date } = parseQuick(input.value);
     err.textContent = "";
+    if (personalBlocked()) {
+      err.textContent = "Personal is off (Privacy mode), so nothing was saved. Click Task (or press Tab) to save it as an Outlook task, or turn Privacy mode off (Ctrl+Shift+P).";
+      return;
+    }
     if (!title) { input.focus(); err.textContent = "Type what you want to capture."; return; }
     busy = true;
     saveBtn.disabled = true;
@@ -229,7 +246,7 @@
       busy = false;
       saveBtn.disabled = false;
       dlg.classList.remove("saved");
-      setMode(mode);
+      setMode(store.get("cc.capture.mode") === "personal" ? "personal" : "task");  // the saved default, every time
       document.querySelector("#palette.open") && document.querySelector("#palette").classList.remove("open");
       dlg.showModal();
     }

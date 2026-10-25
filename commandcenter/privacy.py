@@ -9,9 +9,16 @@
 - Automatic vault locks (background job, polls every 1.5 s, no edits needed in security.py / desktop.py):
     * Command Center locked: security.end_session() replaces security.SESSION_SECRET, and the desktop shell's
       `unlocked` flag goes False. Either one locks the vault.
-    * Windows locked (Win+L), when privacy.lock_on_windows_lock is on (default).
-    * privacy.auto_lock_minutes after an unlock (0 = off, the default).
-  A restart always starts locked: the key exists only in memory.
+    * Windows locked (Win+L) or the session disconnected / switched away (the input desktop isn't ours), when
+      privacy.lock_on_windows_lock is on (default).
+    * System sleep / hibernate, always: a power notification (PowerRegisterSuspendResumeNotification, a callback,
+      no window needed) locks the vault on PBT_APMSUSPEND, before memory is written to the hibernation file.
+      Backstop if that notification is missed (e.g. some Modern Standby transitions): every poll compares
+      GetTickCount64 (counts sleep) with QueryUnbiasedInterruptTime (doesn't); a gap means the PC slept, and the
+      vault is locked on resume.
+    * privacy.auto_lock_minutes after an unlock (0 = off, the default; Joe doesn't want idle lock-outs).
+  A restart always starts locked: the key exists only in memory. Bad config values fall back to the defaults
+  (checked at load, logged once) and never stop the watch loop.
 """
 import asyncio
 import ctypes
@@ -27,10 +34,41 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/privacy")
 
 
+DEFAULTS = {"lock_on_windows_lock": True, "auto_lock_minutes": 0}
+_warned: set = set()
+
+
+def _warn_once(key: str, text: str):
+    if key not in _warned:
+        _warned.add(key)
+        log.warning(text)
+
+
 def settings() -> dict:
-    s = config.section("privacy", {}) or {}
-    return {"lock_on_windows_lock": s.get("lock_on_windows_lock", True) is not False,
-            "auto_lock_minutes": max(0, int(s.get("auto_lock_minutes", 0) or 0))}
+    """privacy: from config.yaml, parsed defensively: a bad value means its default (logged once), never an error,
+    so one typo can't switch off the automatic locks."""
+    try:
+        s = config.section("privacy", {}) or {}
+    except Exception:
+        s = {}
+    if not isinstance(s, dict):
+        _warn_once("section", "privacy: in config.yaml isn't a section; using the defaults")
+        s = {}
+    lock_win = s.get("lock_on_windows_lock", True)
+    if not isinstance(lock_win, bool):
+        _warn_once("lock_on_windows_lock", "privacy.lock_on_windows_lock should be true or false; using true")
+        lock_win = True
+    raw = s.get("auto_lock_minutes", 0)
+    try:
+        if isinstance(raw, bool):
+            raise ValueError
+        minutes = float(raw or 0)
+        if not 0 <= minutes <= 7 * 24 * 60 or minutes != minutes:
+            raise ValueError
+    except (TypeError, ValueError):
+        _warn_once("auto_lock_minutes", "privacy.auto_lock_minutes should be a number of minutes (0 = off); using 0")
+        minutes = 0
+    return {"lock_on_windows_lock": lock_win, "auto_lock_minutes": int(minutes) if minutes == int(minutes) else minutes}
 
 
 # ---- Privacy mode ----------------------------------------------------------------------------------
@@ -131,7 +169,8 @@ def inventory() -> list[dict]:
         pc = None
     if pc is not None:
         add("pulse", "Pulse tickets", "Work", "Pulse data reviews in Postgres through a read-only role.",
-            "Database password in Windows Credential Manager; the last ticket state (for change alerts).",
+            "Database password in Windows Credential Manager; the last ticket state (ids, numbers, status and "
+            "priority, for change alerts).",
             f"Credential Manager (DPAPI); ticket state: {dpapi}", "Until disconnected", connected=pc,
             state="Connected" if pc else "Not connected", actions=["disconnect"] if pc else [])
 
@@ -191,6 +230,17 @@ def inventory() -> list[dict]:
     add("daily", "Top 3 and meeting notes", "Work", "What you type into Today's Top 3 and meeting notes.",
         f"{top3 or 0} day(s) of Top 3, {notes or 0} meeting note(s) in SQLite.", "Windows DPAPI (this Windows account)",
         "Top 3: 120 days; meeting notes until deleted", connected=None, state="")
+
+    seen_n, vault_n = _table_count("seen"), _table_count("vault_records")
+    add("metadata", "Unencrypted metadata", "Work",
+        "Kept in clear so the app can sort, prune and look things up without decrypting everything.",
+        "Dates, ids and counts only, no titles, names or text: alert time, source, priority and read flag; "
+        "meeting-note start / last-edit times and Top 3 days; 'already alerted' keys (Outlook item ids, Pulse "
+        "aging days) with their times; personal vault record ids and how many there are; operational settings "
+        "(status and error lines, watermarks, window size, weather places, appearance, timers).",
+        "None (private data folder, owner-only ACL)",
+        f"Alerts {_days(r.get('alerts_days'))}; 'already alerted' keys {_days(r.get('seen_days'))}; the rest with its data",
+        connected=None, state=f"{seen_n or 0} key(s), {vault_n or 0} vault record id(s)")
 
     vs_ = vault.status()
     counts = _try(vault.counts, None) if vs_["available"] else None
@@ -276,27 +326,142 @@ def windows_locked() -> bool:
         return False
 
 
-async def watch_loop():
-    last = _session_fingerprint()
-    while True:
-        await asyncio.sleep(1.5)
+# ---- sleep / hibernate ---------------------------------------------------------------------------
+PBT_APMSUSPEND, PBT_APMRESUMESUSPEND, PBT_APMRESUMEAUTOMATIC = 0x4, 0x7, 0x12
+DEVICE_NOTIFY_CALLBACK = 2
+SLEEP_GAP_SECONDS = 5.0
+
+_PowerCallback = ctypes.WINFUNCTYPE(wt.ULONG, ctypes.c_void_p, wt.ULONG, ctypes.c_void_p)
+
+
+class _NotifyParams(ctypes.Structure):
+    _fields_ = [("Callback", _PowerCallback), ("Context", ctypes.c_void_p)]
+
+
+def _on_power(context, kind, setting):
+    """Runs on a system thread. Windows waits for it before suspending, so the key is dropped before memory is
+    written to the hibernation file. Resume notifications lock too, in case the suspend one was missed."""
+    try:
+        if kind == PBT_APMSUSPEND:
+            vault.lock("system sleep / hibernate")
+        elif kind in (PBT_APMRESUMESUSPEND, PBT_APMRESUMEAUTOMATIC):
+            vault.lock("resumed from sleep")
+    except Exception:
+        pass
+    return 0
+
+
+_power = {"cb": _PowerCallback(_on_power), "handle": None}
+
+
+def register_power_notifications() -> bool:
+    """Subscribes _on_power to suspend / resume (Windows 8+). True if registered."""
+    if _power["handle"]:
+        return True
+    try:
+        powrprof = ctypes.WinDLL("powrprof", use_last_error=True)
+        fn = powrprof.PowerRegisterSuspendResumeNotification
+        fn.argtypes = [wt.DWORD, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+        fn.restype = wt.DWORD
+        params = _NotifyParams(_power["cb"], None)
+        handle = ctypes.c_void_p()
+        rc = fn(DEVICE_NOTIFY_CALLBACK, ctypes.byref(params), ctypes.byref(handle))
+        if rc != 0:
+            log.warning("Sleep notifications unavailable (error %s); relying on the resume check", rc)
+            return False
+        _power.update(handle=handle, params=params)  # params must stay alive while registered
+        return True
+    except Exception as e:
+        log.warning("Sleep notifications unavailable (%s); relying on the resume check", type(e).__name__)
+        return False
+
+
+def unregister_power_notifications():
+    handle = _power.get("handle")
+    if not handle:
+        return
+    try:
+        fn = ctypes.WinDLL("powrprof").PowerUnregisterSuspendResumeNotification
+        fn.argtypes = [ctypes.c_void_p]
+        fn(handle)
+    except Exception:
+        pass
+    _power["handle"] = None
+
+
+def _clocks() -> tuple[float, float] | None:
+    """(seconds since boot including sleep, seconds since boot excluding sleep), or None."""
+    try:
+        k = ctypes.windll.kernel32
+        k.GetTickCount64.restype = ctypes.c_ulonglong
+        unbiased = ctypes.c_ulonglong()
+        if not k.QueryUnbiasedInterruptTime(ctypes.byref(unbiased)):
+            return None
+        return k.GetTickCount64() / 1000.0, unbiased.value / 1e7
+    except Exception:
+        return None
+
+
+class SleepDetector:
+    """slept() is True when the PC slept since the last call (the two clocks drifted apart by > gap seconds)."""
+
+    def __init__(self, clocks=_clocks, gap=SLEEP_GAP_SECONDS):
+        self.clocks, self.gap, self.last = clocks, gap, clocks()
+
+    def slept(self) -> bool:
+        now = self.clocks()
+        last, self.last = self.last, now
+        if not now or not last:
+            return False
+        return (now[0] - last[0]) - (now[1] - last[1]) > self.gap
+
+
+def check_once(state: dict):
+    """One pass of the automatic locks. Each check is independent: one failing doesn't skip the others."""
+    def attempt(name, fn):
         try:
-            fp = _session_fingerprint()
-            if fp != last:
-                last = fp
-                vault.lock("Command Center locked")
-            if _shell_locked():
-                vault.lock("Command Center locked")
-            if vault.unlocked():
-                s = settings()
-                if s["lock_on_windows_lock"] and windows_locked():
-                    vault.lock("Windows locked")
-                elif s["auto_lock_minutes"] and vault.unlocked_for() > s["auto_lock_minutes"] * 60:
-                    vault.lock(f"auto-lock after {s['auto_lock_minutes']} min")
-        except asyncio.CancelledError:
-            raise
+            fn()
         except Exception as e:
-            log.warning("Privacy watch: %s", type(e).__name__)
+            log.warning("Privacy watch (%s): %s", name, type(e).__name__)
+
+    def session():
+        fp = _session_fingerprint()
+        if fp != state.get("fingerprint"):
+            state["fingerprint"] = fp
+            vault.lock("Command Center locked")
+        if _shell_locked():
+            vault.lock("Command Center locked")
+
+    def sleep():
+        if state["sleep"].slept():
+            vault.lock("resumed from sleep")
+
+    def windows():
+        if vault.unlocked() and settings()["lock_on_windows_lock"] and windows_locked():
+            vault.lock("Windows locked")
+
+    def idle():
+        minutes = settings()["auto_lock_minutes"]
+        if minutes and vault.unlocked() and vault.unlocked_for() > minutes * 60:
+            vault.lock(f"auto-lock after {minutes} min")
+
+    for name, fn in (("session", session), ("sleep", sleep), ("windows", windows), ("auto-lock", idle)):
+        attempt(name, fn)
+
+
+async def watch_loop():
+    settings()  # validate the config once at start (bad values are logged and fall back to the defaults)
+    register_power_notifications()
+    state = {"fingerprint": _session_fingerprint(), "sleep": SleepDetector()}
+    try:
+        while True:
+            await asyncio.sleep(1.5)
+            try:
+                check_once(state)
+            except Exception as e:  # never let the loop die
+                log.warning("Privacy watch: %s", type(e).__name__)
+    finally:
+        unregister_power_notifications()
 
 
 background = [watch_loop]

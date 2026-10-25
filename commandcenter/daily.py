@@ -8,7 +8,8 @@ mention counts only. A meeting's notes are keyed by a hash of its Outlook EntryI
 meetings share one EntryID), so the database shows neither the meeting nor its notes in plain text.
 An action item becomes an Outlook or Asana task only when Joe clicks the button for it.
 
-Git checks run through projects._git (GIT_SAFE: no hooks, fsmonitor or untracked cache; read-only).
+Git checks run through projects._git (GIT_SAFE: no hooks, fsmonitor, untracked cache, signature checks,
+pagers, external diff or ssh; repos whose own config names a program are skipped; read-only).
 """
 import asyncio
 import hashlib
@@ -303,7 +304,7 @@ async def wrapup_uncommitted():
     n = len(found)
     alerts.raise_alert("Projects", f"{n} project{'s' if n != 1 else ''} with uncommitted work",
                        " · ".join(_describe(p) for p in found[:6]) + (f" · +{n - 6} more" if n > 6 else ""),
-                       "high", {"type": "uncommitted"})
+                       "high", {"type": "uncommitted"}, toast="uncommitted work")
 
 
 # ---- yesterday recap ------------------------------------------------------------------------------
@@ -680,7 +681,8 @@ async def meeting_end_loop():
                         continue  # actions already captured
                     alerts.raise_alert("Calendar", f"Capture notes/actions for {m['subject']}?",
                                        "Private notes pad: stays on this PC, encrypted, never written to Outlook.", "low",
-                                       {"type": "meeting-notes", "id": m["id"], "start": m["start"], "end": m["end"]})
+                                       {"type": "meeting-notes", "id": m["id"], "start": m["start"], "end": m["end"]},
+                                       toast="capture meeting notes?")
         except outlook.OutlookClosed:
             pass
         except Exception:

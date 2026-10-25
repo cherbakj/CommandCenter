@@ -99,7 +99,8 @@ async def _check_snoozes_and_reminders():
         if info["until"] <= now:
             s.pop(item_id)
             alerts.raise_alert("Snooze", f"Back from snooze: {info['subject']}", info.get("who", ""), "normal",
-                               {"type": "mail", "id": item_id} if info.get("kind") != "task" else {"type": "today"})
+                               {"type": "mail", "id": item_id} if info.get("kind") != "task" else {"type": "today"},
+                               toast="item back from snooze")
     db.kv_set("snoozes", s)
 
     keep = []
@@ -109,7 +110,7 @@ async def _check_snoozes_and_reminders():
             continue
         if not await outlook.call(outlook.conversation_replied, w["conversation"], w["since"]):
             alerts.raise_alert("Follow-up", f"No reply yet: {w['subject']}", f"To {w['to'][:80]}", "normal",
-                               {"type": "mail", "id": w["id"]})
+                               {"type": "mail", "id": w["id"]}, toast="no reply yet")
     db.kv_set("reply_watches", keep)
     await _escalate_urgent()
 
@@ -128,7 +129,7 @@ async def _escalate_urgent():
         if m["received"] <= cutoff and not db.seen(f"urgent-escalate:{m['id']}"):
             who = m.get("from_name") or m.get("sender_name", "")
             alerts.raise_alert("Urgent", f"Still waiting on your reply: {m['subject']}", f"From {who}", "high",
-                               {"type": "mail", "id": m["id"]})
+                               {"type": "mail", "id": m["id"]}, toast="urgent reply needed")
 
 
 def _vip_senders() -> list[str]:
@@ -253,7 +254,8 @@ async def _briefing(now):
     first = next((m for m in agenda if m["start"] >= now.isoformat(timespec="minutes")), None)
     body = f"First up: {first['subject']} at {datetime.fromisoformat(first['start']):%I:%M %p}" if first else ""
     top3 = await _daily_note("briefing_note")
-    alerts.raise_alert("Today", summary(data), " · ".join(p for p in (body, top3) if p), "normal", {"type": "today"})
+    alerts.raise_alert("Today", summary(data), " · ".join(p for p in (body, top3) if p), "normal", {"type": "today"},
+                       toast="morning briefing")
 
 
 async def _daily_note(name) -> str:
@@ -282,7 +284,7 @@ async def _wrapup(now):
         parts.insert(0, top3)
     body = (f"{label}: {len(tomorrow)} meeting(s), first is {first['subject']} at "
             f"{datetime.fromisoformat(first['start']):%I:%M %p}" if first else f"{label}: no meetings")
-    alerts.raise_alert("Wrap-up", " · ".join(parts), body, "normal", {"type": "today"})
+    alerts.raise_alert("Wrap-up", " · ".join(parts), body, "normal", {"type": "today"}, toast="end-of-day wrap-up")
     try:  # projects with uncommitted / unpushed work: a separate high-priority alert
         from . import daily
         await daily.wrapup_uncommitted()

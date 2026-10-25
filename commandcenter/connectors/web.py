@@ -119,16 +119,17 @@ async def check(m: dict) -> dict:
         if reason:
             state["changed"] = db.now()
             alerts.raise_alert("Website", f"{m['name']}: {reason}", m["url"], m.get("priority", "normal"),
-                               {"type": "url", "url": m["url"]})
+                               {"type": "url", "url": m["url"]}, toast="watched page changed")
         elif not was_ok:
             alerts.raise_alert("Website", f"{m['name']} is reachable again", m["url"], "low",
-                               {"type": "url", "url": m["url"]})
+                               {"type": "url", "url": m["url"]}, toast="page reachable again")
     except Exception as e:
         msg = str(e).splitlines()[0][:300]
         state = {**state, "ok": False, "checked": db.now(), "error": msg, "login_needed": isinstance(e, LoginNeeded)}
         if was_ok:  # alert on the transition only, not every failed check
             title = "login needed" if isinstance(e, LoginNeeded) else "check failed"
-            alerts.raise_alert("Website", f"{m['name']}: {title}", msg, "normal", {"type": "url", "url": m["url"]})
+            alerts.raise_alert("Website", f"{m['name']}: {title}", msg, "normal", {"type": "url", "url": m["url"]},
+                               toast=title)
     db.kv_set(key, state)
     return state
 

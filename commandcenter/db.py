@@ -14,11 +14,14 @@ and seal_existing() (run at start and daily, see maintenance()) encrypts any pla
 Retention (config `retention:`; see retention_settings): alerts, the mail sent log, `seen` keys and the Toolkit
 change log are pruned at start and daily. The connection runs with secure_delete=ON and an in-memory temp
 store, and maintenance() VACUUMs after it seals or deletes rows (and at least every `vacuum_days`), so deleted
-plaintext isn't left in free pages or temp files.
+plaintext isn't left in free pages or temp files. Sealing, VACUUM and the vault's moves of old copies run inside
+scrubbed_journal(): the rollback journal (which holds the original, plaintext pages) is kept in place and
+overwritten with zeros afterwards instead of just being deleted (see _ScrubbedJournal).
 """
 import base64
 import json
 import logging
+import os
 import sqlite3
 import threading
 from collections import OrderedDict
@@ -40,7 +43,9 @@ _CRYPTPROTECT_UI_FORBIDDEN = 0x1
 # Values that stay clear: purely operational state with no work data in it (and read on hot paths).
 CLEAR_KV = {"outlook:status", "outlook:watermark", "profile", "focus:until", "focus:skip", "urgent:checked",
             "daily:carry_handled", "window:geometry", "capture:hotkey_alerted", "browser:ua", "pulse:status",
-            "pulse:state", "teams:state", "weather:selected"}
+            "teams:state", "weather:selected"}
+# (pulse:state, the last ticket ids / numbers / statuses, is sealed like any other key; seal_existing() encrypts a
+# plaintext copy left by an older version, and kv_get reads either.)
 CLEAR_KV_PREFIXES = ("weather:loc:", "maint:")
 _EMPTY_JSON = {"null", "[]", "{}", '""'}  # nothing to hide; also keeps an older running copy working on empty values
 ALERT_SEALED = ("title", "body", "action")
@@ -102,6 +107,7 @@ def seal(text):
 
 _open_cache: "OrderedDict[str, str]" = OrderedDict()  # sealed -> plain; DPAPI costs ~0.2 ms per value
 _OPEN_CACHE_MAX = 4096
+_OPEN_CACHE_MAX_VALUE = 8192  # bigger values (e.g. pulse:state, rewritten every poll) aren't cached
 _cache_lock = threading.Lock()
 
 
@@ -119,6 +125,8 @@ def unseal(value):
         plain = win32crypt.CryptUnprotectData(blob, _SEAL_ENTROPY, None, None, _CRYPTPROTECT_UI_FORBIDDEN)[1].decode("utf-8")
     except (pywintypes.error, ValueError, UnicodeDecodeError) as e:
         raise SealError("Couldn't decrypt a stored value for this Windows user") from e
+    if len(value) > _OPEN_CACHE_MAX_VALUE:
+        return plain
     with _cache_lock:
         _open_cache[value] = plain
         if len(_open_cache) > _OPEN_CACHE_MAX:
@@ -379,3 +387,70 @@ def vacuum(force=False, every_days=7) -> bool:
             return False
     kv_set("maint:vacuumed", now())
     return True
+
+
+# ---- rollback journal hygiene ------------------------------------------------------------------------------
+
+class _ScrubbedJournal:
+    """For one-time migrations, sealing, deletes of old copies and VACUUM: SQLite's rollback journal holds the
+    original pages of everything a transaction changes, which then is old plaintext. In the default DELETE mode the
+    journal file is only unlinked after each commit, so that plaintext would stay in free disk clusters.
+    Inside this block the connection uses journal_mode=PERSIST (the journal file is reused in place, not deleted
+    and recreated); on exit, with an EXCLUSIVE lock held (so no other connection is using the journal), the file
+    is overwritten with zeros, flushed, truncated, and the mode goes back to DELETE (which removes the empty file).
+    PERSIST keeps full crash safety, unlike journal_mode=MEMORY. Best effort: SSD wear levelling can still keep
+    old copies of a block."""
+
+    def __enter__(self):
+        with _lock:
+            c = _db()
+            if c.in_transaction:
+                c.commit()
+            self.mode = str(c.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+            c.execute("PRAGMA journal_mode = PERSIST").fetchone()
+        return self
+
+    def __exit__(self, *exc):
+        with _lock:
+            c = _db()
+            if c.in_transaction:
+                c.rollback()  # anything a failed step left open
+            try:
+                wipe_journal(c)
+            except Exception as e:
+                log.warning("Couldn't overwrite the rollback journal (%s)", type(e).__name__)
+            finally:
+                mode = self.mode if self.mode in ("delete", "truncate", "persist") else "delete"
+                c.execute(f"PRAGMA journal_mode = {mode}").fetchone()
+        return False
+
+
+def scrubbed_journal() -> _ScrubbedJournal:
+    return _ScrubbedJournal()
+
+
+def wipe_journal(conn) -> bool:
+    """Overwrites the database's -journal file with zeros and truncates it (caller holds _lock). Takes an
+    EXCLUSIVE lock first, so no connection (here or in another process) is in a write transaction using it."""
+    path = conn.execute("PRAGMA database_list").fetchone()[2] + "-journal"
+    conn.execute("BEGIN EXCLUSIVE")
+    try:
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return False
+        zeros = b"\0" * 65536
+        with open(path, "r+b") as f:
+            left = size
+            while left > 0:
+                n = min(left, len(zeros))
+                f.write(zeros[:n])
+                left -= n
+            f.flush()
+            os.fsync(f.fileno())
+            f.truncate(0)
+            f.flush()
+            os.fsync(f.fileno())
+        return True
+    finally:
+        conn.commit()

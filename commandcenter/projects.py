@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -62,15 +63,27 @@ def claude_path() -> str | None:
     return bundled_claude()
 
 
-# A repo's own config can name programs that git runs for status/log (core.fsmonitor, hooks), so they are
-# turned off for every call: listing projects must never run code from a project folder.
-# --no-optional-locks: reads never take the index lock or rewrite the index.
+# A repo's own config can name programs that git runs for status/log (core.fsmonitor, hooks, signature checks,
+# pagers, external diff, ssh, credential helpers), so they are turned off for every call: listing projects must
+# never run code from a project folder.
+# log.showSignature=false + gpg.*.program=NUL: `git log` on a signed commit would otherwise run gpg.program from
+# the repo's config. --no-optional-locks: reads never take the index lock or rewrite the index.
 # -c values also reach child git processes (submodules) through GIT_CONFIG_PARAMETERS.
 GIT_SAFE = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=NUL", "-c", "core.untrackedCache=false",
+            "-c", "log.showSignature=false", "-c", "gpg.program=NUL", "-c", "gpg.ssh.program=NUL",
+            "-c", "gpg.x509.program=NUL", "-c", "core.pager=cat", "-c", "diff.external=", "-c", "core.sshCommand=NUL",
             "--no-optional-locks"]
 
+# Keys in a repo's own config (local / worktree scope) that name a program, or pull in another config file, that
+# git might run or read. A repo that sets any of them is not run through git at all (only its config is read):
+# -c can't switch off includes, and a new kind of program key should fail closed.
+RISKY_CONFIG = re.compile(
+    r"^(gpg\.|log\.showsignature$|include\.|includeif\.|core\.sshcommand$|core\.gitproxy$|core\.askpass$|"
+    r"core\.pager$|pager\.|diff\.external$|diff\..+\.(textconv|command)$|credential\.|filter\.|ssh\.)", re.I)
+_config_cache: dict = {}  # normcase(path) -> (stamp, checked_at, risky)
 
-def _git(path, *args) -> str:
+
+def _run_git(path, *args) -> str:
     try:
         # List arguments, no shell.
         out = subprocess.run(["git", *GIT_SAFE, "-C", str(path), *args], capture_output=True, text=True, timeout=5,
@@ -78,6 +91,43 @@ def _git(path, *args) -> str:
         return out.stdout.strip() if out.returncode == 0 else ""
     except (OSError, subprocess.TimeoutExpired):
         return ""
+
+
+def _config_stamp(path):
+    p = Path(path) / ".git"
+    out = []
+    for f in (p, p / "config", p / "config.worktree"):
+        try:
+            st = f.stat()
+            out.append((st.st_mtime_ns, st.st_size, f.is_dir()))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def _risky_config(path) -> bool:
+    """True if the repo's own config sets a key in RISKY_CONFIG. Reading config (without includes) runs nothing.
+    Cached until .git/config changes (a .git file, i.e. a worktree or submodule, is re-read after 5 s)."""
+    key = os.path.normcase(str(path))
+    stamp = _config_stamp(path)
+    hit = _config_cache.get(key)
+    git_is_dir = bool(stamp[0] and stamp[0][2])
+    if hit and hit[0] == stamp and (git_is_dir or time.monotonic() - hit[1] < 5):
+        return hit[2]
+    out = _run_git(path, "config", "--no-includes", "--list", "--show-scope", "--name-only")
+    names = [line.partition("\t")[2] for line in out.splitlines() if line.startswith(("local\t", "worktree\t"))]
+    risky = any(RISKY_CONFIG.match(n) for n in names)
+    _config_cache[key] = (stamp, time.monotonic(), risky)
+    return risky
+
+
+def _git(path, *args) -> str:
+    """git with GIT_SAFE. Nothing but `git config` runs in a repo whose own config sets a risky key (returns "")."""
+    if args and args[0] not in ("config", "init") and _risky_config(path):
+        return ""
+    if args and args[0] == "log":
+        args = ("log", "--no-show-signature", *args[1:])
+    return _run_git(path, *args)
 
 
 def _summary(path: Path) -> str:
@@ -91,14 +141,10 @@ def _summary(path: Path) -> str:
     return ""
 
 
-def _has_local_filters(path) -> bool:
-    """A filter driver in the repo's own config (filter.<name>.clean / .process) is a command git status may
-    run on the repo's files. Reading config runs nothing; when there is one, status is skipped for that repo."""
-    return bool(_git(path, "config", "--local", "--includes", "--name-only", "--get-regexp", r"^filter\."))
-
-
 def _changed_files(path) -> int | None:
-    if _has_local_filters(path):
+    """None when the repo's config is risky (see _risky_config; that includes filter drivers, which git status
+    could run on the repo's files)."""
+    if _risky_config(path):
         return None
     out = _git(path, "status", "--porcelain", "--ignore-submodules=all")
     return len([l for l in out.splitlines() if l.strip()])
@@ -161,6 +207,7 @@ def describe(path: Path) -> dict:
         "modified": modified.isoformat(timespec="minutes") if modified else None,
         "summary": _summary(path), "has_claude_md": (path / "CLAUDE.md").exists(),
         "writable_by_others": writable_by_others(path),
+        "git_skipped": bool(is_git and _risky_config(path)),  # its config names programs: git isn't run there
     }
 
 

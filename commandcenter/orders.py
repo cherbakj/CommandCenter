@@ -116,9 +116,10 @@ async def _on_copy(text):
     try:
         result = await asyncio.to_thread(lookup, number)
         alerts.raise_alert("Order", f"Order {number}: {summarize(result)}", "", "normal",
-                           {"type": "order", "number": number})
+                           {"type": "order", "number": number}, toast="order looked up")
     except Exception as e:
-        alerts.raise_alert("Order", f"Order {number}: lookup failed", str(e).splitlines()[0], "low")
+        alerts.raise_alert("Order", f"Order {number}: lookup failed", str(e).splitlines()[0], "low",
+                           toast="order lookup failed")
 
 
 async def clipboard_loop():

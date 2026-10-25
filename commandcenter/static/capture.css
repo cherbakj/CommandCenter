@@ -38,6 +38,7 @@ dialog.qc::before { /* corner bracket like the panels */
   border: 1px dashed rgb(176 205 189 / .4); white-space: nowrap;
 }
 .qc-when.set { color: var(--amber); border: 1px solid rgb(var(--amber-rgb) / .6); background: rgb(var(--amber-rgb) / .08); }
+.qc-when.qc-blocked { color: var(--amber); border: 1px solid rgb(var(--amber-rgb) / .6); white-space: normal; }
 .qc-err:empty { display: none; }
 .qc-err { margin-top: .5rem; overflow-wrap: anywhere; }
 .qc-foot { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .8rem; }

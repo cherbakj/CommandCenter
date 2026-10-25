@@ -58,13 +58,14 @@ async def check() -> dict:
         unread = await read_unread()
         if unread > state.get("unread", 0):
             alerts.raise_alert("Teams", f"{unread} unread in Teams", "", settings().get("priority", "normal"),
-                               {"type": "url", "url": url()})
+                               {"type": "url", "url": url()}, toast=f"{int(unread)} unread")
         state = {"ok": True, "unread": unread, "checked": db.now()}
     except Exception as e:
         msg = str(e).splitlines()[0][:300]
         login = isinstance(e, web.LoginNeeded)
         if was_ok:
-            alerts.raise_alert("Teams", "Teams needs a sign-in" if login else "Teams check failed", msg, "normal")
+            alerts.raise_alert("Teams", "Teams needs a sign-in" if login else "Teams check failed", msg, "normal",
+                               toast="sign-in needed" if login else "check failed")
         state = {**state, "ok": False, "checked": db.now(), "error": msg, "login_needed": login}
     db.kv_set("teams:state", state)
     return state

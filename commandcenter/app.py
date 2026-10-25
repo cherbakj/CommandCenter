@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import time
+import traceback
 import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -51,6 +52,20 @@ def _mark_old_start_alerts_read():
         log.info("Marked %d old 'Started' alerts read", len(ids))
 
 
+def frames(exc: BaseException, limit: int = 12) -> str:
+    """Where an exception happened, as "file:line function" frames (innermost last), plus the type names of the
+    exceptions it was raised from. Never the messages: those can quote data (a pyodbc error can include row
+    values, an Outlook error a subject)."""
+    parts, seen, e = [], set(), exc
+    while e is not None and id(e) not in seen and len(seen) < 4:
+        seen.add(id(e))
+        tb = traceback.extract_tb(e.__traceback__)[-limit:]
+        where = " > ".join(f"{os.path.basename(f.filename)}:{f.lineno} {f.name}" for f in tb)
+        parts.append(f"{type(e).__name__} [{where}]" if e is not exc else f"[{where}]")
+        e = e.__cause__ or e.__context__
+    return " from ".join(parts)
+
+
 MAINTENANCE_SECONDS = 24 * 3600
 
 
@@ -66,27 +81,31 @@ def maintenance() -> dict:
         try:
             result = fn()
             into.update(result) if isinstance(result, dict) else into.__setitem__(name, result)
-        except Exception:
+        except Exception as e:
             failed.append(name)
-            log.exception("Data maintenance step failed: %s (nothing was changed by it)", name)
+            log.error("Data maintenance step failed: %s (nothing was changed by it): %s at %s", name,
+                      type(e).__name__, frames(e))
 
-    step("seal", db.seal_existing, sealed)
-    step("retention", lambda: db.enforce_retention(r), deleted)
-    step("dismissed_followups", today.prune_dismissed, deleted)
     try:
         from . import toolkit
     except ModuleNotFoundError:
         toolkit = None
-    if toolkit:
-        step("toolkit_changes", toolkit.seal_log, sealed)
-        step("toolkit_changes", lambda: toolkit.prune_log(r["toolkit_changes_days"]), deleted)
-    changed = any(sealed.values()) or any(deleted.values())
     vacuumed = False
-    try:
-        vacuumed = db.vacuum(force=changed, every_days=r["vacuum_days"])
-    except Exception:
-        failed.append("vacuum")
-        log.exception("Data maintenance step failed: vacuum")
+    # The rollback journal of these steps holds the old plaintext pages: it is overwritten afterwards, not just
+    # deleted (db.scrubbed_journal).
+    with db.scrubbed_journal():
+        step("seal", db.seal_existing, sealed)
+        step("retention", lambda: db.enforce_retention(r), deleted)
+        step("dismissed_followups", today.prune_dismissed, deleted)
+        if toolkit:
+            step("toolkit_changes", toolkit.seal_log, sealed)
+            step("toolkit_changes", lambda: toolkit.prune_log(r["toolkit_changes_days"]), deleted)
+        changed = any(sealed.values()) or any(deleted.values())
+        try:
+            vacuumed = db.vacuum(force=changed, every_days=r["vacuum_days"])
+        except Exception as e:
+            failed.append("vacuum")
+            log.error("Data maintenance step failed: vacuum (%s)", type(e).__name__)
     log.info("Data maintenance: sealed %s, deleted %s, vacuum %s%s", sealed, deleted,
              "done" if vacuumed else "not needed", f", failed: {failed}" if failed else "")
     return {"sealed": sealed, "deleted": deleted, "vacuumed": vacuumed, "failed": failed}
@@ -148,7 +167,8 @@ async def local_only(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def errors(request: Request, exc: Exception):
-    log.exception("Request failed: %s", request.url.path)
+    # The log gets the exception type, the path and the code locations only (see frames()), never str(exc).
+    log.error("Request failed: %s %s: %s %s", request.method, request.url.path, type(exc).__name__, frames(exc))
     return JSONResponse({"error": str(exc).splitlines()[0] if str(exc) else type(exc).__name__}, status_code=500)
 
 

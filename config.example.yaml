@@ -7,6 +7,8 @@ server:
 alerts:
   toast: true            # Windows pop-up notifications
   sound_for: [high]      # priorities that also play a sound: low | normal | high
+  toast_detail: generic  # generic: toasts say only "<Source>: <category>" (e.g. "Calendar: meeting in 10 min"), no
+                         # subjects, names or ticket text (Windows keeps toast text unencrypted). full: the whole alert
 
 browser:
   channel: msedge        # msedge or chrome - uses the browser already installed

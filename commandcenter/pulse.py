@@ -481,7 +481,8 @@ def diff_alerts(old: dict | None, tickets: list[dict], me: set[str]) -> tuple[li
                     fresh = datetime.fromisoformat(t["created_at"]).timestamp() >= since
                 except (TypeError, ValueError):
                     fresh = True
-                out.append({"title": f"{'New' if fresh else 'Reopened'} ticket {label}",
+                out.append({"toast": "new ticket for you" if fresh else "ticket reopened",
+                            "title": f"{'New' if fresh else 'Reopened'} ticket {label}",
                             "body": f"{t['type']} from {t['requester']}" + (f" · {t['where']}" if t["where"] else ""),
                             "priority": "high" if t["priority"] == "high" else "normal", "action": action})
             continue
@@ -491,11 +492,13 @@ def diff_alerts(old: dict | None, tickets: list[dict], me: set[str]) -> tuple[li
             if t["status"] == "Resolved" and (t.get("resolved_by") or "").lower() in me:
                 continue  # Joe closed it himself
             back_on_you = t["status"] == "Open" and prev.get("status") in ("Waiting on reporter", "On hold", "Resolved")
-            out.append({"title": f"{label}: {prev.get('status')} -> {t['status']}",
+            out.append({"toast": "ticket back on you" if back_on_you else "ticket status changed",
+                        "title": f"{label}: {prev.get('status')} -> {t['status']}",
                         "body": "Back on you." if back_on_you else f"Reported by {t['requester']}",
                         "priority": "high" if back_on_you and t["priority"] == "high" else "normal", "action": action})
         elif t["priority"] != prev.get("priority"):
-            out.append({"title": f"{label}: priority {prev.get('priority')} -> {t['priority']}",
+            out.append({"toast": "ticket priority changed",
+                        "title": f"{label}: priority {prev.get('priority')} -> {t['priority']}",
                         "body": f"Type is now {t['type']}", "priority": "normal", "action": action})
     return out, new_state
 
@@ -533,7 +536,8 @@ def daily_aging_alert(tickets: list[dict], s: dict | None = None, now: datetime 
          "body": " · ".join(shown),
          "priority": "high" if any(t["aging"] == "overdue" for t in late) else "normal",
          "action": {"type": "url", "url": ticket_url(None), "label": "Open Pulse"}}
-    alerts.raise_alert("Pulse", a["title"], a["body"], a["priority"], a["action"])
+    alerts.raise_alert("Pulse", a["title"], a["body"], a["priority"], a["action"],
+                       toast=f"{_plural(len(late), 'ticket')} need you")
     return a
 
 
@@ -542,10 +546,10 @@ async def poll_once() -> dict:
     tickets = await asyncio.to_thread(fetch, status="recent", limit=2000)
     found, state = diff_alerts(db.kv_get("pulse:state"), tickets, _me(s))
     for a in found[:10]:  # a burst (e.g. a bulk import) is capped; the tab shows everything
-        alerts.raise_alert("Pulse", a["title"], a["body"], a["priority"], a["action"])
+        alerts.raise_alert("Pulse", a["title"], a["body"], a["priority"], a["action"], toast=a.get("toast"))
     if len(found) > 10:
         alerts.raise_alert("Pulse", f"{len(found) - 10} more ticket updates", "Open the Pulse tab to see them.", "low",
-                           {"type": "url", "url": ticket_url(None)})
+                           {"type": "url", "url": ticket_url(None)}, toast="more ticket updates")
     db.kv_set("pulse:state", state)
     try:
         daily_aging_alert(tickets, s)
@@ -575,7 +579,7 @@ async def poll_loop():
                 if msg != last_error:  # log each distinct error once, not every poll
                     log.warning("Pulse poll failed: %s", msg)
                     if failures == 1:  # one alert per outage, not one per poll
-                        alerts.raise_alert("Pulse", "Can't read Pulse tickets", msg, "low")
+                        alerts.raise_alert("Pulse", "Can't read Pulse tickets", msg, "low", toast="can't read tickets")
                 last_error = msg
                 delay = min(delay * (2 ** min(failures, 3)), 15 * 60)  # back off up to 15 minutes
         await asyncio.sleep(delay)

@@ -39,14 +39,15 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - **Source tags:** every item shows where it came from (Outlook / Sent / Flagged / Teams / Calendar / To Do / Asana / Pulse / SQL / Website / Personal), with the sender address.
 - **Overlay calendars (`feeds.py`):** read-only iCal feeds (Google Calendar "Secret address in iCal format", iCloud public calendar links; Skylight's source calendars), color-coded on the 10-day calendar with a legend to show/hide each. Manage via Calendar > Calendars.
   - Links live in the **personal vault**.
-  - Hosts allowed: calendar.google.com, `*.google.com/calendar/` and `*.icloud.com` only. https only, public IPs only, redirects re-checked, 10 MB cap.
+  - Hosts allowed: calendar.google.com, `*.google.com/calendar/` and `*.icloud.com` only. https only, global (public) addresses only (`is_global`), the connection goes to the address that was checked (no DNS rebinding; TLS still checks the name), no proxy, redirects re-checked, 10 MB cap.
+  - Parsing is bounded: single events far from the window are dropped as text first, at most 5000 VEVENTs and 1000 events per calendar, SECONDLY/MINUTELY rules (and dense rules running since long ago) are skipped, 3 s budget per parse, one download + parse in flight per calendar.
   - Per-calendar detail level: full / titles (default) / busy. Fields are stripped before they're cached or returned.
   - Events are held in memory for 15 minutes, only while the vault is unlocked. Never written to Outlook or disk.
 - **Calendar (`planner.py`):**
   - Outlook meetings for the next 10 days, including all-day events.
   - Dated follow-ups: tasks, flags due, snoozes, reply checks.
   - **Personal entries**, kept in the personal vault (encrypted with Joe's own passphrase), never sent to Outlook.
-- **Alerts:** toast + sound + feed; focus mode (manual, tray, or calendar events containing "focus"); morning briefing and end-of-day wrap-up; meeting reminders with a **Prep** card (attendees, recent mail, open follow-ups).
+- **Alerts:** toast + sound + feed (toasts say only "<Source>: <category>" unless `alerts.toast_detail: full`, because Windows keeps toast text unencrypted); focus mode (manual, tray, or calendar events containing "focus"); morning briefing and end-of-day wrap-up; meeting reminders with a **Prep** card (attendees, recent mail, open follow-ups).
 - **Orders (`orders.py`):** copying an order number (7-10 digits) or opening an email that contains one looks it up with the saved SQL query `Find order` (needs SQL set up).
 - **Claude tab (`terminal.py`, `projects.py`):**
   - Runs the real Claude Code CLI in a ConPTY, streamed to xterm.js over a WebSocket.
@@ -68,7 +69,7 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
   - Sent replies are logged locally in kv `mail:sent_log` (subject and recipients only, no bodies), encrypted.
 - **Workday (`daily.py`):** Top 3 for today (carry-over, briefing/wrap-up counts), uncommitted/unpushed work reminder (after `daily.uncommitted_after`), yesterday recap (commits, meetings, sent mail, tasks, Pulse closed; copy for stand-up), meeting notes + action items (→ To Do / Asana; "capture notes?" after each meeting). Top 3 and notes are DPAPI-encrypted.
 - **Triage (`triage.js`, Shift+T):** one-at-a-time queue with single-key actions; replies use the verified-send flow.
-- **Quick capture (`capture.js`, Ctrl+Alt+Space):** a global hotkey (`ui.capture_hotkey`) registered in `desktop.py`. Captures a task, or a personal note when the vault is unlocked. It respects the app lock.
+- **Quick capture (`capture.js`, Ctrl+Alt+Space):** a global hotkey (`ui.capture_hotkey`) registered in `desktop.py`. Captures a task, or a personal note when the vault is unlocked. It respects the app lock. In Privacy mode a saved Personal choice is never turned into a task: it says "Personal is off (Privacy mode)" and saves only after Task is picked.
 - **Pulse aging:** business days a ticket has waited on Joe, warn/overdue buckets (`pulse.aging_*`), a daily alert, and a Today tile.
 - **Mail / Teams / Websites / SQL tabs:** as before. Teams unread count comes from a background browser profile once Joe logs in; chats open through `msteams:` links.
 
@@ -77,22 +78,24 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - **Request checks:** Host check; `Sec-Fetch-Site` cross-site/same-site refused; non-GET requests need the `X-CommandCenter` header plus our Origin; WebSockets need our exact Origin.
 - **Session cookie:** per-launch secret held in memory, set by a one-time `/auth?k=` bootstrap (HttpOnly, SameSite=Strict). Every route needs it.
 - **Response headers:** strict CSP, `frame-ancestors 'self'`, nosniff, no-referrer, `no-store`.
-- **Window:** WebView2 with devtools, remote debugging, `file://` access and downloads off; no pywebview `js_api`.
+- **Window:** WebView2 with devtools, remote debugging, `file://` access, downloads, form autofill and password saving off (saved autofill data is cleared at each launch); no pywebview `js_api`. When a page's session ends (401), privacy.js removes personal items from the page.
 - **App folder:** ACL limited to Joe, SYSTEM and Administrators, enforced at start. The folders above it (up to the drive root) are checked read-only at start; if another account can write, delete or re-permission one, a high-priority Security alert gives the `icacls ... /inheritance:r /grant:r` fix, and `GET /api/status` reports `folder_security`.
-- **Project folders:** a project that other accounts can modify (folder, `.claude`, `.git`, settings/hook files) is flagged `writable_by_others` in `/api/projects` and shown in red; starting Claude (embedded or New window) or opening it in VS Code needs an explicit confirmation, sent as `allow_unsafe` / `unsafe=1`. Folders with `;` or `"` in the path are never listed. Git runs with fsmonitor, hooks and untracked cache off; repos with their own filter drivers skip `git status`.
+- **Project folders:** a project that other accounts can modify (folder, `.claude`, `.git`, settings/hook files) is flagged `writable_by_others` in `/api/projects` and shown in red; starting Claude (embedded or New window) or opening it in VS Code needs an explicit confirmation, sent as `allow_unsafe` / `unsafe=1`. Folders with `;` or `"` in the path are never listed. Git runs with fsmonitor, hooks, untracked cache, signature verification (`log.showSignature`, `gpg.*program`), pager, external diff and `core.sshCommand` neutralized (`projects.GIT_SAFE`; every `git log` gets `--no-show-signature`). A repo whose own config sets a program or include key (`gpg.*`, `log.showSignature`, `include*`, `core.sshCommand`, `diff.external`, textconv, credential helpers, filters, pager...) isn't run through git at all (`projects.RISKY_CONFIG`; only its config is read).
 - **Hotbar:** only web, `msteams:`, folders and documents (.pdf .docx .xlsx .pptx .csv .txt .png .jpg .md); UNC only to NetBIOS names or `*.sonance.com`. Checked on save and on every open.
 - **VS Code server:** archive paths must stay inside the build folder; node.exe and every .exe/.node/.dll must be validly Authenticode-signed (Microsoft; GitHub, Inc. for its bundled tools) before the server starts.
 - **Lock screen:** its Quit/Hide/Unlock links work only while the lock page is showing.
 - **Personal vault (`vault.py`, `privacy.py`):** personal data (entries, calendar links, quick-capture notes) is encrypted with AES-256-GCM, using a key derived from Joe's own passphrase (scrypt n=2^17). The passphrase is never stored, and it is not tied to company/domain accounts: DPAPI is avoided here because domain backup keys can recover it.
   - The key lives in memory only. Unlock is rate-limited and the counter persists.
-  - It locks on Command Center Lock, on Windows lock, on restart and in Privacy mode (Ctrl+Shift+P, eye icon).
+  - It locks on Command Center Lock, on Windows lock / session switch, on system sleep and hibernate (power notification, plus a clock-gap check on resume), on restart and in Privacy mode (Ctrl+Shift+P, eye icon). No idle auto-lock unless `privacy.auto_lock_minutes` is set (default 0).
+  - A lock or Privacy mode during an unlock (while scrypt runs) wins: the new key is discarded. Unlocking turns off only a Privacy mode that was already on when the unlock started.
+  - Changing the passphrase re-encrypts under the same locks as every write, and stops (changing nothing) if a record can't be decrypted. Derived key bytes are wiped once the AES-GCM object exists (best effort).
   - The Privacy & Data panel lists every source (Work/Personal) with what's stored, how it's protected and how long it's kept.
   - Forgotten passphrase: "Delete all personal data" is the only option.
-- **Work data at rest (`db.py`):** alert text, the sent log, follow-up subjects/names, settings with names, and the Toolkit change log (pk, before, after, error) are DPAPI-encrypted (`ccsealed:v1:`). A startup + daily migration encrypts any plaintext. The connection uses `secure_delete=ON` with regular VACUUM.
+- **Work data at rest (`db.py`):** alert text, the sent log, follow-up subjects/names, settings with names, and the Toolkit change log (pk, before, after, error) are DPAPI-encrypted (`ccsealed:v1:`). A startup + daily migration encrypts any plaintext. The connection uses `secure_delete=ON` with regular VACUUM. Sealing, VACUUM and moves of old copies run with the rollback journal in PERSIST mode, and the journal is overwritten with zeros afterwards (it holds the old plaintext pages; `db.scrubbed_journal`). Pulse ticket state is sealed too. What stays in clear (dates, ids, counts) is listed in Privacy & Data under "Unencrypted metadata".
 - **Retention (`retention:` in config):** alerts 30 days, sent log 90, Toolkit change log 365, `seen` 30, dismissed follow-ups 60.
 - **Secrets:** only in Credential Manager, the personal vault or memory. Logs, the database and API responses were swept for secrets.
   Logi passwords never come back in lists (`has_password` only); one user's password is fetched on an explicit Show/Clipboard click (POST `/api/toolkit/logi/password`), logged as a `reveal` in `toolkit_changes` without the value. New Logi passwords: 16 random characters (crypto.getRandomValues), upper/lower/digit/symbol, no look-alikes.
-- **Log:** `data/commandcenter.log`, rotated at 5 MB (3 old files). Alerts are logged by id, source and priority only, never titles or bodies. At startup, older lines carrying work data are rewritten as `[redacted]`.
+- **Log:** `data/commandcenter.log`, rotated at 5 MB (3 old files). Alerts are logged by id, source and priority only, never titles or bodies. Request errors are logged as type, path and code locations only, never the exception message (it can quote row values). At startup, older lines carrying work data are rewritten as `[redacted]`.
 - **Fonts and network:** fonts are self-hosted (`static/fonts`, CSP `font-src 'self'`). The page makes no requests beyond 127.0.0.1.
 - **Dev bypass:** `CC_DEV_NO_AUTH=1` works in `serve` mode only and logs a warning.
 

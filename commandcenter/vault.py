@@ -6,8 +6,12 @@ backup key, so company administrators could read DPAPI-protected data. The vault
 passphrase Joe chose, that is not stored anywhere (no file, no Credential Manager, no log, no response):
 
 - Key: scrypt(passphrase, random 16-byte salt, n=2**17, r=8, p=1) -> 32 bytes (AES-256). Derived on unlock and
-  held only in this process's memory (inside the AES-GCM object). Lock, Privacy mode, a Command Center lock,
-  locking Windows, and every restart drop it.
+  held only in this process's memory (inside the AES-GCM object; the derived bytes and the encoded passphrase
+  are overwritten as soon as that object exists, best effort). Lock, Privacy mode, a Command Center lock,
+  locking Windows, system sleep / hibernate (privacy.py) and every restart drop it.
+- A lock generation counter (_gen) goes up on every lock and on Privacy mode on. An unlock / setup / change that
+  was checking a passphrase when that happened throws its new key away, so a Lock or Privacy mode pressed during
+  the (slow) key derivation is never undone.
 - Records: AES-256-GCM with a random 12-byte nonce per write. The record id is the associated data, so a blob
   can't be moved to another record. The record's kind (entry / calendar) is inside the ciphertext, and the
   plaintext is padded to 64 bytes, so the database shows neither what a record is nor its exact size.
@@ -20,12 +24,14 @@ passphrase Joe chose, that is not stored anywhere (no file, no Credential Manage
 Other modules register a store (register_store) so the vault can migrate their old DPAPI / Credential Manager
 copies the first time it is unlocked, wipe them on reset, and clear their caches on lock.
 """
+import ctypes
 import hmac
 import json
 import logging
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 import unicodedata
@@ -56,9 +62,11 @@ class VaultLocked(Exception):
     pass
 
 
-_state_lock = threading.RLock()     # guards _aead
+_state_lock = threading.RLock()     # guards _aead and _gen. Order: _state_lock, then db._lock (never the reverse)
 _attempt_lock = threading.Lock()    # one unlock / change attempt at a time
+_migrate_lock = threading.Lock()    # one migration of old copies at a time
 _aead = None                        # AESGCM holding the key while unlocked; None = locked
+_gen = [0]                          # lock generation: +1 on every lock() and Privacy mode on
 _unlocked_at = [0.0]                # time.monotonic() of the last unlock
 _privacy: dict = {}                 # {"on": bool}, cached copy of kv "privacy:mode"
 _stores: list[dict] = []
@@ -124,13 +132,37 @@ def secure_delete():
 
 # ---- crypto -------------------------------------------------------------------------------------
 
-def _derive(passphrase: str, salt: bytes, kdf: dict) -> bytes:
+def _wipe(buf):
+    """Best effort: overwrite secret bytes in place once they're no longer needed (Python can't promise that no
+    other copy exists). A bytearray is cleared directly; a bytes object only this module holds (a fresh scrypt
+    result or encoded passphrase, never a shared or cached one) is cleared through its CPython buffer."""
+    try:
+        n = len(buf)
+        if isinstance(buf, bytearray) and n:
+            ctypes.memset((ctypes.c_char * n).from_buffer(buf), 0, n)
+        elif type(buf) is bytes and n > 1 and sys.implementation.name == "cpython":
+            ctypes.memset(id(buf) + bytes.__basicsize__ - 1, 0, n)  # PyBytesObject.ob_sval
+    except Exception:
+        pass
+
+
+def _derive(passphrase: str, salt: bytes, kdf: dict):
+    """The AES-GCM object for this passphrase. The derived key bytes and the encoded passphrase are wiped as soon
+    as the object exists (AESGCM keeps its own copy inside OpenSSL)."""
     import hashlib
     if kdf.get("name") != "scrypt":
         raise ValueError("Unknown key derivation")
     data = unicodedata.normalize("NFC", passphrase).encode("utf-8")
-    return hashlib.scrypt(data, salt=salt, n=int(kdf["n"]), r=int(kdf["r"]), p=int(kdf["p"]),
-                          maxmem=SCRYPT_MAXMEM, dklen=int(kdf.get("len", 32)))
+    try:
+        key = hashlib.scrypt(data, salt=salt, n=int(kdf["n"]), r=int(kdf["r"]), p=int(kdf["p"]),
+                             maxmem=SCRYPT_MAXMEM, dklen=int(kdf.get("len", 32)))
+    finally:
+        _wipe(data)
+    try:
+        return _aesgcm(key)
+    finally:
+        _wipe(key)
+        del key
 
 
 def _aesgcm(key: bytes):
@@ -243,10 +275,18 @@ def privacy_on() -> bool:
 
 
 def set_privacy(on: bool):
-    _privacy["on"] = bool(on)
-    db.kv_set("privacy:mode", bool(on))
+    with _state_lock:
+        if on:
+            _gen[0] += 1  # an unlock that is still checking its passphrase must not turn this off again
+        _privacy["on"] = bool(on)
+        db.kv_set("privacy:mode", bool(on))
     if on:
         lock("privacy mode")
+
+
+def generation() -> int:
+    with _state_lock:
+        return _gen[0]
 
 
 def available() -> bool:
@@ -277,8 +317,11 @@ def lock(reason: str = "locked"):
     """Drops the key. Safe to call any time (from any thread)."""
     global _aead
     with _state_lock:
+        _gen[0] += 1
         was = _aead is not None
-        _aead = None  # the only reference to the key object; Python can't wipe memory, so this is best effort
+        # The only long-lived reference to the key object, so it is freed here. Python can't promise that no copy
+        # of the key is left in freed memory, so this is best effort.
+        _aead = None
     for s in _stores:
         if s["on_lock"]:
             try:
@@ -321,6 +364,23 @@ def status() -> dict:
 
 
 def _migrate() -> dict:
+    # One at a time (two unlocks in a row never move the same old copies twice). The old rows' original pages
+    # (e.g. personal_events' clear dates) pass through the rollback journal, so it is scrubbed afterwards.
+    with _migrate_lock:
+        if not any(s["legacy_count"] and _safe_count(s) for s in _stores):
+            return _migrate_locked()  # nothing in SQLite to move (leftover Credential Manager entries are still cleaned)
+        with db.scrubbed_journal():
+            return _migrate_locked()
+
+
+def _safe_count(store) -> int:
+    try:
+        return int(store["legacy_count"]() or 0)
+    except Exception:
+        return 1  # unknown: let migrate() try
+
+
+def _migrate_locked() -> dict:
     moved = {}
     for s in _stores:
         if not s["migrate"]:
@@ -338,20 +398,32 @@ def _migrate() -> dict:
 
 # ---- records (other modules use these) ------------------------------------------------------------
 
-def put(kind: str, payload: dict, rid: str | None = None) -> str:
-    aead = _current()
+def put(kind: str, payload: dict, rid: str | None = None, also=None) -> str:
+    """Encrypts and stores one record. Holds the state lock and the database lock throughout, so it can't
+    interleave with a passphrase change (the key it encrypts with is the one in place when it commits).
+    also(conn): optional extra statements committed in the same transaction (e.g. deleting the old copy)."""
     rid = rid or secrets.token_hex(12)
     if not re.fullmatch(r"[0-9a-f]{8,64}", rid):
         raise ValueError("Bad record id")
-    blob = _seal(aead, _encode({"kind": kind, "data": payload}), _record_aad(rid))
     _tables()
-    with db._lock:
-        db._db().execute("INSERT OR REPLACE INTO vault_records (id, blob) VALUES (?, ?)", (rid, blob))
-        db._db().commit()
+    with _state_lock, db._lock:
+        aead = _current()
+        blob = _seal(aead, _encode({"kind": kind, "data": payload}), _record_aad(rid))
+        c = db._db()
+        try:
+            c.execute("INSERT OR REPLACE INTO vault_records (id, blob) VALUES (?, ?)", (rid, blob))
+            if also:
+                also(c)
+            c.commit()
+        except BaseException:
+            c.rollback()
+            raise
     return rid
 
 
-def _decrypt_all(aead) -> list[tuple[str, dict]]:
+def _decrypt_all(aead, failed: list | None = None) -> list[tuple[str, dict]]:
+    """Every record this key opens. Records that don't (damaged, or not from this vault) are skipped and logged by
+    a short id prefix; pass `failed` to collect their ids."""
     from cryptography.exceptions import InvalidTag
     _tables()
     with db._lock:
@@ -362,6 +434,8 @@ def _decrypt_all(aead) -> list[tuple[str, dict]]:
             out.append((r["id"], json.loads(_unseal(aead, r["blob"], _record_aad(r["id"])).decode("utf-8"))))
         except (InvalidTag, ValueError):
             log.warning("Personal vault: record %s failed its integrity check; skipped", r["id"][:6])
+            if failed is not None:
+                failed.append(r["id"])
     return out
 
 
@@ -423,19 +497,42 @@ def setup(passphrase: str, confirm: str) -> dict:
         problem = passphrase_problem(passphrase)
         if problem:
             raise HTTPException(400, problem)
+        with _state_lock:
+            gen, privacy_at_start = _gen[0], privacy_on()
         salt = os.urandom(16)
-        aead = _aesgcm(_derive(passphrase, salt, KDF))
+        aead = _derive(passphrase, salt, KDF)
         verifier = _seal(aead, VERIFIER, VERIFIER_AAD)
         _tables()
         with db._lock:
             db._db().execute("INSERT INTO vault_meta (id, format, salt, kdf, verifier, created, failures, retry_at)"
                              " VALUES (1, ?, ?, ?, ?, ?, 0, 0)", (FORMAT, salt, json.dumps(KDF), verifier, db.now()))
             db._db().commit()
-        _set_key(aead)
         log.info("Personal vault set up")
-    if privacy_on():
-        set_privacy(False)
+        _take_key(aead, gen, privacy_at_start, "set up")
     return {"moved": _migrate()}
+
+
+class LockedMeanwhile(HTTPException):
+    def __init__(self, what: str):
+        super().__init__(409, f"The vault was locked (Lock, Privacy mode, Windows lock or sleep) while {what}, "
+                              "so it stays locked. Unlock it again.")
+
+
+def _take_key(aead, gen: int, privacy_at_start: bool, what: str):
+    """Installs a freshly derived key, unless the vault was locked or Privacy mode was turned on since the request
+    began (generation changed): then the key is dropped and LockedMeanwhile raised.
+    Privacy mode is cleared only if it was already on when the request began. The unlock dialog says so ("Privacy
+    mode is on. Unlocking turns it off"), so that is Joe's explicit choice; a Privacy mode turned on during the
+    passphrase check changes the generation, so it is never undone here."""
+    with _state_lock:
+        if _gen[0] != gen:
+            log.info("Personal vault: %s finished after a lock; the new key was dropped", what)
+            raise LockedMeanwhile("your passphrase was being checked")
+        _set_key(aead)
+        if privacy_at_start and privacy_on():
+            _privacy["on"] = False
+            db.kv_set("privacy:mode", False)
+            log.info("Privacy mode off (unlocked)")
 
 
 def _check(passphrase: str):
@@ -449,7 +546,7 @@ def _check(passphrase: str):
     if not isinstance(passphrase, str) or not passphrase or len(passphrase) > MAX_LENGTH:
         raise HTTPException(400, "Enter your passphrase")
     try:
-        aead = _aesgcm(_derive(passphrase, bytes(meta["salt"]), json.loads(meta["kdf"])))
+        aead = _derive(passphrase, bytes(meta["salt"]), json.loads(meta["kdf"]))
         ok = _verifier_ok(aead, bytes(meta["verifier"]))
     except Exception as e:
         log.warning("Personal vault: unlock error (%s)", type(e).__name__)
@@ -471,13 +568,13 @@ def unlock(passphrase: str) -> dict:
     if not _attempt_lock.acquire(blocking=False):
         raise HTTPException(429, "Already checking a passphrase. One moment")
     try:
+        with _state_lock:
+            gen, privacy_at_start = _gen[0], privacy_on()
         _, aead = _check(passphrase)
-        _set_key(aead)
+        _take_key(aead, gen, privacy_at_start, "unlock")
         log.info("Personal vault unlocked")
     finally:
         _attempt_lock.release()
-    if privacy_on():
-        set_privacy(False)  # unlocking is an explicit "show my personal data"
     return {"moved": _migrate()}
 
 
@@ -485,6 +582,7 @@ def change(current: str, passphrase: str, confirm: str) -> dict:
     if not _attempt_lock.acquire(blocking=False):
         raise HTTPException(429, "Already checking a passphrase. One moment")
     try:
+        gen = generation()
         _, old = _check(current)
         if not isinstance(confirm, str) or not hmac.compare_digest(passphrase.encode("utf-8", "replace"), confirm.encode("utf-8", "replace")):
             raise HTTPException(400, "The two new passphrases don't match")
@@ -494,22 +592,39 @@ def change(current: str, passphrase: str, confirm: str) -> dict:
         if problem:
             raise HTTPException(400, problem)
         salt = os.urandom(16)
-        new = _aesgcm(_derive(passphrase, salt, KDF))
-        items = _decrypt_all(old)
-        with db._lock:
+        new = _derive(passphrase, salt, KDF)
+        # Snapshot, re-encrypt, commit and key swap under the state lock and the database lock: put() takes the
+        # same locks, so no record can be written with the old key after the snapshot (it would be unreadable).
+        # BEGIN IMMEDIATE also keeps another process (an older copy still running) from writing in between.
+        _tables()
+        with _state_lock, db._lock:
             c = db._db()
+            if c.in_transaction:
+                c.commit()
+            c.execute("BEGIN IMMEDIATE")
             try:
+                failed: list[str] = []
+                items = _decrypt_all(old, failed)
+                if failed:
+                    ids = ", ".join(f[:6] for f in failed[:10]) + (f" +{len(failed) - 10} more" if len(failed) > 10 else "")
+                    log.warning("Personal vault: passphrase change stopped; %d record(s) can't be decrypted", len(failed))
+                    raise HTTPException(409, f"Nothing was changed: {len(failed)} vault record(s) can't be decrypted "
+                                             f"with your current passphrase (damaged, or not from this vault): {ids}. "
+                                             "Changing the passphrase would make them unreadable for good.")
                 rows = [(_seal(new, _encode(rec), _record_aad(rid)), rid) for rid, rec in items]
                 c.executemany("UPDATE vault_records SET blob = ? WHERE id = ?", rows)
                 c.execute("UPDATE vault_meta SET salt = ?, kdf = ?, verifier = ?, failures = 0, retry_at = 0 WHERE id = 1",
                           (salt, json.dumps(KDF), _seal(new, VERIFIER, VERIFIER_AAD)))
                 c.commit()
-            except Exception:
+            except BaseException:
                 c.rollback()
                 raise
-        _set_key(new)
+            # Same key swap rule as unlock: if the vault was locked meanwhile it stays locked (with the new key).
+            stays_locked = _gen[0] != gen
+            if not stays_locked:
+                _set_key(new)
         log.info("Personal vault passphrase changed; %d record(s) re-encrypted", len(items))
-        return {"ok": True, "reencrypted": len(items)}
+        return {"ok": True, "reencrypted": len(items), "locked": stays_locked}
     finally:
         _attempt_lock.release()
 

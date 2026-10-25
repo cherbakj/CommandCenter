@@ -10,6 +10,7 @@ of the vault moves them in and deletes those rows (secure_delete), so no DPAPI c
 """
 import asyncio
 import json
+import logging
 import re
 from datetime import date, datetime, timedelta
 
@@ -18,6 +19,7 @@ from fastapi import APIRouter, Body, HTTPException
 from . import db, feeds, today, vault
 from .connectors import asana, outlook
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/planner")
 MAX_DAYS = 31
 MAX_ENTRIES = 5000
@@ -44,25 +46,42 @@ def _dpapi_open(blob: bytes) -> dict:
     return json.loads(win32crypt.CryptUnprotectData(blob, None, None, None, 0)[1].decode("utf-8"))
 
 
+class _AlreadyMoved(Exception):
+    pass
+
+
 def _migrate_legacy() -> int:
-    """Vault unlocked: copy each DPAPI entry into the vault, then delete the old rows."""
+    """Vault unlocked: moves each DPAPI entry into the vault. The vault copy is written and the old row deleted
+    in one transaction, so an entry is never in both places or moved twice (vault._migrate also runs one
+    migration at a time). An entry that doesn't decrypt (made under another Windows account, or damaged) is kept
+    where it is, untouched; it still counts as waiting to move, and moves when it can be read."""
     if not _legacy_exists():
         return 0
     with db._lock:
         rows = [dict(r) for r in db._db().execute("SELECT id, day, start, end, all_day, secret FROM personal_events").fetchall()]
-    moved = []
+    moved = kept = 0
     for r in rows:
         try:
             secret = _dpapi_open(r["secret"])
         except Exception:
-            secret = {"title": "(couldn't decrypt an older entry: it was created under another Windows account)", "notes": ""}
-        vault.put(KIND, {"day": r["day"], "start": r["start"], "end": r["end"], "all_day": bool(r["all_day"]),
-                         "title": str(secret.get("title", ""))[:200], "notes": str(secret.get("notes", ""))[:4000]})
-        moved.append(r["id"])
-    with db._lock, vault.secure_delete() as c:
-        c.executemany("DELETE FROM personal_events WHERE id = ?", [(i,) for i in moved])
-        c.commit()
-    return len(moved)
+            kept += 1
+            continue
+
+        def delete_old(c, rid=r["id"]):
+            if c.execute("DELETE FROM personal_events WHERE id = ?", (rid,)).rowcount != 1:
+                raise _AlreadyMoved()  # gone meanwhile (another copy of the app moved it): roll back the vault write
+
+        try:
+            # (The connection always runs with secure_delete=ON, so the old row is overwritten, not just unlinked.)
+            vault.put(KIND, {"day": r["day"], "start": r["start"], "end": r["end"], "all_day": bool(r["all_day"]),
+                             "title": str(secret.get("title", ""))[:200], "notes": str(secret.get("notes", ""))[:4000]},
+                      also=delete_old)
+            moved += 1
+        except _AlreadyMoved:
+            pass
+    if kept:
+        log.warning("Personal entries: %d older entr(ies) couldn't be decrypted for this Windows user and were kept", kept)
+    return moved
 
 
 def _wipe_legacy():

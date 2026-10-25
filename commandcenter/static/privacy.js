@@ -44,8 +44,22 @@
   }
 
   async function refresh() {
-    try { setState(await api("/api/vault/status")); } catch { /* keep the last state */ }
+    try {
+      const res = await fetch("/api/vault/status");
+      if (res.status === 401) signedOut();
+      else if (res.ok) setState(await res.json());
+    } catch { /* offline / server restarting: keep the last state */ }
     return state;
+  }
+
+  // 401 = this page's session ended (Command Center locked, restarted, or a serve-mode sign-in expired). The server
+  // has stopped answering, so personal items already on the page are taken out of the DOM, not just hidden.
+  const PERSONAL_NODES = ".pl-b-personal, .pl-ovl, .pl-chip-ovl, .pl-legend-cals > *, [data-personal], .pv-cals";
+  function signedOut() {
+    setState({ unlocked: false, available: false });  // cc:privacy -> planner.js drops its personal state too
+    document.querySelectorAll(PERSONAL_NODES).forEach((n) => n.remove());
+    if (dlg?.open) dlg.close();
+    if (panelOpen && document.querySelector("#dialog")?.open) document.querySelector("#dialog").close();
   }
 
   // ---- header: Privacy mode eye --------------------------------------------------------------------
@@ -248,7 +262,7 @@
       el("ul", { class: "pv-rules" },
         el("li", {}, el("b", {}, "Don't reuse "), "your Windows / Sonance password or any work password."),
         el("li", {}, el("b", {}, "No recovery: "), "if you forget it, the only option is to delete your personal data and start over."),
-        el("li", {}, "Locks itself when you lock Command Center or Windows, turn on Privacy mode, or restart.")),
+        el("li", {}, "Locks itself when you lock Command Center or Windows, the PC sleeps or hibernates, you turn on Privacy mode, or restart.")),
       waitingText() ? el("p", { class: "pv-note" }, waitingText()) : null,
       el("label", { class: "field-label", for: "pv-new" }, "Passphrase"), pass, hint,
       el("label", { class: "field-label", for: "pv-again" }, "Confirm passphrase"), again,
@@ -432,8 +446,9 @@
       el("div", { class: "pv-grid" }, personal.map(itemCard)),
       el("div", { class: "panel-label gap" }, `Work (${work.length})`),
       el("div", { class: "pv-grid" }, work.map(itemCard)),
+      el("p", { class: "pv-note" }, "Lock the vault (or use Privacy mode) before leaving the PC unlocked; it also locks on sleep/hibernate."),
       el("p", { class: "muted pv-foot" }, `Vault auto-lock: when Command Center locks${data.settings.lock_on_windows_lock ? ", when Windows locks" : ""}`,
-        data.settings.auto_lock_minutes ? `, ${data.settings.auto_lock_minutes} min after unlocking` : "", ", on restart and in Privacy mode. Settings: privacy: in config.yaml."),
+        data.settings.auto_lock_minutes ? `, ${data.settings.auto_lock_minutes} min after unlocking` : "", ", on sleep / hibernate, on restart and in Privacy mode. Settings: privacy: in config.yaml."),
       el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Close")));
   }
   document.querySelector("#dialog")?.addEventListener("close", () => { panelOpen = false; });

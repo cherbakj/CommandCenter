@@ -667,11 +667,14 @@ async def watch_loop():
                     try:
                         await asyncio.to_thread(launch)
                         alerts.raise_alert("Outlook", "Outlook was closed, so I restarted it",
-                                           "Mail, calendar and task alerts need Outlook running.", "normal")
+                                           "Mail, calendar and task alerts need Outlook running.", "normal",
+                                           toast="Outlook restarted")
                     except Exception as e:
-                        alerts.raise_alert("Outlook", "Outlook is closed and couldn't be restarted", str(e), "high")
+                        alerts.raise_alert("Outlook", "Outlook is closed and couldn't be restarted", str(e), "high",
+                                           toast="Outlook closed, restart failed")
                 else:
-                    alerts.raise_alert("Outlook", "Outlook is closed", "Mail and calendar alerts are paused.", "normal")
+                    alerts.raise_alert("Outlook", "Outlook is closed", "Mail and calendar alerts are paused.", "normal",
+                                       toast="Outlook closed")
             was_running = False
             db.kv_set("outlook:status", {"ok": False, "checked": db.now(), "error": "Outlook is closed"})
             await asyncio.sleep(poll)
@@ -686,11 +689,13 @@ async def watch_loop():
                     f"From {mail['sender_name']} - {mail['preview'][:150]}",
                     rule.get("priority", "normal"),
                     {"type": "mail", "id": mail["id"]},
+                    toast="important new mail" if rule.get("priority") == "high" else "new mail",
                 )
             for m, minutes in await call(scan_meetings):
                 when = "now" if minutes == 0 else f"in {minutes} min"
                 action = {"type": "meeting", "id": m["id"], "join_url": m["join_url"], "prep": True}
-                alerts.raise_alert("Calendar", f"{m['subject']} starts {when}", m["location"], "high", action)
+                alerts.raise_alert("Calendar", f"{m['subject']} starts {when}", m["location"], "high", action,
+                                   toast=f"meeting {when}")
             db.kv_set("outlook:status", {"ok": True, "checked": db.now()})
         except Exception as e:
             log.exception("Outlook scan failed")
@@ -709,7 +714,7 @@ async def _update_focus_block(keywords):
         return
     db.kv_set("focus:calendar", {"key": key, "subject": block["subject"], "until": block["end"] + ":00"})
     until = datetime.fromisoformat(block["end"]).strftime("%I:%M %p").lstrip("0")
-    alerts.raise_alert("Focus", f"Focus mode on until {until}", block["subject"], "low")
+    alerts.raise_alert("Focus", f"Focus mode on until {until}", block["subject"], "low", toast="focus mode on")
 
 
 # ---- search ------------------------------------------------------------------
