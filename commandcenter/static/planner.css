@@ -86,3 +86,19 @@
 .pl-help summary { cursor: pointer; color: var(--accent-2); font-weight: 600; }
 .pl-help p { margin: .45rem 0; font-size: .88rem; }
 .pl-help b { color: var(--text); }
+
+/* ---- personal vault: locked bar, busy-only events, detail level ---- */
+.pl-lockbar {
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin: -.3rem 0 .75rem; padding: .4rem .7rem;
+  font: 600 .82rem var(--font-ui); color: var(--muted); border: 1px dashed rgb(var(--hot-rgb) / .55); background: rgb(var(--hot-rgb) / .05);
+}
+.pl-lockbar[hidden] { display: none; }
+.pl-lock-ico { font-size: .9rem; }
+.pl-ovl-busy .pl-title { font-style: italic; color: var(--muted); }
+.pl-cal-list .pl-detail { width: auto; max-width: 15rem; margin: 0; font-size: .8rem; padding: .3rem .4rem; }
+.pl-cal-add select { margin: 0; }
+.pl-cal-hosts { margin: .4rem 0 0; font-size: .8rem; }
+@media (max-width: 1000px) {
+  .pl-cal-list li { flex-wrap: wrap; }
+  .pl-cal-list .pl-detail { max-width: none; flex: 1 1 12rem; }
+}

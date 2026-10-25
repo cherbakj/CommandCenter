@@ -110,7 +110,7 @@
   // ---- the box ----------------------------------------------------------------------------------
   const MODES = {
     task: { label: "Task", where: "Outlook / To Do", save: "Add task" },
-    personal: { label: "Personal", where: "Calendar note · this PC only", save: "Add note" },
+    personal: { label: "Personal", where: "Calendar note · personal vault", save: "Add note" },
   };
   let dlg = null, input, chip, err, saveBtn, modeBtns = {}, restore = null, busy = false;
   let mode = store.get("cc.capture.mode") === "personal" ? "personal" : "task";
@@ -145,6 +145,7 @@
   }
 
   function setMode(id) {
+    if (id === "personal" && CC.privacy?.isPrivate()) id = "task";  // Privacy mode: no personal option
     mode = id;
     store.set("cc.capture.mode", id);
     for (const [k, b] of Object.entries(modeBtns)) {
@@ -180,6 +181,11 @@
       if (mode === "task") {
         await api("/api/tasks", { source: "outlook", subject: title, due: date ? isoDay(date) : null, notes: "" });
       } else {
+        // Personal notes live in the personal vault: it must be unlocked (and Privacy mode off) first.
+        if (CC.privacy?.isPrivate()) throw new Error("Privacy mode is on, so personal notes are off. Save it as a task, or turn Privacy mode off (Ctrl+Shift+P).");
+        if (CC.privacy && !CC.privacy.available() && !await CC.privacy.ensureUnlocked("Unlock your personal vault to save this note.")) {
+          throw new Error("Personal notes need your personal vault unlocked.");
+        }
         await api("/api/planner/personal", { day: isoDay(date || new Date()), title, notes: "", all_day: true });
       }
       dlg.classList.add("saved");

@@ -14,8 +14,8 @@ and for this Windows user only (127.0.0.1:8765 behind a per-launch session cooki
 - **Dependencies:** `requirements.txt` pins the top-level packages; `requirements.lock` pins everything (pip freeze). Set up or repair `.venv` with `.venv\Scripts\python.exe -m pip install -r requirements.lock`. After an intended upgrade, regenerate it with `pip freeze` (keep its header) and update the pins in `requirements.txt`.
 
 ## Configure it
-`config.yaml` (created from `config.example.yaml`; every setting is commented). Secrets are never in config: they live in
-Windows Credential Manager (services `CommandCenter-SQL`, `CommandCenter-Toolkit`, `CommandCenter-Pulse`, `CommandCenter-Asana`).
+`config.yaml` (created from `config.example.yaml`; every setting is commented). Secrets are never in config: work secrets live in
+Windows Credential Manager (services `CommandCenter-SQL`, `CommandCenter-Toolkit`, `CommandCenter-Pulse`, `CommandCenter-Asana`); personal ones in the personal vault.
 Appearance (colors, text size, density, effects) lives in the in-app **Profile** (avatar at top right), stored in SQLite.
 
 ## Layout of the window
@@ -37,11 +37,15 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
   - **VIP unread.**
   - **Actions:** Snooze, Dismiss, Mute, Mark urgent. No-reply reminders, and urgent escalation after `urgent_escalate_hours`.
 - **Source tags:** every item shows where it came from (Outlook / Sent / Flagged / Teams / Calendar / To Do / Asana / Pulse / SQL / Website / Personal), with the sender address.
-- **Overlay calendars (`feeds.py`):** read-only iCal feeds (Google Calendar "Secret address in iCal format", iCloud public calendar links; Skylight's source calendars), color-coded on the 10-day calendar with a legend to show/hide each. Manage via Calendar > Calendars. Links are stored only in Credential Manager (`CommandCenter-Calendars`); https only, public hosts only, 10 MB cap, events cached in memory for 15 min, never written to Outlook or disk.
+- **Overlay calendars (`feeds.py`):** read-only iCal feeds (Google Calendar "Secret address in iCal format", iCloud public calendar links; Skylight's source calendars), color-coded on the 10-day calendar with a legend to show/hide each. Manage via Calendar > Calendars.
+  - Links live in the **personal vault**.
+  - Hosts allowed: calendar.google.com, `*.google.com/calendar/` and `*.icloud.com` only. https only, public IPs only, redirects re-checked, 10 MB cap.
+  - Per-calendar detail level: full / titles (default) / busy. Fields are stripped before they're cached or returned.
+  - Events are held in memory for 15 minutes, only while the vault is unlocked. Never written to Outlook or disk.
 - **Calendar (`planner.py`):**
   - Outlook meetings for the next 10 days, including all-day events.
   - Dated follow-ups: tasks, flags due, snoozes, reply checks.
-  - **Personal entries**, stored only in SQLite, title and notes encrypted with DPAPI, never sent to Outlook.
+  - **Personal entries**, kept in the personal vault (encrypted with Joe's own passphrase), never sent to Outlook.
 - **Alerts:** toast + sound + feed; focus mode (manual, tray, or calendar events containing "focus"); morning briefing and end-of-day wrap-up; meeting reminders with a **Prep** card (attendees, recent mail, open follow-ups).
 - **Orders (`orders.py`):** copying an order number (7-10 digits) or opening an email that contains one looks it up with the saved SQL query `Find order` (needs SQL set up).
 - **Claude tab (`terminal.py`, `projects.py`):**
@@ -57,6 +61,15 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
   - Every attempt is logged in SQLite `toolkit_changes`.
   - TLS verifies the server certificate by default; this PC trusts Sonance's corp CAs.
 - **Pulse tab (`pulse.py`):** read-only Postgres access to `public.data_reviews` through a least-privilege role `commandcenter_ro` (setup SQL on the tab, run by Joe in Supabase). Polls every 2 min for new or changed tickets on Joe.
+- **Verified sending:** every reply is reviewed before it sends.
+  - `POST /api/mail/reply/preview` builds the reply in Outlook, reads its recipients and subject, discards it, and issues a single-use `approval_id` (5 min).
+  - `POST /api/mail/reply` with `send:true` needs that approval for the exact same text, and Outlook re-checks the recipients right before Send.
+  - The UI (`CC.replyDialog`, triage) shows recipients, flagging anyone outside Sonance, then a deliberate Send click. Enter never sends.
+  - Sent replies are logged locally in kv `mail:sent_log` (subject and recipients only, no bodies), encrypted.
+- **Workday (`daily.py`):** Top 3 for today (carry-over, briefing/wrap-up counts), uncommitted/unpushed work reminder (after `daily.uncommitted_after`), yesterday recap (commits, meetings, sent mail, tasks, Pulse closed; copy for stand-up), meeting notes + action items (→ To Do / Asana; "capture notes?" after each meeting). Top 3 and notes are DPAPI-encrypted.
+- **Triage (`triage.js`, Shift+T):** one-at-a-time queue with single-key actions; replies use the verified-send flow.
+- **Quick capture (`capture.js`, Ctrl+Alt+Space):** a global hotkey (`ui.capture_hotkey`) registered in `desktop.py`. Captures a task, or a personal note when the vault is unlocked. It respects the app lock.
+- **Pulse aging:** business days a ticket has waited on Joe, warn/overdue buckets (`pulse.aging_*`), a daily alert, and a Today tile.
 - **Mail / Teams / Websites / SQL tabs:** as before. Teams unread count comes from a background browser profile once Joe logs in; chats open through `msteams:` links.
 
 ## Security model (security.py, desktop.py)
@@ -70,17 +83,25 @@ Appearance (colors, text size, density, effects) lives in the in-app **Profile**
 - **Hotbar:** only web, `msteams:`, folders and documents (.pdf .docx .xlsx .pptx .csv .txt .png .jpg .md); UNC only to NetBIOS names or `*.sonance.com`. Checked on save and on every open.
 - **VS Code server:** archive paths must stay inside the build folder; node.exe and every .exe/.node/.dll must be validly Authenticode-signed (Microsoft; GitHub, Inc. for its bundled tools) before the server starts.
 - **Lock screen:** its Quit/Hide/Unlock links work only while the lock page is showing.
-- **Secrets:** only in Credential Manager or memory. Logs, the database and API responses were swept for secrets.
+- **Personal vault (`vault.py`, `privacy.py`):** personal data (entries, calendar links, quick-capture notes) is encrypted with AES-256-GCM, using a key derived from Joe's own passphrase (scrypt n=2^17). The passphrase is never stored, and it is not tied to company/domain accounts: DPAPI is avoided here because domain backup keys can recover it.
+  - The key lives in memory only. Unlock is rate-limited and the counter persists.
+  - It locks on Command Center Lock, on Windows lock, on restart and in Privacy mode (Ctrl+Shift+P, eye icon).
+  - The Privacy & Data panel lists every source (Work/Personal) with what's stored, how it's protected and how long it's kept.
+  - Forgotten passphrase: "Delete all personal data" is the only option.
+- **Work data at rest (`db.py`):** alert text, the sent log, follow-up subjects/names, settings with names, and the Toolkit change log (pk, before, after, error) are DPAPI-encrypted (`ccsealed:v1:`). A startup + daily migration encrypts any plaintext. The connection uses `secure_delete=ON` with regular VACUUM.
+- **Retention (`retention:` in config):** alerts 30 days, sent log 90, Toolkit change log 365, `seen` 30, dismissed follow-ups 60.
+- **Secrets:** only in Credential Manager, the personal vault or memory. Logs, the database and API responses were swept for secrets.
   Logi passwords never come back in lists (`has_password` only); one user's password is fetched on an explicit Show/Clipboard click (POST `/api/toolkit/logi/password`), logged as a `reveal` in `toolkit_changes` without the value. New Logi passwords: 16 random characters (crypto.getRandomValues), upper/lower/digit/symbol, no look-alikes.
-- **Log:** `data/commandcenter.log`, rotated at 5 MB (3 old files). Alerts are logged by id, source and priority only, never titles or bodies.
+- **Log:** `data/commandcenter.log`, rotated at 5 MB (3 old files). Alerts are logged by id, source and priority only, never titles or bodies. At startup, older lines carrying work data are rewritten as `[redacted]`.
+- **Fonts and network:** fonts are self-hosted (`static/fonts`, CSP `font-src 'self'`). The page makes no requests beyond 127.0.0.1.
 - **Dev bypass:** `CC_DEV_NO_AUTH=1` works in `serve` mode only and logs a warning.
 
 ## Code layout
-- `commandcenter/app.py`: core routes. Auto-loads the feature modules security, toolkit, pulse, terminal, vscode, planner, profile and feeds (each exposes `router` and optionally `background`).
+- `commandcenter/app.py`: core routes. Auto-loads the feature modules security, toolkit, pulse, terminal, vscode, planner, profile, feeds, daily, vault and privacy (each exposes `router` and optionally `background`).
 - `commandcenter/connectors/`: outlook, web, sql, asana, weather, teams. `people.py` handles internal domains and urgent people.
 - `commandcenter/static/`:
   - Core UI: `app.js`, `style.css`, `index.html`.
-  - Feature modules: `projects`, `vscode`, `toolkit`, `pulse`, `planner`, `profile`, `splash` (`.js`/`.css`).
+  - Feature modules: `projects`, `vscode`, `toolkit`, `pulse`, `planner`, `profile`, `splash`, `daily`, `triage`, `capture`, `privacy` (`.js`/`.css`).
   - Shared assets: `vendor/` (xterm), `jc-logo.svg` and `icon.ico` (the JC monogram).
 - `data/` (git-ignored, private ACL): the SQLite DB, log, browser profiles, `vscode/`, and the ACL backup.
 

@@ -11,7 +11,13 @@ Safety rules enforced here (the browser is never trusted):
     the whole transaction is rolled back.
   * A batch (e.g. "add user" = Users + Roles + Rights + tree rows) runs in one transaction.
   * Every attempt is written to an append-only SQLite table (toolkit_changes) BEFORE it runs and
-    finalized after; SQLite triggers refuse deletes and edits of finalized rows.
+    finalized after; SQLite triggers refuse deletes and edits of finalized rows. The row data it holds
+    (pk, before_json, after_json, error) is encrypted with DPAPI for this Windows user (db.seal); ids, times,
+    user, connection, table and action stay clear. The only paths that get past the triggers are
+    seal_log() (encrypts plaintext rows written by older versions) and prune_log() (retention,
+    `retention.toolkit_changes_days`, default 365): each runs in ONE SQLite transaction that drops the
+    two triggers, does its verified work, re-creates them from their saved definitions and checks they are
+    back before committing, so no other connection ever sees the table without them.
   * The SQL password lives only in Windows Credential Manager (keyring service
     "CommandCenter-Toolkit", user "<username>@<server>"). It is never returned, logged or written.
     Logi user passwords (a column in Logi.dbo.Users) are masked in the change log, and are never sent
@@ -246,6 +252,14 @@ def _clean_error(e: Exception) -> str:
     return (msg or type(e).__name__)[:700]
 
 
+def _log_reason(e: Exception) -> str:
+    """For the log file: the error type and SQLSTATE only. SQL Server messages and refusals can quote row values
+    (duplicate keys, truncated text, "row changed" details); the full message goes to the UI and the encrypted
+    change log instead."""
+    state = e.args[0] if getattr(e, "args", None) and isinstance(e.args[0], str) and re.fullmatch(r"[0-9A-Z]{5}", e.args[0]) else ""
+    return type(e).__name__ + (f" (SQLSTATE {state})" if state else "")
+
+
 def _jsonable(v):
     if isinstance(v, (datetime, date, dtime)):
         return v.isoformat()
@@ -465,7 +479,8 @@ def log_start(key, action, pk, before, after, batch, s) -> int:
             "INSERT INTO toolkit_changes (ts, windows_user, connection, table_key, table_name, pk, action, before_json,"
             " after_json, ok, error, batch) VALUES (?,?,?,?,?,?,?,?,?,NULL,NULL,?)",
             (db.now(), _windows_user(), f"{s['username']}@{s['server']}", key, full_name(key, s),
-             json.dumps(pk, default=str) if pk is not None else None, action, _dumps(before), _dumps(after), batch))
+             db.seal(json.dumps(pk, default=str)) if pk is not None else None, action, db.seal(_dumps(before)),
+             db.seal(_dumps(after)), batch))
         conn.commit()
         return cur.lastrowid
 
@@ -477,8 +492,61 @@ def log_finish(log_id, ok, error=None, before=None, after=None):
     with db._lock:
         conn.execute("UPDATE toolkit_changes SET ok = ?, error = ?, before_json = COALESCE(?, before_json),"
                      " after_json = COALESCE(?, after_json) WHERE id = ? AND ok IS NULL",
-                     (1 if ok else 0, error, _dumps(before), _dumps(after), log_id))
+                     (1 if ok else 0, db.seal(error), db.seal(_dumps(before)), db.seal(_dumps(after)), log_id))
         conn.commit()
+
+
+SEALED_COLUMNS = ("pk", "before_json", "after_json", "error")
+TRIGGERS = ("toolkit_changes_no_delete", "toolkit_changes_final")
+
+
+def _triggers_lifted(conn, work):
+    """Runs work(conn) with the append-only triggers dropped, inside the caller's db.transaction(); the triggers
+    are re-created from their saved SQL and verified before the transaction can commit."""
+    saved = conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'toolkit_changes'"
+                         ).fetchall()
+    if not set(TRIGGERS) <= {r["name"] for r in saved}:
+        raise RuntimeError("toolkit_changes triggers are missing; not touching the change log")
+    for r in saved:
+        conn.execute(f'DROP TRIGGER "{r["name"]}"')
+    result = work(conn)
+    for r in saved:
+        conn.execute(r["sql"])
+    back = {r["name"]: r["sql"] for r in conn.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'toolkit_changes'")}
+    if back != {r["name"]: r["sql"] for r in saved}:
+        raise RuntimeError("toolkit_changes triggers didn't come back as they were")
+    return result
+
+
+def seal_log() -> int:
+    """Encrypts the row data of change-log rows written in plaintext by older versions (idempotent)."""
+    conn = _log_db()
+    with db._lock:
+        if not conn.execute(f"SELECT 1 FROM toolkit_changes WHERE {db._plain_where(SEALED_COLUMNS)} LIMIT 1").fetchone():
+            return 0
+    with db.transaction() as conn:
+        return _triggers_lifted(conn, lambda c: db.seal_columns(c, "toolkit_changes", "id", SEALED_COLUMNS))
+
+
+def prune_log(days: float) -> int:
+    """Retention: deletes change-log rows older than `days` (the only deletes the log allows)."""
+    conn = _log_db()
+    cutoff = db._cutoff(days)
+    with db._lock:
+        if not conn.execute("SELECT 1 FROM toolkit_changes WHERE ts < ? LIMIT 1", (cutoff,)).fetchone():
+            return 0
+
+    def work(c):
+        total = c.execute("SELECT COUNT(*) FROM toolkit_changes").fetchone()[0]
+        old = c.execute("SELECT COUNT(*) FROM toolkit_changes WHERE ts < ?", (cutoff,)).fetchone()[0]
+        n = c.execute("DELETE FROM toolkit_changes WHERE ts < ?", (cutoff,)).rowcount
+        if n != old or c.execute("SELECT COUNT(*) FROM toolkit_changes").fetchone()[0] != total - old:
+            raise RuntimeError("toolkit_changes retention count mismatch; nothing deleted")
+        return n
+
+    with db.transaction() as conn:
+        return _triggers_lifted(conn, work)
 
 
 def list_changes(table=None, limit=300) -> list[dict]:
@@ -494,7 +562,9 @@ def list_changes(table=None, limit=300) -> list[dict]:
     out = []
     for r in rows:
         d = dict(r)
+        d["error"] = db.unseal_or(d["error"])
         for k in ("pk", "before_json", "after_json"):
+            d[k] = db.unseal_or(d[k])
             try:
                 d[k] = json.loads(d[k]) if d[k] else None
             except ValueError:
@@ -640,7 +710,7 @@ def apply_changes(ops: list, connect=None, batch_label=None) -> dict:
         msg = str(failure) if isinstance(failure, (ChangeRefused, NotConfigured)) else _clean_error(failure)
         for p in plans:
             log_finish(p["log"], False, msg if len(plans) == 1 else f"rolled back: {msg}", before=p.get("before"))
-        log.warning("toolkit change refused/failed (%d op(s)): %s", len(plans), msg)
+        log.warning("toolkit change refused/failed (%d op(s)): %s", len(plans), _log_reason(failure))
         if isinstance(failure, NotConfigured):
             raise failure
         raise ChangeRefused(msg)
@@ -805,7 +875,7 @@ async def _run(fn, *args):
         raise
     except Exception as e:
         msg = _clean_error(e)
-        log.warning("toolkit request failed: %s", msg)
+        log.warning("toolkit request failed: %s", _log_reason(e))
         raise HTTPException(502, msg)
 
 

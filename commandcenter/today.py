@@ -16,15 +16,30 @@ AUTOMATED = re.compile(r"no-?reply|donotreply|notifications?@|mailer-daemon|post
 
 
 # ---- dismissed items and muted senders (stored in the local database) --------
+# These kv values (and snoozes / reply_watches below, which hold subjects and names) are encrypted at rest by
+# db.kv_set (DPAPI, current Windows user); see db.py.
 
 def dismissed() -> dict:
     return db.kv_get("followups:dismissed", {})
 
 
+def _dismiss_cutoff() -> str:
+    return (date.today() - timedelta(days=db.retention_settings()["dismissed_followups_days"])).isoformat()
+
+
 def dismiss(item_id):
-    d = {k: v for k, v in dismissed().items() if v >= (date.today() - timedelta(days=60)).isoformat()}
+    d = {k: v for k, v in dismissed().items() if v >= _dismiss_cutoff()}
     d[item_id] = date.today().isoformat()
     db.kv_set("followups:dismissed", d)
+
+
+def prune_dismissed() -> int:
+    """Retention (retention.dismissed_followups_days, default 60): forgets old dismissals. Returns how many."""
+    d = dismissed()
+    keep = {k: v for k, v in d.items() if v >= _dismiss_cutoff()}
+    if len(keep) != len(d):
+        db.kv_set("followups:dismissed", keep)
+    return len(d) - len(keep)
 
 
 def muted() -> list[str]:

@@ -282,8 +282,8 @@ def check(scope) -> tuple[int, str] | None:
 
 
 CSP_TEMPLATE = ("default-src 'self'; script-src 'self'; "
-                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-                "font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "font-src 'self'; img-src 'self' data: blob:; "
                 "connect-src 'self' ws://127.0.0.1:{port} ws://localhost:{port}; "
                 "frame-src http://127.0.0.1:*; frame-ancestors 'self'; "
                 "object-src 'none'; base-uri 'none'; form-action 'self'")
@@ -383,6 +383,11 @@ def end_session():
     SESSION_SECRET = secrets.token_urlsafe(32)
     with _codes_lock:
         _codes.clear()
+    try:  # locking Command Center also locks the personal vault immediately (its own poller is the backup)
+        from . import vault
+        vault.lock("Command Center locked")
+    except Exception:
+        log.warning("Personal vault lock on session end failed", exc_info=False)
 
 
 router = APIRouter()

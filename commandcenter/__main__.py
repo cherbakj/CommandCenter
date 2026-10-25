@@ -14,11 +14,75 @@ import argparse
 import asyncio
 import getpass
 import logging
+import re
 import sys
 import threading
 import webbrowser
 
 from . import config
+
+LOG_NAME = "commandcenter.log"
+LOG_BACKUPS = 3
+_RECORD = re.compile(r"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} [A-Z]+ [\w.]+: )(.*)", re.S)
+# Messages older versions logged with work data in them. (logger: message regex; group 1 is the part kept.)
+# - alerts: "[priority] Source: title" (alert titles are email subjects, names, ticket and calendar text)
+# - toolkit: SQL Server / refusal messages, which can quote row values
+# - orders: the copied order number
+_LEAKY = [
+    (re.compile(r"commandcenter\.alerts: $"), re.compile(r"()\[(?:low|normal|high)\] ")),
+    (re.compile(r"commandcenter\.toolkit: $"),
+     re.compile(r"(toolkit change refused/failed \(\d+ op\(s\)\): |toolkit request failed: )"
+                r"(?!\w+(?: \(SQLSTATE \w+\))?\s*$)(?!\[redacted\])")),
+    (re.compile(r"commandcenter\.orders: $"), re.compile(r"()Copied order (?!\[redacted\])")),
+]
+
+
+def _scrub_text(text: str) -> tuple[str, int]:
+    out, n, dropping = [], 0, False
+    for line in text.splitlines(keepends=True):
+        m = _RECORD.match(line)
+        if not m:  # continuation of the previous record (traceback, multi-line message)
+            if not dropping:
+                out.append(line)
+            continue
+        dropping = False
+        head, msg = m.group(1), m.group(2)
+        for logger, leaky in _LEAKY:
+            hit = leaky.match(msg) if logger.search(head) else None
+            if hit:
+                ending = line[len(line.rstrip("\r\n")):]
+                out.append(f"{head}{hit.group(1)}[redacted]{ending}")
+                n += 1
+                dropping = True
+                break
+        else:
+            out.append(line)
+    return "".join(out), n
+
+
+def scrub_old_logs() -> int:
+    """Rewrites data/commandcenter.log (and .1-.3) with work data from older versions replaced by "[redacted]";
+    timestamps, levels and module names stay. Idempotent. Rewritten in place (another running copy may hold the
+    file open and keeps appending at the end); anything appended while scrubbing is kept."""
+    total = 0
+    for path in [config.DATA_DIR / LOG_NAME] + [config.DATA_DIR / f"{LOG_NAME}.{i}" for i in range(1, LOG_BACKUPS + 1)]:
+        try:
+            with open(path, "r+b") as f:
+                raw = f.read()
+                clean, n = _scrub_text(raw.decode("utf-8", "surrogateescape"))
+                if not n:
+                    continue
+                f.seek(len(raw))
+                tail = f.read()  # written by another process since the read above
+                f.seek(0)
+                f.write(clean.encode("utf-8", "surrogateescape") + tail)
+                f.truncate()
+            total += n
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            print(f"Couldn't scrub {path.name}: {e}", file=sys.stderr)
+    return total
 
 
 def main():
@@ -41,12 +105,16 @@ def main():
 
     config.load()
     from logging.handlers import RotatingFileHandler
-    # ~5 MB per file, 3 old files kept (commandcenter.log.1 .. .3)
-    handlers = [RotatingFileHandler(config.DATA_DIR / "commandcenter.log", maxBytes=5 * 1024 * 1024, backupCount=3,
+    scrubbed = scrub_old_logs()
+    # ~5 MB per file, 3 old files kept (commandcenter.log.1 .. .3). Never log subjects, names, ticket or calendar
+    # text, SQL row data or message bodies: ids, counts, sources and error types only.
+    handlers = [RotatingFileHandler(config.DATA_DIR / LOG_NAME, maxBytes=5 * 1024 * 1024, backupCount=LOG_BACKUPS,
                                     encoding="utf-8")]
     if sys.stderr:  # pythonw has no console
         handlers.append(logging.StreamHandler())
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
+    if scrubbed:
+        logging.getLogger("commandcenter").info("Redacted %d old log line(s) that held work data", scrubbed)
 
     if args.cmd == "login":
         from .connectors import web

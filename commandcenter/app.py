@@ -39,18 +39,73 @@ FEATURE_MODULES = _load_feature_modules()
 
 
 def _mark_old_start_alerts_read():
-    """One-time clean-up (idempotent): the unread "Command Center / Started" alerts earlier versions raised."""
+    """One-time clean-up (idempotent): the unread "Command Center / Started" alerts earlier versions raised.
+    Titles are encrypted, so they are compared after decrypting."""
     with db._lock:
-        n = db._db().execute("UPDATE alerts SET read = 1 WHERE source = 'Command Center' AND title = 'Started' AND read = 0").rowcount
+        rows = db._db().execute("SELECT id, title FROM alerts WHERE source = 'Command Center' AND read = 0").fetchall()
+        ids = [r["id"] for r in rows if db.unseal_or(r["title"]) == "Started"]
+        for i in ids:
+            db._db().execute("UPDATE alerts SET read = 1 WHERE id = ?", (i,))
         db._db().commit()
-    if n:
-        log.info("Marked %d old 'Started' alerts read", n)
+    if ids:
+        log.info("Marked %d old 'Started' alerts read", len(ids))
+
+
+MAINTENANCE_SECONDS = 24 * 3600
+
+
+def maintenance() -> dict:
+    """Encrypts plaintext left by older versions, enforces retention (config `retention:`), and VACUUMs when
+    rows were sealed or deleted (or every retention.vacuum_days). Each step is its own verified transaction, so
+    a failed step changes nothing and doesn't stop the others. Counts only are logged. Meeting notes and Top 3
+    are encrypted and pruned by daily.py itself (Top 3: daily.TOP3_KEEP_DAYS)."""
+    r = db.retention_settings()
+    sealed, deleted, failed = {}, {}, []
+
+    def step(name, fn, into):
+        try:
+            result = fn()
+            into.update(result) if isinstance(result, dict) else into.__setitem__(name, result)
+        except Exception:
+            failed.append(name)
+            log.exception("Data maintenance step failed: %s (nothing was changed by it)", name)
+
+    step("seal", db.seal_existing, sealed)
+    step("retention", lambda: db.enforce_retention(r), deleted)
+    step("dismissed_followups", today.prune_dismissed, deleted)
+    try:
+        from . import toolkit
+    except ModuleNotFoundError:
+        toolkit = None
+    if toolkit:
+        step("toolkit_changes", toolkit.seal_log, sealed)
+        step("toolkit_changes", lambda: toolkit.prune_log(r["toolkit_changes_days"]), deleted)
+    changed = any(sealed.values()) or any(deleted.values())
+    vacuumed = False
+    try:
+        vacuumed = db.vacuum(force=changed, every_days=r["vacuum_days"])
+    except Exception:
+        failed.append("vacuum")
+        log.exception("Data maintenance step failed: vacuum")
+    log.info("Data maintenance: sealed %s, deleted %s, vacuum %s%s", sealed, deleted,
+             "done" if vacuumed else "not needed", f", failed: {failed}" if failed else "")
+    return {"sealed": sealed, "deleted": deleted, "vacuumed": vacuumed, "failed": failed}
+
+
+async def maintenance_loop():
+    """At start and then daily (see maintenance())."""
+    while True:
+        try:
+            await asyncio.to_thread(maintenance)
+        except Exception:
+            log.exception("Data maintenance failed")
+        await asyncio.sleep(MAINTENANCE_SECONDS)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.prune_seen()
-    tasks = [asyncio.create_task(outlook.watch_loop()), asyncio.create_task(web.watch_loop()),
+    tasks = [asyncio.create_task(maintenance_loop()),  # encryption of legacy rows + retention, at start and daily
+             asyncio.create_task(outlook.watch_loop()), asyncio.create_task(web.watch_loop()),
              asyncio.create_task(today.briefing_loop()), asyncio.create_task(teams.watch_loop()),
              asyncio.create_task(orders.clipboard_loop())]
     for module in FEATURE_MODULES:
@@ -356,10 +411,11 @@ async def mail_reply(id: str = Body(...), text: str = Body(...), reply_all: bool
         info = await outlook.call(outlook.reply, id, text, reply_all, send, signature)
     except ValueError as e:
         raise HTTPException(409, str(e))
-    if send:
-        log = db.kv_get("mail:sent_log", [])
-        log.insert(0, {"ts": db.now(), "subject": info["subject"], "to": info["recipients"][:20], "via": "Command Center"})
-        db.kv_set("mail:sent_log", log[:200])
+    if send:  # encrypted at rest (db.kv_set); entries older than retention.mail_sent_log_days are dropped
+        cutoff = db._cutoff(db.retention_settings()["mail_sent_log_days"])
+        sent = [e for e in db.kv_get("mail:sent_log", []) if str(e.get("ts", "")) >= cutoff]
+        sent.insert(0, {"ts": db.now(), "subject": info["subject"], "to": info["recipients"][:20], "via": "Command Center"})
+        db.kv_set("mail:sent_log", sent[:200])
         if remind_days > 0:
             today.watch_for_reply(info, remind_days, id)
     return {"ok": True}

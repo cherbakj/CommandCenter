@@ -236,3 +236,28 @@ vscode:
 daily:
   uncommitted_after: "15:00"     # show the "projects with uncommitted work" chip after this time on workdays
   meeting_notes_prompt: true     # ask "capture notes/actions?" when a meeting ends
+
+# ---------------------------------------------------------------------------
+# Retention: how long work data is kept in data/commandcenter.db. Enforced at start and once a day.
+# Work data in the database (alert text, mail sent log, follow-up snoozes/watches/mutes, urgent people,
+# Toolkit change log row data, ...) is encrypted with Windows DPAPI for this Windows user.
+# Deleted rows are zeroed (secure_delete) and the file is compacted (VACUUM) after deletes.
+# Meeting notes and Top 3 are encrypted and pruned by the daily module itself (Top 3: 120 days).
+# ---------------------------------------------------------------------------
+retention:
+  alerts_days: 30                # alerts feed
+  mail_sent_log_days: 90         # "sent from Command Center" log (subjects + recipients, no bodies)
+  toolkit_changes_days: 365      # Toolkit SQL change log (append-only; only retention may delete from it)
+  seen_days: 30                  # "already alerted" markers
+  dismissed_followups_days: 60   # dismissed follow-ups stay hidden this long
+  vacuum_days: 7                 # compact the database at least this often
+
+# ---------------------------------------------------------------------------
+# Privacy: personal data (personal calendar entries, Google / iCloud overlay calendars) lives in the
+# personal vault, encrypted with a passphrase only you know (set it up under Privacy & Data; it is never
+# stored). Work data stays DPAPI-protected. The vault always locks when Command Center locks, in
+# Privacy mode (eye icon, Ctrl+Shift+P) and on restart.
+# ---------------------------------------------------------------------------
+privacy:
+  lock_on_windows_lock: true     # also lock the vault when Windows locks (Win+L)
+  auto_lock_minutes: 0           # lock the vault this many minutes after unlocking (0 = off)

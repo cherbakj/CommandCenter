@@ -5,6 +5,7 @@ bottle==0.13.4
 cffi==2.1.1
 click==8.5.0
 clr_loader==0.3.1
+cryptography==50.0.2
 fastapi==0.162.0
 greenlet==3.5.6
 h11==0.16.0

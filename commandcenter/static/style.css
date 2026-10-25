@@ -24,6 +24,7 @@
   --cut: .9rem;
   --gap: 1rem;
   --header-h: 3.6rem;
+  /* The four families are local files (static/fonts.css + static/fonts/); the CSP allows no font hosts. */
   --font-display: "Orbitron", "Segoe UI", sans-serif;           /* big numbers + logo only */
   --font-ui: "Chakra Petch", "Segoe UI", sans-serif;            /* labels, buttons, nav */
   --font-body: "Exo 2", "Segoe UI", sans-serif;                 /* reading text */

@@ -111,7 +111,7 @@ async def _on_copy(text):
         return  # same number copied again within the minute
     db.kv_set("orders:last", [number, time.strftime("%Y-%m-%d %H:%M")])
     if ready():
-        log.info("Copied order %s but lookups aren't set up: %s", number, ready())
+        log.info("Copied an order number but lookups aren't set up")  # never log the number itself
         return
     try:
         result = await asyncio.to_thread(lookup, number)

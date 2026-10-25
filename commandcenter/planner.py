@@ -1,43 +1,81 @@
 """10-day planner: Outlook calendar as the base, dated follow-ups on top, plus private personal entries.
 
-Personal entries never go to Outlook or anywhere else: they live in the local SQLite database (inside the
-app's private data folder) and their title/notes are encrypted with Windows DPAPI for the current user,
-so another account, an administrator browsing the file, or a copied backup can't read them.
+Personal entries never go to Outlook or anywhere else. They live in the personal vault (vault.py): encrypted
+(AES-256-GCM, date and time included) with a key made from Joe's own passphrase, which is not stored anywhere,
+so neither another account, an administrator, a copied backup nor the domain's DPAPI recovery key can read
+them. While the vault is locked or Privacy mode is on, the planner returns no personal entries at all.
+
+Older versions kept entries in the personal_events table (title/notes DPAPI-encrypted). The first unlock
+of the vault moves them in and deletes those rows (secure_delete), so no DPAPI copy is left.
 """
 import asyncio
 import json
 import re
 from datetime import date, datetime, timedelta
 
-import win32crypt
 from fastapi import APIRouter, Body, HTTPException
 
-from . import db, feeds, today
+from . import db, feeds, today, vault
 from .connectors import asana, outlook
 
 router = APIRouter(prefix="/api/planner")
 MAX_DAYS = 31
-DPAPI_LABEL = "CommandCenter personal calendar"
+MAX_ENTRIES = 5000
+KIND = "planner-entry"
+RECORD_ID = re.compile(r"[0-9a-f]{8,64}")
 
 
-# ---- private storage ---------------------------------------------------------------------
+# ---- older DPAPI copies (moved into the vault on first unlock) -------------------------------------
 
-def _table():
+def _legacy_exists() -> bool:
     with db._lock:
-        db._db().execute(
-            "CREATE TABLE IF NOT EXISTS personal_events ("
-            " id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, start TEXT, end TEXT,"
-            " all_day INTEGER NOT NULL DEFAULT 1, secret BLOB NOT NULL, updated TEXT NOT NULL)")
-        db._db().commit()
+        return db._db().execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'personal_events'").fetchone() is not None
 
 
-def _seal(payload: dict) -> bytes:
-    return win32crypt.CryptProtectData(json.dumps(payload).encode("utf-8"), DPAPI_LABEL, None, None, None, 0)
+def _legacy_count() -> int:
+    if not _legacy_exists():
+        return 0
+    with db._lock:
+        return db._db().execute("SELECT COUNT(*) FROM personal_events").fetchone()[0]
 
 
-def _open(blob: bytes) -> dict:
+def _dpapi_open(blob: bytes) -> dict:
+    import win32crypt
     return json.loads(win32crypt.CryptUnprotectData(blob, None, None, None, 0)[1].decode("utf-8"))
 
+
+def _migrate_legacy() -> int:
+    """Vault unlocked: copy each DPAPI entry into the vault, then delete the old rows."""
+    if not _legacy_exists():
+        return 0
+    with db._lock:
+        rows = [dict(r) for r in db._db().execute("SELECT id, day, start, end, all_day, secret FROM personal_events").fetchall()]
+    moved = []
+    for r in rows:
+        try:
+            secret = _dpapi_open(r["secret"])
+        except Exception:
+            secret = {"title": "(couldn't decrypt an older entry: it was created under another Windows account)", "notes": ""}
+        vault.put(KIND, {"day": r["day"], "start": r["start"], "end": r["end"], "all_day": bool(r["all_day"]),
+                         "title": str(secret.get("title", ""))[:200], "notes": str(secret.get("notes", ""))[:4000]})
+        moved.append(r["id"])
+    with db._lock, vault.secure_delete() as c:
+        c.executemany("DELETE FROM personal_events WHERE id = ?", [(i,) for i in moved])
+        c.commit()
+    return len(moved)
+
+
+def _wipe_legacy():
+    if _legacy_exists():
+        with db._lock, vault.secure_delete() as c:
+            c.execute("DELETE FROM personal_events")
+            c.commit()
+
+
+vault.register_store("planner entries", legacy_count=_legacy_count, migrate=_migrate_legacy, wipe_legacy=_wipe_legacy)
+
+
+# ---- entries in the vault ------------------------------------------------------------------------
 
 def _validate(day, start, end, all_day, title, notes):
     try:
@@ -57,20 +95,23 @@ def _validate(day, start, end, all_day, title, notes):
 
 
 def personal_between(first: date, last: date) -> list[dict]:
-    _table()
-    with db._lock:
-        rows = db._db().execute(
-            "SELECT id, day, start, end, all_day, secret FROM personal_events WHERE day >= ? AND day <= ? ORDER BY day, start",
-            (first.isoformat(), last.isoformat())).fetchall()
-    out = []
-    for r in rows:
-        try:
-            secret = _open(r["secret"])
-        except Exception:
-            secret = {"title": "(can't decrypt: created under another Windows account)", "notes": ""}
-        out.append({"id": r["id"], "day": r["day"], "start": r["start"], "end": r["end"],
-                    "all_day": bool(r["all_day"]), "title": secret.get("title", ""), "notes": secret.get("notes", "")})
-    return out
+    """Personal entries in [first, last]; [] whenever personal data isn't available (locked / Privacy mode)."""
+    if not vault.available():
+        return []
+    try:
+        entries = vault.records(KIND)
+    except vault.VaultLocked:
+        return []
+    lo, hi = first.isoformat(), last.isoformat()
+    out = [{"id": e["id"], "day": e["day"], "start": e.get("start"), "end": e.get("end"), "all_day": bool(e.get("all_day")),
+            "title": e.get("title", ""), "notes": e.get("notes", "")}
+           for e in entries if lo <= str(e.get("day", "")) <= hi]
+    return sorted(out, key=lambda e: (e["day"], e["start"] or ""))
+
+
+def personal_state() -> dict:
+    st = vault.status()
+    return {k: st[k] for k in ("set_up", "unlocked", "privacy", "available")} | {"waiting": sum(st["legacy"].values())}
 
 
 # ---- dated follow-ups ----------------------------------------------------------------------
@@ -128,7 +169,7 @@ async def planner(days: int = 10):
         meetings, outlook_error = [], str(e).splitlines()[0] if str(e) else "Outlook unavailable"
     dated = await _dated_items(first, last)
     personal = await asyncio.to_thread(personal_between, first, last)
-    overlays, overlay_status = await feeds.events_between(first, last)
+    overlays, overlay_status = await feeds.events_between(first, last)  # nothing while personal data is unavailable
 
     def on_day(ev, d):  # an all-day event's end is exclusive (midnight of the next day)
         end_day = (datetime.fromisoformat(ev["end"]) - timedelta(minutes=1)).date().isoformat() if ev["all_day"] else ev["end"][:10]
@@ -144,33 +185,40 @@ async def planner(days: int = 10):
             "items": [x for x in dated if x["day"] == d],
             "personal": [p for p in personal if p["day"] == d],
         })
-    return {"days": out, "outlook_error": outlook_error, "calendars": overlay_status}
+    return {"days": out, "outlook_error": outlook_error, "calendars": overlay_status,
+            "personal_state": await asyncio.to_thread(personal_state)}
+
+
+def _save(entry_id, values: dict) -> str:
+    vault.require_available()
+    if entry_id is not None:
+        if not isinstance(entry_id, str) or not RECORD_ID.fullmatch(entry_id) or vault.get(KIND, entry_id) is None:
+            raise HTTPException(404, "That entry no longer exists")
+    elif vault.record_count() >= MAX_ENTRIES:
+        raise HTTPException(400, f"Up to {MAX_ENTRIES} personal entries")
+    return vault.put(KIND, values, entry_id)
 
 
 @router.post("/personal")
 async def save_personal(day: str = Body(...), title: str = Body(...), notes: str = Body(""), all_day: bool = Body(True),
-                        start: str | None = Body(None), end: str | None = Body(None), id: int | None = Body(None)):
+                        start: str | None = Body(None), end: str | None = Body(None), id: str | None = Body(None)):
     _validate(day, start, end, all_day, title, notes)
-    blob = await asyncio.to_thread(_seal, {"title": title.strip(), "notes": notes or ""})
-    _table()
-    values = (day, None if all_day else start, None if all_day else end, int(all_day), blob, datetime.now().isoformat(timespec="seconds"))
-    with db._lock:
-        if id is None:
-            cur = db._db().execute("INSERT INTO personal_events (day, start, end, all_day, secret, updated) VALUES (?,?,?,?,?,?)", values)
-            new_id = cur.lastrowid
-        else:
-            cur = db._db().execute("UPDATE personal_events SET day=?, start=?, end=?, all_day=?, secret=?, updated=? WHERE id=?", (*values, id))
-            if cur.rowcount != 1:
-                raise HTTPException(404, "That entry no longer exists")
-            new_id = id
-        db._db().commit()
+    values = {"day": day, "start": None if all_day else start, "end": None if all_day else end, "all_day": bool(all_day),
+              "title": title.strip(), "notes": notes or "", "updated": datetime.now().isoformat(timespec="seconds")}
+    try:
+        new_id = await asyncio.to_thread(_save, id, values)
+    except vault.VaultLocked:
+        raise HTTPException(423, "Your personal vault is locked. Unlock it first")
     return {"ok": True, "id": new_id}
 
 
 @router.post("/personal/delete")
-async def delete_personal(id: int = Body(..., embed=True)):
-    _table()
-    with db._lock:
-        db._db().execute("DELETE FROM personal_events WHERE id = ?", (id,))
-        db._db().commit()
+async def delete_personal(id: str = Body(..., embed=True)):
+    vault.require_available()
+    try:
+        ok = await asyncio.to_thread(vault.delete, KIND, id)
+    except vault.VaultLocked:
+        raise HTTPException(423, "Your personal vault is locked. Unlock it first")
+    if not ok:
+        raise HTTPException(404, "That entry no longer exists")
     return {"ok": True}

@@ -1,0 +1,77 @@
+/* Privacy & Data (privacy.js): the header eye (Privacy mode), the vault dialog, and the inventory panel. */
+
+/* ---- Privacy mode: personal items disappear everywhere at once (the server also stops sending them) ---- */
+html.cc-private .pl-b-personal, html.cc-private .pl-ovl, html.cc-private .pl-chip-ovl, html.cc-private .pl-legend-cals,
+html.cc-private .pl-add-personal, html.cc-private .pl-personal-btn, html.cc-private .pl-legend .src-personal,
+html.cc-private .qc-mode[data-mode="personal"], html.cc-private [data-personal] { display: none !important; }
+/* Vault locked: personal entries / overlays are gone; keep the "+" controls (they ask to unlock). */
+html.cc-personal-off .pl-b-personal, html.cc-personal-off .pl-ovl, html.cc-personal-off .pl-chip-ovl { display: none !important; }
+
+/* ---- header eye ---- */
+#privacy-slot { display: flex; align-items: center; }
+#privacy-slot:empty { display: none; }
+.pv-eye {
+  width: 2.2rem; height: 2.2rem; padding: 0; display: grid; place-items: center; color: var(--muted);
+  background: transparent; border-color: rgb(176 205 189 / .55);
+}
+.pv-eye svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.pv-eye:hover { color: #fff; border-color: var(--accent); }
+.pv-eye.on { color: #0b0010; background: var(--hot); border-color: var(--hot); box-shadow: 0 0 .7rem rgb(var(--hot-rgb) / .6); }
+.pv-eye.on:hover { color: #0b0010; filter: brightness(1.12); }
+.pv-eye .pv-slash { stroke-width: 2.4; }
+
+/* ---- vault dialog ---- */
+.pv-dialog { width: min(34rem, 92vw); max-height: 92vh; overflow-y: auto; }
+.pv-dialog p { margin: 0 0 .75rem; line-height: 1.45; }
+.pv-dialog input[type=password], .pv-dialog input[type=text] { width: 100%; margin-bottom: .55rem; }
+.pv-dialog .spacer { flex: 1; }
+.pv-rules { margin: 0 0 .9rem; padding-left: 1.1rem; line-height: 1.45; color: var(--text); }
+.pv-rules li { margin-bottom: .25rem; }
+.pv-rules b { color: var(--hot); }
+.pv-note { padding: .45rem .6rem; border-left: 3px solid var(--accent-2); background: rgb(var(--accent-2-rgb) / .07); font-size: .9rem; }
+.pv-hint { font-size: .82rem; margin: -.25rem 0 .7rem; min-height: 1.1em; }
+.pv-hint.good { color: var(--accent); }
+.pv-check { display: flex; align-items: flex-start; gap: .55rem; margin: .3rem 0 .4rem; font-weight: 600; line-height: 1.35; }
+.pv-check input { margin-top: .15rem; flex-shrink: 0; }
+.pv-err:empty { display: none; }
+.pv-err { margin: .3rem 0; }
+.pv-link { border: none !important; padding-left: 0 !important; text-decoration: underline; }
+h3.pv-danger { color: var(--red); }
+.pv-dialog .row { align-items: center; }
+
+/* ---- Profile panel link ---- */
+.pv-profile-link { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin-top: .9rem; padding-top: .7rem; border-top: 1px solid var(--line-soft); }
+
+/* ---- Privacy & Data panel ---- */
+.pv-intro { margin: -.3rem 0 .9rem; line-height: 1.45; }
+.pv-vault { padding: .8rem .9rem; border: 1px solid rgb(var(--hot-rgb) / .55); background: rgb(var(--hot-rgb) / .05); }
+.pv-vault-head { display: flex; gap: .75rem; align-items: flex-start; }
+.pv-vault-head .grow { flex: 1; min-width: 0; }
+.pv-lock { font-size: 1.4rem; line-height: 1; }
+.pv-vault-title { font: 700 1rem var(--font-ui); letter-spacing: .06em; color: #fff; text-transform: uppercase; margin-bottom: .2rem; }
+.tag.pv-ok { color: var(--accent); border-color: rgb(var(--accent-rgb) / .6); }
+.pv-vault-acts { justify-content: flex-start; margin-top: .7rem; }
+.pv-grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr)); }
+.pv-item { min-width: 0; padding: .6rem .75rem; background: rgb(0 0 0 / .3); border: 1px solid var(--line-soft); border-left: 3px solid var(--line-strong); }
+.pv-item.pv-personal { border-left-color: var(--hot); }
+.pv-item header { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; margin-bottom: .4rem; }
+.pv-name { font: 700 .95rem var(--font-ui); color: #fff; }
+.pv-cat { font: 700 .62rem var(--font-ui); letter-spacing: .1em; text-transform: uppercase; padding: .05rem .35rem; border: 1px solid; }
+.pv-cat.work { color: var(--accent-2); border-color: rgb(var(--accent-2-rgb) / .55); }
+.pv-cat.personal { color: var(--hot); border-color: rgb(var(--hot-rgb) / .6); }
+.pv-state { font-size: .78rem; margin-left: auto; text-align: right; overflow-wrap: anywhere; }
+.pv-dot { width: .55rem; height: .55rem; border-radius: 50%; flex-shrink: 0; background: var(--dim); }
+.pv-dot.on { background: var(--accent); box-shadow: 0 0 .4rem var(--accent); }
+.pv-dot.off { background: transparent; border: 1px solid var(--muted); }
+.pv-dot.na { background: rgb(176 205 189 / .35); }
+.pv-item dl { display: grid; grid-template-columns: 7.2rem minmax(0, 1fr); gap: .2rem .6rem; margin: 0; font-size: .82rem; line-height: 1.4; }
+.pv-item dt { font: 700 .66rem var(--font-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding-top: .12rem; }
+.pv-item dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+@media (max-width: 560px) { .pv-item dl { grid-template-columns: minmax(0, 1fr); } .pv-item dd { margin-bottom: .25rem; } }
+.pv-acts { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .55rem; }
+.pv-cals { list-style: none; margin: .55rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+.pv-cals li { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: .85rem; }
+.pv-cals .grow { flex: 1 1 8rem; min-width: 0; overflow-wrap: anywhere; }
+.pv-cals select { width: auto; margin: 0; font-size: .78rem; padding: .25rem .35rem; max-width: 100%; }
+.pv-sw { width: .7rem; height: .7rem; display: inline-block; flex-shrink: 0; }
+.pv-foot { margin-top: 1rem; font-size: .8rem; }
