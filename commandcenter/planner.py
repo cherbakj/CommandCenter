@@ -158,7 +158,7 @@ async def _dated_items(first: date, last: date) -> list[dict]:
     blocked = outlook._blocked() or False  # flags on mail blocked as spam are hidden too
     for f in todo.get("flagged", []):
         if (f.get("due") and f["due"] >= recent_due and not today.AUTOMATED.search(f.get("sender_name", ""))
-                and not today.spam_hidden(f, blocked)):
+                and not today.flagged_before_cutoff(f) and not today.spam_hidden(f, blocked)):
             day = max(f["due"], today_iso)
             if day <= last.isoformat():
                 items.append({"kind": "flag", "source": "flagged", "id": f["id"], "day": day, "title": f["subject"],

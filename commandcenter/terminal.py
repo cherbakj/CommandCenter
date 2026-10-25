@@ -1,5 +1,8 @@
 """Embedded Claude Code terminal for the Projects tab.
 
+Dormant: no page uses it since Claude moved into the VS Code tab (vscode.py, the Claude Code extension) and
+static/projects.js was removed. Kept because privacy.py reads _running() and it ends any old sessions at shutdown.
+
 Runs the real Claude Code CLI (projects.claude_path()) in a Windows pseudo-console (ConPTY, through
 pywinpty) and streams it to xterm.js in the page over a WebSocket.
 

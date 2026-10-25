@@ -72,9 +72,12 @@ def _workspace() -> str:
     return spaces[0]["gid"]
 
 
+TASK_LIMIT = 100  # one page of open tasks
+
+
 def my_tasks() -> list[dict]:
     rows = _request("GET", "/tasks", {
-        "assignee": "me", "workspace": _workspace(), "completed_since": "now", "limit": 100,
+        "assignee": "me", "workspace": _workspace(), "completed_since": "now", "limit": TASK_LIMIT,
         "opt_fields": "name,due_on,due_at,permalink_url,projects.name",
     }) or []
     return [{

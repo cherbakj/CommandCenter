@@ -470,6 +470,7 @@
     else if (id === "d") {
       run(async () => {
         await api("/api/mail/read", { id: item.m.id, read: true });
+        if (item.src === "flagged") await api("/api/mail/flag", { id: item.m.id, flagged: false });  // done with a flag = unflag it
         await api("/api/followups/dismiss", { id: item.m.id });
         markCleared("done");
       });

@@ -1,4 +1,6 @@
-// VS Code tab: the real VS Code (web) for a chosen project, with the Claude Code extension, in an iframe.
+// VS Code tab (WORK pane, labelled "VS Code · Claude"): the real VS Code (web) for the project picked in the global
+// "Working on:" selector, with your desktop VS Code's extensions and settings (mirrored by the server before every
+// start) and the Claude Code panel open on the right. It replaced the terminal Claude tab.
 // The server runs on this PC only (127.0.0.1, random port, per-launch token) and starts when you ask.
 // The token only ever comes from /api/vscode/url and goes straight into the iframe's src; nothing stores it.
 // All DOM is built with CC.el (text only).
@@ -16,32 +18,34 @@
 
     const BUSY = ["downloading", "installing", "starting"];
     const LABELS = { stopped: "Stopped", downloading: "Downloading", installing: "Installing", starting: "Starting", ready: "Running", error: "Error" };
-    const state = { projects: [], status: { status: "stopped" }, folder: null, openFolder: null, timer: null, section: null,
+    const state = { projects: [], status: { status: "stopped" }, openFolder: null, timer: null, section: null,
       unsafeOk: new Set() };  // folders other accounts can modify that Joe confirmed opening (this page load only)
-    // Same rule as the Claude tab: VS Code and the Claude Code extension run tasks, hooks, settings and MCP
-    // servers from the folder, so a folder other Windows accounts can change needs an explicit confirmation,
-    // sent as allow_unsafe (the server refuses without it).
+    // VS Code and the Claude Code extension run tasks, hooks, settings and MCP servers from the folder, so a folder
+    // other Windows accounts can change needs an explicit confirmation, sent as allow_unsafe (the server refuses
+    // without it). The same goes for Claude in a separate window.
     const UNSAFE_TEXT = "Other accounts on this PC can modify this folder — Claude hooks/settings there could run code as you. Open it anyway?";
     const ui = {};
 
-    const store = {
-      get(k) { try { return localStorage.getItem(k); } catch { return null; } },
-      set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
-    };
-
     function isVisible() { return state.section?.classList.contains("active"); }
+
+    const samePath = (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase();
+    const known = (path) => state.projects.find((p) => samePath(p.path, path));
+    const isUnsafe = (path) => !!(known(path) && known(path).writable_by_others);
+    // The project to open: the one in "Working on:" (only listed projects can be opened).
+    const folder = () => { const ap = CC.activeProject; return ap && known(ap.path) ? known(ap.path).path : null; };
 
     // ---- rendering ------------------------------------------------------------------
 
     function render(section) {
       state.section = section;
-      ui.select = el("select", { class: "vsc-select", title: "Project to open", onchange: () => {
-        state.folder = ui.select.value || null;
-        if (state.folder) store.set("cc.vscode.folder", state.folder);
-        updateButtons();
-      } });
       ui.open = el("button", { class: "small primary", onclick: () => guarded(openSelected) }, "Open in VS Code");
+      ui.claude = el("button", { class: "small alt", title: "Show the Claude Code panel in VS Code (in VS Code: the spark icon, or Ctrl+Esc to focus its input)",
+        onclick: () => guarded(showClaude) }, "✳ Claude panel");
+      ui.window = el("button", { class: "small", title: "Open Claude for this project in a separate Windows Terminal window",
+        onclick: () => guarded(launchWindow) }, "New window");
       ui.power = el("button", { class: "small alt", onclick: () => guarded(togglePower) }, "Start server");
+      ui.sync = el("button", { class: "small subtle", title: "Copy your desktop VS Code's extensions, settings, keybindings and snippets in again (restarts VS Code web)",
+        onclick: () => guarded(syncDesktop) }, "Sync from desktop");
       ui.dot = el("span", { class: "dot" });
       ui.chip = el("span", { class: "chip vsc-state" }, ui.dot, "Stopped");
       ui.reload = el("button", { class: "small subtle", title: "Reload the VS Code page", onclick: () => reloadFrame() }, "Reload");
@@ -53,72 +57,63 @@
 
       section.append(el("div", { class: "panel vsc-panel" },
         el("div", { class: "panel-head vsc-head" },
-          el("span", { class: "panel-label" }, "VS.CODE // WEB"),
-          ui.select, ui.open, ui.warn, ui.where,
+          el("span", { class: "panel-label" }, "VS.CODE // CLAUDE"),
+          ui.open, ui.claude, ui.window, ui.warn, ui.where,
           el("span", { class: "spacer" }),
-          ui.chip, ui.reload, ui.power),
+          ui.chip, ui.sync, ui.reload, ui.power),
         ui.frameWrap));
       showStage();
     }
 
-    const samePath = (a, b) => String(a || "").toLowerCase() === String(b || "").toLowerCase();
-    const known = (path) => state.projects.find((p) => samePath(p.path, path));
-    const isUnsafe = (path) => !!(known(path) && known(path).writable_by_others);
-
     // true when the folder may be opened (private, or confirmed once on this page), false if Joe cancelled.
-    async function confirmUnsafe(folder) {
-      const key = String(folder || "").toLowerCase();
-      if (!isUnsafe(folder) || state.unsafeOk.has(key)) return true;
-      if (!(await CC.confirmDialog("Folder isn't private", UNSAFE_TEXT, "Open anyway"))) return false;
+    async function confirmUnsafe(path, button = "Open anyway") {
+      const key = String(path || "").toLowerCase();
+      if (!isUnsafe(path) || state.unsafeOk.has(key)) return true;
+      if (!(await CC.confirmDialog("Folder isn't private", UNSAFE_TEXT, button))) return false;
       state.unsafeOk.add(key);
       return true;
     }
 
-    function fillProjects() {
-      // Default: the global "Working on:" project, then the last one opened here.
-      const active = CC.activeProject?.path;
-      const want = state.folder || (active && known(active) ? active : state.cleared ? null : store.get("cc.vscode.folder"));
-      const opts = state.projects.map((p) => el("option", { value: p.path, title: p.path }, p.name));
-      ui.select.replaceChildren(el("option", { value: "" }, state.projects.length ? "Choose a project…" : "No projects found"), ...opts);
-      const hit = known(want);
-      if (hit) { ui.select.value = hit.path; state.folder = hit.path; }
-      updateButtons();
-    }
-
     // Follow the global project selector. Never starts the server; if VS Code is already showing a
     // project, it switches to the new one.
-    document.addEventListener("cc:project", (e) => {
-      if (!e.detail || !e.detail.path) {  // WORKING ON cleared: clear the picker too (an open VS Code page stays)
-        state.folder = null;
-        state.cleared = true;  // and don't bring the last folder back when the list reloads
-        if (ui.select) ui.select.value = "";
-        updateButtons();
-        return;
-      }
-      const hit = known(e.detail.path);
-      if (!hit) return;
-      state.cleared = false;
-      state.folder = hit.path;
-      if (ui.select) ui.select.value = hit.path;
-      store.set("cc.vscode.folder", hit.path);
+    document.addEventListener("cc:project", () => {
       updateButtons();
-      if (ui.frame && state.status.status === "ready" && !samePath(state.openFolder, hit.path)) guarded(() => openFolder(hit.path));
+      const f = folder();
+      if (f && ui.frame && state.status.status === "ready" && !samePath(state.openFolder, f)) guarded(() => openFolder(f));
     });
 
     function updateButtons() {
       const s = state.status.status;
+      const f = folder();
+      const p = known(f);
       ui.power.textContent = s === "ready" || BUSY.includes(s) ? "Stop server" : "Start server";
       ui.power.className = s === "ready" || BUSY.includes(s) ? "small subtle" : "small alt";
-      ui.open.disabled = !state.folder || BUSY.includes(s);
-      ui.open.textContent = s === "ready" ? "Open in VS Code" : "Start + open";
+      ui.open.disabled = !f || BUSY.includes(s);
+      ui.open.textContent = s !== "ready" ? "Start + open" : ui.frame && samePath(state.openFolder, f) ? "Reopen" : "Open in VS Code";
+      ui.open.title = p ? p.path : "Pick a project in WORKING ON first";
+      ui.claude.hidden = !ui.frame || s !== "ready";
+      ui.window.disabled = !f;
+      ui.sync.disabled = BUSY.includes(s);
       ui.reload.hidden = !ui.frame;
-      ui.warn.hidden = !isUnsafe(state.folder);
+      ui.warn.hidden = !isUnsafe(f);
       ui.chip.lastChild.textContent = LABELS[s] || s;
       ui.dot.className = "dot" + (s === "ready" ? " ok" : "");
       ui.chip.classList.toggle("bad", s === "error");
       ui.chip.classList.toggle("busy", BUSY.includes(s));
-      const p = state.projects.find((x) => x.path === state.openFolder);
-      ui.where.textContent = ui.frame && p ? `Showing ${p.name}` : "";
+      const shown = known(state.openFolder);  // only worth saying when it isn't the WORKING ON project
+      ui.where.textContent = ui.frame && shown && !samePath(shown.path, f) ? `Showing ${shown.name}` : "";
+    }
+
+    // What the last desktop mirror did (counts and skipped extensions; the server never sends setting values).
+    function mirrorNote(m) {
+      if (!m) return [];
+      const when = m.at ? new Date(m.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+      const out = [el("p", { class: "muted" }, `Synced from desktop VS Code${when ? ` ${when}` : ""}: ${m.extensions} extensions`
+        + `${m.copied ? ` (${m.copied} copied in)` : ""}, ${m.settings} settings, ${m.keybindings} keybindings, ${m.snippets} snippet files.`)];
+      for (const s of m.skipped || []) out.push(el("p", { class: "muted vsc-skip" }, `Not synced: ${s.id} — ${s.reason}`));
+      if (m.keybinding_removals) out.push(el("p", { class: "muted vsc-skip" }, `${m.keybinding_removals} keybinding removals ("-command") can't be copied; change those in VS Code here.`));
+      for (const e of m.errors || []) out.push(el("p", { class: "vsc-err" }, e));
+      return out;
     }
 
     function showStage() {
@@ -127,10 +122,11 @@
       const s = st.status;
       const lines = [];
       if (s === "stopped") {
-        lines.push(el("h3", {}, "VS Code in Command Center"),
-          el("p", {}, "Choose a project and press Start + open. The first start downloads the VS Code web server (about 200 MB, once) and installs the Claude Code extension into it."),
-          el("p", { class: "muted" }, "First time in a folder, VS Code opens it in Restricted Mode: click Manage in its blue banner and choose Trust, or Claude Code and Git won't start. VS Code remembers that."),
-          el("p", { class: "muted" }, "It runs on this PC only (127.0.0.1) with a new secret for every start, and stops when you press Stop or quit Command Center. Settings and extensions are kept apart from your desktop VS Code."));
+        lines.push(el("h3", {}, "VS Code with Claude Code"),
+          el("p", {}, "Pick a project in WORKING ON above and press Start + open. Claude Code opens in the panel on the right of VS Code (the spark icon; Ctrl+Esc focuses its input). New window runs Claude in Windows Terminal instead."),
+          el("p", { class: "muted" }, "Before every start, your desktop VS Code's extensions, settings, keybindings and snippets are copied in. It's one way: desktop VS Code is never changed. Sync from desktop does it again now."),
+          el("p", { class: "muted" }, "First time in a folder, VS Code opens it in Restricted Mode: click Manage in its banner and choose Trust, or Claude Code, Git and most extensions won't start. VS Code remembers that."),
+          el("p", { class: "muted" }, "It runs on this PC only (127.0.0.1) with a new secret for every start, and stops when you press Stop or quit Command Center."));
       } else if (s === "error") {
         lines.push(el("h3", { class: "vsc-err" }, "VS Code web didn't start"), el("p", {}, st.error || st.detail || "Unknown error"));
       } else {
@@ -141,8 +137,9 @@
           lines.push(el("div", { class: "xp-bar vsc-bar" }, fillBar),
             el("div", { class: "muted" }, `${st.progress}%`));
         }
-        if (s === "ready") lines.push(el("p", { class: "muted" }, state.folder ? "Press Open in VS Code." : "Choose a project above."));
+        if (s === "ready") lines.push(el("p", { class: "muted" }, folder() ? "Press Open in VS Code." : "Pick a project in WORKING ON above."));
       }
+      lines.push(...mirrorNote(st.mirror));
       if (st.log?.length && s !== "stopped") lines.push(el("pre", { class: "vsc-log" }, st.log.slice(-12).join("\n")));
       ui.stage.replaceChildren(el("div", { class: "vsc-msg" }, ...lines));
       ui.stage.hidden = false;
@@ -198,33 +195,47 @@
       schedule();
     }
 
-    async function openSelected() {
-      if (!state.folder) return;
-      if (!(await confirmUnsafe(state.folder))) return;
+    async function syncDesktop() {
       const s = state.status.status;
-      if (s === "ready") return openFolder(state.folder);
-      state.pendingOpen = state.folder;
+      if (s === "ready" && !(await CC.confirmDialog("Sync from desktop VS Code?",
+        "VS Code web restarts to pick up your desktop extensions and settings. Unsaved changes in the VS Code page will be lost, and anything running in its terminals or in Claude Code will stop.",
+        "Sync and restart"))) return;
+      state.pendingOpen = state.openFolder || (s === "ready" ? null : folder());  // reopen what was showing
+      dropFrame();
+      state.status = await api("/api/vscode/sync", {});
+      showStage();
+      updateButtons();
+      schedule();
+    }
+
+    async function openSelected() {
+      const f = folder();
+      if (!f) return;
+      if (!(await confirmUnsafe(f))) return;
+      const s = state.status.status;
+      if (s === "ready") return openFolder(f);
+      state.pendingOpen = f;
       state.status = await api("/api/vscode/start", {});
       showStage();
       updateButtons();
       schedule();
     }
 
-    async function openFolder(folder) {
-      if (!(await confirmUnsafe(folder))) return;
-      const allow = state.unsafeOk.has(String(folder).toLowerCase());
+    async function openFolder(path) {
+      if (!(await confirmUnsafe(path))) return;
+      const allow = state.unsafeOk.has(String(path).toLowerCase());
       let r;
       try {
-        r = await api(`/api/vscode/url?folder=${encodeURIComponent(folder)}${allow ? "&allow_unsafe=true" : ""}`);
+        r = await api(`/api/vscode/url?folder=${encodeURIComponent(path)}${allow ? "&allow_unsafe=true" : ""}`);
       } catch (e) {
         // The list was out of date: the server found the folder isn't private. Ask, then try once more.
         if (allow || !/Other accounts on this PC/.test(e.message)) throw e;
-        const p = known(folder);
+        const p = known(path);
         if (p) p.writable_by_others = true;
         updateButtons();
         if (!(await CC.confirmDialog("Folder isn't private", UNSAFE_TEXT, "Open anyway"))) return;
-        state.unsafeOk.add(String(folder).toLowerCase());
-        r = await api(`/api/vscode/url?folder=${encodeURIComponent(folder)}&allow_unsafe=true`);
+        state.unsafeOk.add(String(path).toLowerCase());
+        r = await api(`/api/vscode/url?folder=${encodeURIComponent(path)}&allow_unsafe=true`);
       }
       if (!ui.frame) {
         ui.frame = el("iframe", {
@@ -235,41 +246,73 @@
       }
       ui.frame.src = r.url;
       ui.stage.hidden = true;
-      state.openFolder = folder;
+      state.openFolder = path;
       updateButtons();
       ui.frame.focus();
+    }
+
+    // The Command Center helper extension inside VS Code shows the panel (a page can't reach into the iframe).
+    async function showClaude() {
+      await api("/api/vscode/claude", {});
+      ui.frame?.focus();
+    }
+
+    async function launchWindow() {
+      const f = folder();
+      if (!f || !(await confirmUnsafe(f, "Start anyway"))) return;
+      await api("/api/projects/launch", { path: f, resume: false, prompt: "", allow_unsafe: state.unsafeOk.has(f.toLowerCase()) });
+    }
+
+    function newProjectDialog() {
+      const input = el("input", { placeholder: "Project name (letters, numbers, spaces, - _ .)", maxlength: "61", autocomplete: "off", spellcheck: "false" });
+      const create = () => guarded(async () => {
+        const p = await api("/api/projects/new", { name: input.value });
+        document.querySelector("#dialog").close();
+        await loadProjects();
+        document.querySelector("#project-refresh")?.click();  // the WORKING ON list
+        CC.setActiveProject(p.path);
+        CC.openTab("vscode");
+        CC.showMessage("Project created", `${p.path} is ready (empty git repo on branch main). Press Start + open.`);
+      });
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); create(); } });
+      CC.showDialog(el("h3", {}, "New project"),
+        el("p", { class: "muted" }, "Creates a folder in your first projects root and runs git init."),
+        input,
+        el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Cancel"),
+          el("button", { type: "button", class: "primary", onclick: create }, "Create")));
+      setTimeout(() => input.focus(), 30);
     }
 
     async function loadProjects() {
       const r = await api("/api/projects");
       state.projects = (r.projects || []).filter((p) => p.path);
-      fillProjects();
+      updateButtons();
     }
 
     CC.registerTab({
-      id: "vscode", label: "VS Code", before: "websites", render,
+      id: "vscode", label: "VS Code · Claude", before: "websites", render,
       onShow: () => guarded(async () => { await Promise.all([loadProjects(), refreshStatus()]); }),
     });
 
-    CC.addPaletteSource(() => state.projects.map((p) => ({
-      group: "VS Code", label: `VS Code: ${p.name}`, hint: p.path,
-      run: () => {
-        CC.openTab("vscode");
-        state.folder = p.path;
-        if (ui.select) ui.select.value = p.path;
-        store.set("cc.vscode.folder", p.path);
-        guarded(openSelected);
-      },
-    })));
+    CC.addPaletteSource(() => state.projects.flatMap((p) => [
+      { group: "Projects", label: `VS Code + Claude: ${p.name}`, hint: p.branch ? `${p.branch} · ${p.path}` : p.path,
+        run: () => { CC.setActiveProject(p.path); CC.openTab("vscode"); guarded(openSelected); } },
+      { group: "Projects", label: `Claude (new window): ${p.name}`, hint: "Windows Terminal",
+        run: () => { CC.setActiveProject(p.path); guarded(launchWindow); } },
+    ]));
     CC.addPaletteSource(() => {
       const s = state.status.status;
-      return s === "ready" || BUSY.includes(s)
-        ? [{ group: "Commands", label: "Stop VS Code web server", hint: "VS Code tab", run: () => { CC.openTab("vscode"); guarded(togglePower); } }]
-        : [];
+      return [
+        { group: "Commands", label: "New project…", hint: "git init in your projects folder", run: newProjectDialog },
+        { group: "Commands", label: "Sync VS Code from desktop VS Code", hint: "extensions, settings, keybindings, snippets", run: () => { CC.openTab("vscode"); guarded(syncDesktop); } },
+        ...(s === "ready" || BUSY.includes(s)
+          ? [{ group: "Commands", label: "Stop VS Code web server", hint: "VS Code tab", run: () => { CC.openTab("vscode"); guarded(togglePower); } }]
+          : []),
+      ];
     });
 
     // Palette entries need the list even before the tab is opened.
-    api("/api/projects").then((r) => { if (!state.projects.length) { state.projects = r.projects || []; fillProjects(); } }).catch(() => {});
+    api("/api/projects").then((r) => { if (!state.projects.length) { state.projects = (r.projects || []).filter((p) => p.path); updateButtons(); } }).catch(() => {});
     api("/api/vscode/status").then((st) => { state.status = st; if (!ui.frame) showStage(); updateButtons(); }).catch(() => {});
   }
 

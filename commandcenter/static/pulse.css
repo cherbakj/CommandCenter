@@ -45,3 +45,21 @@
 .pulse-aging.p-age-bar-warn .pulse-aging-dot { background: var(--amber); }
 .pulse-aging.p-age-bar-over { border-left-color: var(--red); background: rgb(var(--red-rgb) / .1); }
 .pulse-aging.p-age-bar-over .pulse-aging-dot { background: var(--red); box-shadow: 0 0 .45rem rgb(var(--red-rgb) / .7); }
+
+/* Pulse tab (WORK, static/pulseview.js): the site itself. In the desktop app a native view covers .pv-hole. */
+.pv-bar { display: flex; align-items: center; gap: .4rem; margin-bottom: .55rem; min-width: 0; }
+.pv-bar > * { flex: none; }
+.pv-bar .spacer { flex: 1; }
+.pv-bar button.small.subtle { min-width: 2.1rem; }
+.pv-seg { display: flex; gap: 2px; margin-right: .3rem; }
+.pv-bar > .pv-where { display: flex; align-items: baseline; gap: .5rem; min-width: 0; flex: 1 1 0; overflow: hidden; margin-left: .3rem; }
+.pv-title { font: 600 .88rem var(--font-ui); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28rem; flex: 0 1 auto; min-width: 3rem; }
+.pv-host { font: .78rem var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
+.pv-bar > .pv-note { font: 600 .8rem var(--font-ui); color: var(--amber); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; max-width: 40%; }
+.pv-bar > .pv-note.err { color: var(--red); }
+.pv-loading { width: .5rem; height: .5rem; border-radius: 50%; background: var(--amber); box-shadow: 0 0 .5rem var(--amber); flex: none; align-self: center; animation: blink 1s infinite; }
+.pv-stage { position: relative; flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: .35rem; background: #05070d; overflow: hidden; }
+.pv-hole { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; }
+.pv-wait { font: 700 2.4rem var(--font-display); letter-spacing: .3em; color: rgb(var(--accent-rgb) / .12); user-select: none; }
+.pv-fallback { max-width: 40rem; margin: 2rem; }
+.pv-fallback .row { flex-wrap: wrap; gap: .5rem; }

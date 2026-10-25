@@ -1,0 +1,18 @@
+/* Off-hours work log (offhours.js): the Today tile uses the shared stat style; this is the week dialog. */
+.stat.oh-live .l::after { content: ""; display: inline-block; width: .42rem; height: .42rem; margin-left: .35rem; border-radius: 50%;
+  background: var(--hot); box-shadow: 0 0 .5rem rgb(var(--hot-rgb) / .8); vertical-align: .05rem; animation: pulse-soft 1.6s ease-in-out infinite; }
+.oh-list li { align-items: center; }
+.oh-list li.oh-weekend .time-col { color: var(--accent-2); }
+.oh-sessions { display: flex; flex-wrap: wrap; gap: .3rem .45rem; }
+.oh-session {
+  display: inline-flex; align-items: baseline; gap: .4rem; padding: .1rem .55rem; border-radius: var(--r-pill);
+  font: 600 .8rem var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text);
+  border: 1px solid rgb(var(--accent-2-rgb) / .4); background: rgb(var(--accent-2-rgb) / .08);
+}
+.oh-session small { font: 600 .68rem var(--font-ui); color: var(--muted); }
+.oh-total { font: 700 .9rem var(--font-mono); color: var(--accent-2); min-width: 4rem; text-align: right; font-variant-numeric: tabular-nums; }
+.oh-sum { display: flex; justify-content: space-between; align-items: baseline; padding: .4rem .8rem; font: 600 .82rem var(--font-ui);
+  letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.oh-sum b { font: 800 1.15rem var(--font-display); color: var(--accent-2); text-transform: none; }
+.oh-note { font-size: .78rem; }
+.oh-list li.oh-future { opacity: .6; }

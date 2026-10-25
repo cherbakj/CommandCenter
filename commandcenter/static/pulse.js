@@ -1,9 +1,12 @@
-// Pulse tab: feedback tickets from pulse.sonance.com (read-only). Built only with CC.el
-// (text nodes), never innerHTML, because ticket text is typed by other people.
+// Pulse Feedback tab (COMMS): feedback tickets from pulse.sonance.com, read-only from Pulse's database. Built only
+// with CC.el (text nodes), never innerHTML, because ticket text is typed by other people. Tickets open on the site in
+// the WORK Pulse tab (pulseview.js) when the window has it, else in the default browser.
 (function () {
   "use strict";
   if (!window.CC) return;
   const { el, api, guarded, fill, when, showDialog, showMessage, confirmDialog, openExternal } = CC;
+  // A Pulse page: in the Pulse tab's site view when there is one, else the default browser.
+  const openPulse = (url) => (CC.pulseSite ? CC.pulseSite.open(url) : openExternal(url));
 
   const css = document.createElement("link");
   css.rel = "stylesheet";
@@ -152,7 +155,7 @@
       st.error ? el("span", { class: "err", title: st.error }, "Last poll failed") :
         st.last_ok ? el("span", { class: "muted" }, `Polled ${when(st.last_ok)}`) : null,
       el("button", { class: "small", onclick: () => loadTickets() }, "↻ Refresh"),
-      el("button", { class: "small alt", onclick: () => openExternal(`${st.url || "https://pulse.sonance.com"}/feedback`) }, "Open Pulse"),
+      el("button", { class: "small alt", onclick: () => openPulse(`${st.url || "https://pulse.sonance.com"}/feedback`) }, "Open Pulse"),
       el("button", { class: "small subtle", onclick: settingsDialog }, "Settings"));
   }
 
@@ -174,7 +177,7 @@
           t.resolved_by && `Closed by ${t.resolved_by}`,
         ].filter(Boolean).join(" · "))),
       el("div", { class: "actions" },
-        el("button", { class: "small primary", onclick: () => openExternal(t.url) }, "Open in Pulse")));
+        el("button", { class: "small primary", onclick: () => openPulse(t.url) }, "Open in Pulse")));
   }
 
   function renderList() {
@@ -283,13 +286,13 @@
         el("button", {}, "Close")));
   }
 
-  CC.registerTab({ id: "pulse", label: "Pulse", render, onShow: () => guarded(load), before: "websites" });
+  CC.registerTab({ id: "pulse-feedback", label: "Pulse Feedback", render, onShow: () => guarded(load), pane: "comms" });
 
-  // "Go to Pulse" comes from the core palette (one entry per nav tab), so it isn't repeated here.
+  // "Go to Pulse Feedback" comes from the core palette (one entry per nav tab), so it isn't repeated here.
   CC.addPaletteSource(() => [
     ...state.tickets.slice(0, 50).map((t) => ({
       group: "Pulse", label: `#${t.ticket_no} ${t.title}`, hint: `${t.status} · ${t.requester || ""}`,
-      run: () => openExternal(t.url),
+      run: () => openPulse(t.url),
     })),
   ]);
 

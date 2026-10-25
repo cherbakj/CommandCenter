@@ -1,10 +1,11 @@
-"""Workday helpers on Today: Top 3 priorities, the uncommitted-work reminder, the "Yesterday" recap, and
-meeting notes with action items.
+"""Workday helpers on Today: the uncommitted-work reminder, the "Yesterday" recap, and meeting notes with
+action items. (The Top 3 priorities strip was removed; task priority now lives on the tasks themselves, see
+today.py. Its old encrypted table is dropped at start, see _tables.)
 
-Privacy: Top 3 items and meeting notes live only in the local SQLite database (inside the app's private data
-folder), their text encrypted with Windows DPAPI for the current user. They are work data: shown in Privacy
-mode and labelled "encrypted" in the UI, not "private". They are never written to Outlook, alerts or the log;
-the briefing and wrap-up alerts mention counts only. A meeting's notes are keyed by a hash of its Outlook EntryID + start time (recurring
+Privacy: meeting notes live only in the local SQLite database (inside the app's private data folder), their
+text encrypted with Windows DPAPI for the current user. They are work data: shown in Privacy mode and labelled
+"encrypted" in the UI, not "private". They are never written to Outlook, alerts or the log. A meeting's notes
+are keyed by a hash of its Outlook EntryID + start time (recurring
 meetings share one EntryID), so the database shows neither the meeting nor its notes in plain text.
 An action item becomes an Outlook or Asana task only when Joe clicks the button for it.
 
@@ -29,17 +30,13 @@ from .connectors import asana, outlook
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/daily")
 
-TOP3_LABEL = "CommandCenter Top 3"
 NOTES_LABEL = "CommandCenter meeting notes"
-TOP3_KEEP_DAYS = 120
-MAX_ITEM = 200          # a Top 3 line
 MAX_ACTION = 300        # an action item
 MAX_NOTES = 20000       # a meeting's notes
 MAX_ACTIONS = 40
 MAX_SUBJECT = 300
 OUTLOOK_ID = re.compile(r"[0-9A-Fa-f]{16,1024}")
 ASANA_ID = re.compile(r"\d{1,30}")
-ASANA_URL = re.compile(r"https://app\.asana\.com/[^\s\"'<>]{1,500}")
 START_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
 DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 PR_MESSAGE_CLASS = "http://schemas.microsoft.com/mapi/proptag/0x001A001F"
@@ -64,10 +61,12 @@ def _tables():
         return
     with db._lock:
         c = db._db()
-        c.execute("CREATE TABLE IF NOT EXISTS daily_top3 (day TEXT PRIMARY KEY, secret BLOB NOT NULL, updated TEXT NOT NULL)")
         c.execute("CREATE TABLE IF NOT EXISTS meeting_notes ("
                   " key TEXT PRIMARY KEY, start TEXT NOT NULL, secret BLOB NOT NULL, updated TEXT NOT NULL)")
-        c.execute("DELETE FROM daily_top3 WHERE day < ?", ((date.today() - timedelta(days=TOP3_KEEP_DAYS)).isoformat(),))
+        # Top 3 was removed: its rows (DPAPI-encrypted) go with the table; secure_delete zeroes the freed pages.
+        c.execute("DROP TABLE IF EXISTS daily_top3")
+        c.execute("DELETE FROM kv WHERE key = 'daily:carry_handled'")
+        c.execute("DELETE FROM kv WHERE key = 'launcher'")  # the removed hotbar's saved links
         c.commit()
     _ready = True
 
@@ -92,163 +91,13 @@ def _one_line(value, limit, what) -> str:
     return text
 
 
-# ---- Top 3 ------------------------------------------------------------------------------------
-
-def _clean_link(link):
-    """An optional pointer to the task or email a priority is about. Only ids of the expected shape are kept."""
-    if not link:
-        return None
-    if not isinstance(link, dict) or link.get("kind") not in ("task", "mail") or not isinstance(link.get("id"), str):
-        raise HTTPException(400, "That link isn't a task or an email")
-    kind, source, item_id = link["kind"], link.get("source") or "outlook", link["id"]
-    if kind == "mail":
-        source = "outlook"
-    if source == "asana" and kind == "task":
-        ok = ASANA_ID.fullmatch(item_id)
-    elif source == "outlook":
-        ok = OUTLOOK_ID.fullmatch(item_id)
-    else:
-        ok = False
-    if not ok:
-        raise HTTPException(400, "That link isn't a task or an email")
-    out = {"kind": kind, "source": source, "id": item_id,
-           "label": _flat(link.get("label"), MAX_SUBJECT)}
-    url = link.get("url")
-    if source == "asana" and isinstance(url, str) and ASANA_URL.fullmatch(url):
-        out["url"] = url
-    return out
-
-
-def _clean_items(items) -> list:
-    if not isinstance(items, list) or len(items) > 3:
-        raise HTTPException(400, "Up to three priorities")
-    out = []
-    for it in items:
-        if it is None or (isinstance(it, dict) and not str(it.get("text") or "").strip()):
-            out.append(None)
-            continue
-        if not isinstance(it, dict):
-            raise HTTPException(400, "Each priority needs some text")
-        carried = it.get("from")
-        if carried is not None and not (isinstance(carried, str) and DAY_RE.fullmatch(carried)):
-            carried = None
-        out.append({"text": _one_line(it.get("text"), MAX_ITEM, "Each priority"), "done": it.get("done") is True,
-                    "link": _clean_link(it.get("link")), "from": carried})
-    return out + [None] * (3 - len(out))
-
-
-def _row_items(secret) -> list:
-    try:
-        items = _open(secret).get("items") or []
-    except Exception:
-        return [{"text": "(can't decrypt: saved under another Windows account)", "done": False, "link": None,
-                 "from": None, "locked": True}, None, None]
-    items = [i if isinstance(i, dict) and i.get("text") else None for i in items[:3]]
-    return items + [None] * (3 - len(items))
-
-
-def top3_get(day: str) -> list:
-    _tables()
-    with db._lock:
-        row = db._db().execute("SELECT secret FROM daily_top3 WHERE day = ?", (day,)).fetchone()
-    return _row_items(row["secret"]) if row else [None, None, None]
-
-
-def top3_set(day: str, items: list):
-    _tables()
-    with db._lock:
-        if not any(items):
-            db._db().execute("DELETE FROM daily_top3 WHERE day = ?", (day,))
-        else:
-            db._db().execute("INSERT OR REPLACE INTO daily_top3 (day, secret, updated) VALUES (?, ?, ?)",
-                             (day, _seal({"items": items}, TOP3_LABEL), db.now()))
-        db._db().commit()
-
+# ---- workdays ---------------------------------------------------------------------------------
 
 def previous_workday(d: date) -> date:
     d -= timedelta(days=1)
     while d.weekday() >= 5:
         d -= timedelta(days=1)
     return d
-
-
-def _carry_source(today: date):
-    """The most recent earlier day (within a week) that had a Top 3, and its unfinished items."""
-    _tables()
-    with db._lock:
-        row = db._db().execute("SELECT day, secret FROM daily_top3 WHERE day < ? AND day >= ? ORDER BY day DESC LIMIT 1",
-                               (today.isoformat(), (today - timedelta(days=7)).isoformat())).fetchone()
-    if not row:
-        return None, []
-    return row["day"], [i for i in _row_items(row["secret"]) if i and not i.get("done") and not i.get("locked")]
-
-
-def _carry_offer(today: date, items: list):
-    """Unfinished items from the last workday, offered once per day while there's a free slot."""
-    if db.kv_get("daily:carry_handled") == today.isoformat() or all(items):
-        return None
-    day, unfinished = _carry_source(today)
-    current = {i["text"].casefold() for i in items if i}
-    unfinished = [i for i in unfinished if i["text"].casefold() not in current]
-    if not unfinished:
-        return None
-    return {"from": day, "items": [{"text": i["text"], "link": i.get("link")} for i in unfinished]}
-
-
-def _top3_state() -> dict:
-    today = date.today()
-    items = top3_get(today.isoformat())
-    return {"day": today.isoformat(), "items": items, "carry": _carry_offer(today, items)}
-
-
-def briefing_note() -> str:
-    """For the morning briefing: counts only (the items themselves stay encrypted, out of the alerts feed)."""
-    items = [i for i in top3_get(date.today().isoformat()) if i]
-    if not items:
-        return "Set your Top 3 for today"
-    return f"Top 3: {len(items)} priorit{'y' if len(items) == 1 else 'ies'} set"
-
-
-def wrapup_note() -> str:
-    items = [i for i in top3_get(date.today().isoformat()) if i]
-    if not items:
-        return ""
-    left = [i for i in items if not i.get("done")]
-    return f"Top 3: {len(left)} of {len(items)} unfinished" if left else "Top 3: all done"
-
-
-@router.get("/top3")
-async def get_top3():
-    return await asyncio.to_thread(_top3_state)
-
-
-@router.post("/top3")
-async def save_top3(items: list = Body(..., embed=True)):
-    clean = _clean_items(items)
-    await asyncio.to_thread(top3_set, date.today().isoformat(), clean)
-    return await asyncio.to_thread(_top3_state)
-
-
-@router.post("/top3/carry")
-async def carry_top3(accept: bool = Body(..., embed=True), pick: list[int] | None = Body(None, embed=True)):
-    """Accepts or declines today's carry-over offer. `pick` (indexes into the offer) chooses which unfinished
-    items to carry when there are more than free slots; without it they're carried in order while they fit."""
-    def run():
-        today = date.today()
-        items = top3_get(today.isoformat())
-        if accept:
-            offer = _carry_offer(today, items)
-            if offer:
-                todo = list(offer["items"])
-                if pick is not None:
-                    if len(pick) > 3 or len(set(pick)) != len(pick) or not all(0 <= i < len(todo) for i in pick):
-                        raise HTTPException(400, "Pick from the unfinished priorities shown")
-                    todo = [todo[i] for i in pick]
-                items = [i if i else ({**todo.pop(0), "done": False, "from": offer["from"]} if todo else None) for i in items]
-                top3_set(today.isoformat(), _clean_items(items))
-        db.kv_set("daily:carry_handled", today.isoformat())
-        return _top3_state()
-    return await asyncio.to_thread(run)
 
 
 # ---- uncommitted work ---------------------------------------------------------------------------
@@ -674,6 +523,10 @@ async def action_to_task(id: str = Body(...), start: str = Body(...), index: int
 
 async def meeting_end_loop():
     await asyncio.sleep(45)
+    try:
+        await asyncio.to_thread(_tables)  # also drops the old Top 3 table
+    except Exception as e:
+        log.warning("Couldn't prepare the meeting-notes table: %s", type(e).__name__)
     while True:
         try:
             if settings().get("meeting_notes_prompt", True) and await asyncio.to_thread(outlook.is_running):

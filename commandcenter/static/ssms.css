@@ -1,0 +1,14 @@
+/* SQL tab (static/ssms.js): the docked SSMS stage and its bar. In the desktop app SSMS's own window covers .ss-hole. */
+.ss-bar { display: flex; align-items: center; gap: .45rem; margin-bottom: .55rem; min-width: 0; }
+.ss-bar > * { flex: none; }
+.ss-bar .spacer { flex: 1; }
+.ss-seg { display: flex; gap: 2px; margin-right: .3rem; }
+.ss-bar > .ss-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .86rem var(--font-ui); color: var(--text); }
+.ss-bar > .ss-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .8rem var(--font-ui); color: var(--amber); }
+.ss-bar > .ss-note.err { color: var(--red); }
+.ss-stage { position: relative; flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: .35rem; background: #05070d; overflow: hidden; }
+.ss-stage[hidden] { display: none; }
+.ss-hole { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; }
+.ss-card { max-width: 44rem; margin: 2rem; }
+.ss-card .row { flex-wrap: wrap; gap: .5rem; }
+.sql-grid[hidden] { display: none; }

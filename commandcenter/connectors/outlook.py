@@ -37,6 +37,9 @@ OL_BUSY = 2
 OL_MARK_NO_DATE = 4
 OL_FLAG_COMPLETE = 1
 OL_IMPORTANCE_HIGH = 2
+# Task priority <-> Outlook Importance (olImportanceLow 0 / Normal 1 / High 2).
+PRIORITY_IMPORTANCE = {"low": 0, "normal": 1, "high": 2}
+IMPORTANCE_PRIORITY = {v: k for k, v in PRIORITY_IMPORTANCE.items()}
 OL_FORMAT_HTML = 2
 NO_DATE_YEAR = 4501  # Outlook's "None" date is 1/1/4501
 OL_FOLDER_TASKS = 13
@@ -44,6 +47,7 @@ PR_FLAG_STATUS = "http://schemas.microsoft.com/mapi/proptag/0x10900003"
 PR_SENDER_NAME = "http://schemas.microsoft.com/mapi/proptag/0x0C1A001F"
 PR_DELIVERY_TIME = "http://schemas.microsoft.com/mapi/proptag/0x0E060040"
 PID_TASK_DUE = "http://schemas.microsoft.com/mapi/id/{00062003-0000-0000-C000-000000000046}/81050040"
+PID_TODO_ORDINAL = "http://schemas.microsoft.com/mapi/id/{00062008-0000-0000-C000-000000000046}/85A00040"  # when it was flagged
 PR_HEADERS = "http://schemas.microsoft.com/mapi/proptag/0x007D001F"
 PR_LAST_VERB = "http://schemas.microsoft.com/mapi/proptag/0x10810003"
 PR_SENDER_SMTP = "http://schemas.microsoft.com/mapi/proptag/0x5D01001F"         # PR_SENDER_SMTP_ADDRESS
@@ -475,37 +479,55 @@ def todo_items() -> dict:
     tasks = [{
         "source": "outlook", "id": r[0], "subject": r[1] or "(untitled)",
         "due": _date_or_none(r[2]), "important": r[3] == OL_IMPORTANCE_HIGH,
+        "priority": IMPORTANCE_PRIORITY.get(r[3], "normal"),
     } for r in _table_rows(OL_FOLDER_TASKS, "[Complete] = False", ["EntryID", "Subject", "DueDate", "Importance"])]
 
     flagged = []
     # The To-Do search folder ignores GetTable filters, so filter the rows here.
-    base = ["EntryID", "Subject", "MessageClass", PR_FLAG_STATUS, PR_SENDER_NAME, PR_DELIVERY_TIME, PID_TASK_DUE]
+    base = ["EntryID", "Subject", "MessageClass", PR_FLAG_STATUS, PR_SENDER_NAME, PR_DELIVERY_TIME, PID_TASK_DUE,
+            PID_TODO_ORDINAL]
     try:
         rows = _table_rows(OL_FOLDER_TODO, "", base + [PR_SENDER_SMTP, PR_SENT_REPR_SMTP, PR_SENDER_EMAIL])
     except pywintypes.com_error:  # a store that can't add these columns: names only
         rows = [tuple(r) + (None, None, None) for r in _table_rows(OL_FOLDER_TODO, "", base)]
-    for entry_id, subject, msg_class, flag, sender, received, due, smtp, repr_smtp, email in rows:
+    for entry_id, subject, msg_class, flag, sender, received, due, flagged_at, smtp, repr_smtp, email in rows:
         if flag != 2 or not (msg_class or "").startswith("IPM.Note"):
             continue
         received = _utc_to_local(received)
+        flagged_at = _utc_to_local(flagged_at) if flagged_at and flagged_at.year < NO_DATE_YEAR else None
         address = next((a for a in (smtp, repr_smtp, email) if isinstance(a, str) and "@" in a), "")
         flagged.append({
             "id": entry_id, "subject": subject or "(no subject)", "sender_name": sender or "", "sender": address,
             "due": due.date().isoformat() if due and due.year < NO_DATE_YEAR else None,
             "received": received.isoformat(timespec="minutes") if received else None,
+            "flagged_at": flagged_at.isoformat(timespec="minutes") if flagged_at else None,
         })
     return {"tasks": tasks, "flagged": flagged}
 
 
-def create_task(subject, due=None, notes="") -> str:
+def create_task(subject, due=None, notes="", priority="normal") -> str:
     task = _ns().Application.CreateItem(OL_TASK_ITEM)
     task.Subject = subject
     if due:
         task.DueDate = datetime.fromisoformat(due)
     if notes:
         task.Body = notes
+    task.Importance = PRIORITY_IMPORTANCE.get(priority, 1)
     task.Save()
     return task.EntryID
+
+
+def set_task_priority(entry_id, priority):
+    """Sets an Outlook task's own Importance (High / Normal / Low), so Outlook and To Do show it too. Tasks only:
+    a flagged email's importance is the sender's, not Joe's priority."""
+    if priority not in PRIORITY_IMPORTANCE:
+        raise ValueError("Priority is high, normal or low")
+    item = _ns().GetItemFromID(entry_id)
+    if item.Class != OL_TASK:
+        raise ValueError("Only Outlook tasks have a priority here")
+    if item.Importance != PRIORITY_IMPORTANCE[priority]:
+        item.Importance = PRIORITY_IMPORTANCE[priority]
+        item.Save()
 
 
 def complete_item(entry_id):

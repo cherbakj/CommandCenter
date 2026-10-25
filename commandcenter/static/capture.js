@@ -222,7 +222,10 @@
     saveBtn.disabled = true;
     try {
       if (mode === "task") {
-        await api("/api/tasks", { source: "outlook", subject: title, due: date ? isoDay(date) : null, notes: "" });
+        // A leading "!" makes it a High-priority task ("!call Ben fri"); otherwise Normal.
+        const high = /^!\s*/.test(title);
+        await api("/api/tasks", { source: "outlook", subject: high ? title.replace(/^!\s*/, "") || title : title,
+          due: date ? isoDay(date) : null, notes: "", priority: high ? "high" : "normal" });
       } else {
         // Personal notes live in the personal vault: it must be unlocked (and Privacy mode off) first.
         if (CC.privacy?.isPrivate()) throw new Error("Privacy mode is on, so personal notes are off. Save it as a task, or turn Privacy mode off (Ctrl+Shift+P).");
@@ -232,7 +235,7 @@
         await api("/api/planner/personal", { day: isoDay(date || new Date()), title, notes: "", all_day: true });
       }
       dlg.classList.add("saved");
-      const msg = mode === "task" ? `Task added${date ? ` · due ${dayLabel(date)}` : ""}` : `Personal note on ${dayLabel(date || new Date())}`;
+      const msg = mode === "task" ? `${/^!/.test(title) ? "High-priority task" : "Task"} added${date ? ` · due ${dayLabel(date)}` : ""}` : `Personal note on ${dayLabel(date || new Date())}`;
       setTimeout(() => {
         close(false);
         toast(msg);

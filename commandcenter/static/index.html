@@ -7,6 +7,7 @@
   <link rel="icon" href="/static/icon.ico">
   <link rel="stylesheet" href="/static/fonts.css">  <!-- local font files (no Google Fonts requests) -->
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/teams.css">
   <link rel="stylesheet" href="/static/splash.css">
 </head>
 <body>
@@ -20,7 +21,7 @@
         <button data-tab="alerts" data-label="Alerts">Alerts <span id="badge" class="badge" hidden></span></button>
         <button data-tab="mail" data-label="Mail">Mail</button>
         <button data-tab="calendar" data-label="Calendar">Calendar</button>
-        <button data-tab="teams" data-label="Teams">Teams</button>
+        <button data-tab="teams" data-label="Teams">Teams <span id="teams-badge" class="badge badge-teams" hidden></span></button>
       </nav>
       <nav id="nav-work" class="nav-group" data-pane="work" aria-label="Work: code, data and tools">
         <span class="nav-label" aria-hidden="true">WORK</span>
@@ -53,60 +54,71 @@
     <section id="tab-today" class="tab active">
       <div class="today-layout">
         <div class="a-strip">
-          <div class="panel a-clock">
-            <div class="panel-label">SYS.TIME</div>
-            <div id="clock" class="clock">--:--</div>
-            <div id="date-line" class="date-line"></div>
-            <div id="focus-line" class="focus-line"></div>
-            <div class="xp">
-              <div class="xp-head"><span id="xp-label">WORKDAY PROGRESS</span><span id="xp-pct">0%</span></div>
-              <div class="xp-bar"><div id="xp-fill"></div></div>
+          <!-- clock + weather in one compact panel -->
+          <div class="panel a-now" role="group" aria-label="Time and weather">
+            <div class="now-in">
+              <div class="a-clock">
+                <div class="panel-label">SYS.TIME</div>
+                <div id="clock" class="clock">--:--</div>
+                <div id="date-line" class="date-line"></div>
+                <div class="xp">
+                  <div class="xp-head"><span id="xp-label">WORKDAY PROGRESS</span><span id="xp-pct">0%</span></div>
+                  <div class="xp-bar"><div id="xp-fill"></div></div>
+                </div>
+                <div id="focus-line" class="focus-line"></div>
+              </div>
+              <div class="a-weather" id="weather">
+                <div class="panel-label">ENV.WEATHER</div>
+                <div class="muted">Loading weather…</div>
+              </div>
             </div>
-          </div>
-          <div class="panel a-weather" id="weather">
-            <div class="panel-label">ENV.WEATHER</div>
-            <div class="muted">Loading weather…</div>
           </div>
           <div class="a-stats" id="stats"></div>
         </div>
-        <div class="panel a-launch hotbar" id="launch">
-          <span class="panel-label">HOTBAR</span>
-          <div id="launch-slots" class="launch-slots"></div>
-          <button id="launch-edit" class="small subtle" title="Add, remove and reorder launch buttons">Edit</button>
-        </div>
-        <div class="panel a-follow">
-          <div class="panel-head">
-            <span class="panel-label">01 // FOLLOW-UPS</span>
-            <span class="spacer"></span>
-            <span id="followups-slot" class="slot"></span>
-            <button id="urgent-btn" class="small subtle" title="People whose mail and Teams messages count as urgent">Urgent people</button>
-            <button id="snoozed-btn" class="small subtle">Snoozed (0)</button>
-            <button id="muted-btn" class="small subtle">Muted senders</button>
-            <button id="today-refresh" class="small">↻ Rescan</button>
+        <!-- the main panel: Today's Agenda / Tasks / Follow-ups (app.js todayTabs) -->
+        <div class="panel a-work" id="today-work">
+          <div class="tw-head">
+            <div class="tw-tabs" role="tablist" aria-label="Today">
+              <button type="button" role="tab" id="tw-tab-agenda" data-tw="agenda" aria-controls="tw-agenda" aria-selected="true">
+                <span class="tw-name">Today's Agenda</span><span id="agenda-count" class="chip"></span></button>
+              <button type="button" role="tab" id="tw-tab-tasks" data-tw="tasks" aria-controls="tw-tasks" aria-selected="false" tabindex="-1">
+                <span class="tw-name">Tasks</span><span id="tasks-count" class="chip"></span><span id="tasks-high" class="tw-urgent" hidden></span></button>
+              <button type="button" role="tab" id="tw-tab-follow" data-tw="follow" aria-controls="tw-follow" aria-selected="false" tabindex="-1">
+                <span class="tw-name">Follow-ups</span><span id="follow-count" class="chip"></span><span id="follow-urgent" class="tw-urgent" hidden></span></button>
+            </div>
+            <div class="tw-tools" data-for="agenda">
+              <span id="agenda-tools-slot" class="slot"></span>
+            </div>
+            <div class="tw-tools" data-for="tasks" hidden>
+              <button id="asana-btn" class="small"></button>
+              <button id="new-task" class="small primary">+ New task</button>
+            </div>
+            <div class="tw-tools" data-for="follow" hidden>
+              <span id="followups-slot" class="slot"></span>
+              <button id="urgent-btn" class="small subtle" title="People whose mail and Teams messages count as urgent">Urgent people</button>
+              <button id="snoozed-btn" class="small subtle">Snoozed (0)</button>
+              <button id="muted-btn" class="small subtle">Muted senders</button>
+              <button id="today-refresh" class="small">↻ Rescan</button>
+            </div>
           </div>
-          <div id="followups" class="followups"></div>
-        </div>
-        <div class="panel a-agenda">
-          <div class="panel-head"><span class="panel-label">02 // AGENDA</span><span id="agenda-count" class="chip"></span></div>
-          <ul id="agenda" class="list"></ul>
+          <div class="tw-panel a-agenda" role="tabpanel" id="tw-agenda" aria-labelledby="tw-tab-agenda">
+            <ul id="agenda" class="list"></ul>
+          </div>
+          <div class="tw-panel a-tasks" role="tabpanel" id="tw-tasks" aria-labelledby="tw-tab-tasks" hidden>
+            <div id="tasks-note" class="muted"></div>
+            <ul id="tasks" class="list"></ul>
+          </div>
+          <div class="tw-panel a-follow" role="tabpanel" id="tw-follow" aria-labelledby="tw-tab-follow" hidden>
+            <div id="followups" class="followups"></div>
+          </div>
         </div>
         <div class="panel a-alerts">
           <div class="panel-head">
-            <span class="panel-label">03 // RECENT ALERTS</span><span id="today-alerts-count" class="chip"></span>
+            <span class="panel-label">RECENT ALERTS</span><span id="today-alerts-count" class="chip"></span>
             <span class="spacer"></span>
             <button id="today-alerts-all" class="small subtle" type="button">All alerts</button>
           </div>
           <ul id="today-alerts" class="list"></ul>
-        </div>
-        <div class="panel a-tasks">
-          <div class="panel-head">
-            <span class="panel-label">04 // TASKS</span>
-            <span class="spacer"></span>
-            <button id="asana-btn" class="small"></button>
-            <button id="new-task" class="small primary">+ New task</button>
-          </div>
-          <div id="tasks-note" class="muted"></div>
-          <ul id="tasks" class="list"></ul>
         </div>
       </div>
     </section>
@@ -158,6 +170,11 @@
           <div class="panel-head"><span class="panel-label">TEAMS ACTIVITY (MISSED-ACTIVITY EMAILS)</span><span class="spacer"></span><button id="teams-refresh" class="small">↻ Refresh</button></div>
           <ul id="teams-activity" class="list"></ul>
         </div>
+      </div>
+      <!-- unread / recent DMs and @mentions, read by the background Teams check (app.js renderTeamsRecent) -->
+      <div class="panel teams-recent" id="teams-recent" aria-labelledby="teams-recent-label">
+        <div class="panel-head"><span class="panel-label" id="teams-recent-label">RECENT DMS AND MENTIONS</span><span class="spacer"></span><span class="muted small" id="teams-recent-note"></span></div>
+        <ul id="teams-recent-list" class="list"></ul>
       </div>
     </section>
 
@@ -220,10 +237,12 @@
   <script src="/static/app.js"></script>
   <!-- feature modules (each optional) -->
   <link rel="stylesheet" href="/static/modules.css">
-  <script src="/static/projects.js"></script>
   <script src="/static/vscode.js"></script>
   <script src="/static/toolkit.js"></script>
   <script src="/static/pulse.js"></script>
+  <script src="/static/nativestage.js"></script>
+  <script src="/static/pulseview.js"></script>
+  <script src="/static/ssms.js"></script>
   <script src="/static/planner.js"></script>
   <script src="/static/profile.js"></script>
   <script src="/static/daily.js"></script>
@@ -231,5 +250,7 @@
   <script src="/static/spam.js"></script>
   <script src="/static/capture.js"></script>
   <script src="/static/privacy.js"></script>
+  <script src="/static/offhours.js"></script>
+  <script src="/static/personal.js"></script>
 </body>
 </html>

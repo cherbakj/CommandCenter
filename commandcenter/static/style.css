@@ -175,6 +175,21 @@ nav button.active:hover { background: transparent; }
   display: inline-block; min-width: 1.25rem; text-align: center; background: var(--hot); color: #1a0016; padding: 0 .38rem; margin-left: .4rem;
   border-radius: var(--r-pill); font: 700 .66rem/1.45 var(--font-mono); box-shadow: 0 0 .6rem rgb(var(--hot-rgb) / .5);
 }
+.badge[hidden] { display: none; }
+
+/* The rows a clicked stat tile counts light up for a moment (app.js spotlight). */
+/* Static (so it shows with reduced motion too); JS removes the class after 2.6 s. With motion it fades out. */
+.spotlight {
+  border-radius: var(--r-card); background: rgb(var(--accent-rgb) / .16);
+  box-shadow: inset 0 0 0 2px rgb(var(--accent-rgb) / .9), 0 0 1rem rgb(var(--accent-rgb) / .35);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .spotlight { animation: spotlight 2.4s ease-out forwards; }
+}
+@keyframes spotlight {
+  0%, 40% { background: rgb(var(--accent-rgb) / .16); box-shadow: inset 0 0 0 2px rgb(var(--accent-rgb) / .9), 0 0 1rem rgb(var(--accent-rgb) / .35); }
+  100% { background: transparent; box-shadow: none; }
+}
 .search-btn { display: flex; align-items: center; gap: .6rem; font: 500 .82rem var(--font-ui); color: var(--muted); border-radius: var(--r-pill); padding-inline: .9rem .45rem; }
 .search-btn kbd { font: 600 .66rem var(--font-mono); border: 1px solid var(--line); border-radius: .35rem; padding: .05rem .4rem; color: var(--text); background: rgb(255 255 255 / .06); }
 .focus-chip { border-radius: var(--r-pill); }
@@ -345,7 +360,7 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 
 /* Each list adapts to its own width: in a narrow column the buttons drop below the text
    instead of squeezing it (matters on laptops; on the ultrawide everything fits inline). */
-.fu-group, .a-agenda, .a-tasks, .a-alerts, .panel-list, #teams-activity { container-type: inline-size; }
+.a-agenda, .a-tasks, .a-alerts, .panel-list, #teams-activity { container-type: inline-size; }
 @container (max-width: 36rem) {
   .list li { flex-wrap: wrap; row-gap: .4rem; }
   .list li > .actions { flex-basis: 100%; justify-content: flex-start; }
@@ -363,104 +378,158 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 .flow li { background: var(--sep); }
 
 /* ---- today layout ----
-   Messaging first: follow-ups, agenda and recent alerts get the room; clock, weather and stats are a compact
-   strip on top. The layout follows the width of the PANE (container queries), so it works in the split view
-   and in single-pane mode alike. */
+   The tabbed panel (Today's Agenda / Tasks / Follow-ups) is the main thing and gets the room. Clock + weather (one
+   compact panel) and the stats are a strip on top; recent alerts sit beside the tabbed panel on a wide pane and
+   under it on a narrow one. The layout follows the width of the PANE (container queries), so it works in the split
+   view and in single-pane mode alike. */
 .today-layout {
   display: grid; gap: var(--gap);
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "strip" "launch" "follow" "agenda" "alerts" "tasks";
+  grid-template-areas: "strip" "work" "alerts";
 }
-.a-strip { grid-area: strip; display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); min-width: 0; }
-.a-launch { grid-area: launch; }
-.a-follow { grid-area: follow; } .a-agenda { grid-area: agenda; } .a-alerts { grid-area: alerts; } .a-tasks { grid-area: tasks; }
-.a-agenda .list, .a-tasks .list, .a-alerts .list { max-height: 24rem; overflow-y: auto; }
-.a-tasks .list { max-height: 18rem; }
+.a-strip { grid-area: strip; display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); min-width: 0; align-items: stretch; }
+.a-work { grid-area: work; } .a-alerts { grid-area: alerts; }
+.a-alerts .list { max-height: 24rem; overflow-y: auto; }
+/* Short window: the page scrolls, and a long tab scrolls inside the panel, at most about one screen tall. */
+.tw-panel { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; max-height: max(20rem, calc(100dvh - var(--header-h) - 9rem)); }
+.tw-panel[hidden], .tw-tools[hidden], .fu-rows[hidden], .fu-note[hidden], .tw-urgent[hidden] { display: none; }
 
-/* compact strip */
-.a-clock, .a-weather { padding: .7rem .95rem; }
-.a-clock .clock { font-size: 2.5rem; margin: .35rem 0 .2rem; }
-.a-clock .clock .sec { font-size: 1.1rem; }
-.a-clock .clock .ampm { font-size: .85rem; }
-.a-clock .date-line { font-size: .84rem; }
-.a-clock .xp { margin-top: .6rem; }
-.a-weather { container-type: inline-size; }
-.a-weather .weather-main { margin: .35rem 0 0; gap: .9rem; flex-wrap: nowrap; }
-.a-weather .w-icon { font-size: 2.6rem; }
-.a-weather .w-temp { font-size: 2.4rem; }
-.a-weather .w-temp small { font-size: 1rem; }
-.a-weather .w-desc { font-size: .92rem; }
-.a-weather .w-loc { font-size: .76rem; }
-.a-weather .w-loc span { white-space: nowrap; }
-/* Meters and the hourly strip always show: a compact row under the temperature in a narrow panel,
-   beside it when there's room. */
-.a-weather .weather-main { flex-wrap: wrap; row-gap: .45rem; }
-.a-weather .w-meters { display: grid; flex: 1 1 100%; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .3rem .8rem; }
-.a-weather .meter-head { font-size: .66rem; letter-spacing: .05em; gap: .3rem; }
-.a-weather .meter-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.a-weather .meter-head b { white-space: nowrap; }
-.a-weather .hours { display: none; }
-@container (min-width: 20rem) {
-  .a-weather .hours { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .25rem; padding-top: .35rem; margin-top: .45rem; }
-  .a-weather .hour { font-size: .68rem; line-height: 1.25; }
-  .a-weather .hour .hi { font-size: 1rem; margin: 0; }
-  .a-weather .hour b { font-size: .82rem; }
-  .a-weather .hour .rain { font-size: .62rem; white-space: nowrap; }
+/* clock + weather: one panel, side by side when it has the width, stacked when it doesn't */
+.a-now { container: now / inline-size; padding: .6rem .9rem .65rem; justify-content: center; }
+.now-in { display: grid; grid-template-columns: minmax(0, 1fr); gap: .55rem; }
+@container now (min-width: 27rem) {
+  .now-in { grid-template-columns: auto minmax(0, 1fr); column-gap: 1rem; align-items: center; }
+  .now-in .a-weather { border-left: 1px solid var(--line); padding-left: 1rem; }
 }
-@container (min-width: 46rem) {
+.a-clock { min-width: 0; }
+.a-clock .clock { font-size: 2.15rem; margin: .25rem 0 .15rem; }
+.a-clock .clock .sec { font-size: .95rem; margin-left: .3rem; }
+.a-clock .clock .ampm { font-size: .78rem; margin-left: .4rem; }
+.a-clock .date-line { font-size: .74rem; letter-spacing: .08em; white-space: nowrap; }
+.a-clock .xp { margin-top: .45rem; min-width: 11rem; }
+.a-clock .xp-head { font-size: .6rem; margin-bottom: .22rem; gap: .5rem; }
+.a-clock .xp-bar { height: .36rem; }
+.a-clock .focus-line { font-size: .7rem; margin-top: .3rem; }
+.a-clock .focus-line:empty { display: none; }
+.a-weather { container: weather / inline-size; min-width: 0; }
+.a-weather .weather-main { margin: .3rem 0 0; gap: .65rem; flex-wrap: wrap; row-gap: .4rem; }
+.a-weather .w-icon { font-size: 1.95rem; }
+.a-weather .w-temp { font-size: 1.95rem; }
+.a-weather .w-temp small { font-size: .85rem; }
+.a-weather .w-info { min-width: 0; flex: 1 1 9rem; }
+.a-weather .w-desc { font-size: .8rem; }
+.a-weather .w-loc { font-size: .7rem; }
+.a-weather .w-loc span { white-space: nowrap; }
+/* Rain / humidity / wind and the hourly strip only where the weather half has the width. */
+.a-weather .w-meters, .a-weather .hours { display: none; }
+@container weather (min-width: 25rem) {
+  .a-weather .w-meters { display: grid; flex: 1 1 100%; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .25rem .7rem; }
+  .a-weather .meter-head { font-size: .6rem; letter-spacing: .05em; gap: .3rem; }
+  .a-weather .meter-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .a-weather .meter-head b { white-space: nowrap; }
+}
+@container weather (min-width: 36rem) {
   .a-weather .weather-main { flex-wrap: nowrap; }
-  .a-weather .w-meters { flex: 1 1 auto; min-width: 16rem; }
+  .a-weather .w-meters { flex: 1 1 auto; min-width: 13rem; }
+}
+@container weather (min-width: 46rem) {
+  .a-weather .hours { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .2rem; padding-top: .3rem; margin-top: .4rem; }
+  .a-weather .hour { font-size: .64rem; line-height: 1.25; }
+  .a-weather .hour .hi { font-size: .95rem; margin: 0; }
+  .a-weather .hour b { font-size: .78rem; }
+  .a-weather .hour .rain { font-size: .6rem; white-space: nowrap; }
 }
 .today-layout .a-stats { grid-template-columns: repeat(auto-fill, minmax(8.2rem, 1fr)); gap: .55rem; align-content: start; }
 .a-stats .stat { padding: .5rem .75rem .55rem; }
 .a-stats .stat .n { font-size: 1.45rem; }
 .a-stats .stat .l { font-size: .64rem; margin-top: .28rem; letter-spacing: .06em; }
+/* Narrower pane (e.g. the split COMMS pane): smaller tiles, so the tabbed panel keeps the height. */
+@container pane (max-width: 71.99rem) {
+  .a-stats .stat { padding: .36rem .6rem .4rem; }
+  .a-stats .stat .n { font-size: 1.2rem; }
+  .a-stats .stat .l { font-size: .58rem; margin-top: .18rem; }
+  .a-stats .stat .sub { font-size: .62rem; margin-top: .1rem; }
+}
 
-@container pane (min-width: 40rem) {
-  .a-strip { grid-template-columns: minmax(17rem, auto) minmax(0, 1fr); }
-  .a-stats { grid-column: 1 / -1; }
+@container pane (min-width: 60rem) {
+  .a-strip { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
 }
-@container pane (min-width: 46rem) {
-  .today-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas: "strip strip" "launch launch" "follow follow" "agenda alerts" "tasks tasks";
-  }
-  .a-follow .followups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@container pane (min-width: 56rem) {
-  .today-layout .a-stats { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
-  .today-layout { grid-template-areas: "strip strip" "launch launch" "follow follow" "agenda alerts" "agenda tasks"; }
-}
-/* Wide pane: follow-ups get the big left column, agenda / alerts / tasks stack on the right. */
 @container pane (min-width: 72rem) {
-  .a-strip { grid-template-columns: minmax(17rem, auto) minmax(24rem, 1.15fr) minmax(0, 1.4fr); }
-  .today-layout .a-stats { grid-column: auto; grid-auto-flow: row; grid-template-columns: repeat(auto-fill, minmax(8.2rem, 1fr)); }
-  .today-layout {
-    grid-template-columns: minmax(0, 1.75fr) minmax(22rem, 1fr);
-    grid-template-areas: "strip strip" "launch launch" "follow agenda" "follow alerts" "follow tasks";
-  }
+  .a-strip { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.6fr); }
+  .today-layout { grid-template-columns: minmax(0, 2.1fr) minmax(21rem, 1fr); grid-template-areas: "strip strip" "work alerts"; }
 }
-@container pane (min-width: 110rem) {
-  .a-follow .followups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-/* Tall enough: Today fills the pane exactly and every list scrolls inside its panel (no pane scroll). */
-@media (min-height: 1000px) {
-  @container pane (min-width: 56rem) {
+/* Tall enough: Today fills the pane exactly and each panel scrolls inside itself (no pane scroll). */
+@media (min-height: 900px) {
+  @container pane (min-width: 46rem) {
     #tab-today.active { height: 100%; }
-    .today-layout { height: 100%; min-height: 44rem; grid-template-rows: auto auto minmax(0, 2.3fr) minmax(0, .9fr) minmax(0, .9fr); }
-    .a-follow, .a-agenda, .a-alerts, .a-tasks { overflow: hidden; min-height: 0; }
-    .a-agenda .list, .a-tasks .list, .a-alerts .list { flex: 1; max-height: none; }
-    .a-follow .followups { flex: 1; min-height: 0; grid-auto-rows: minmax(9.5rem, 1fr); overflow-y: auto; }
-    .a-follow .fu-group { min-height: 0; }
-    .a-follow .fu-group .list { flex: 1; max-height: none; }
+    .today-layout { height: 100%; min-height: 34rem; grid-template-rows: auto minmax(0, 1fr) minmax(9rem, .3fr); }
+    .a-work, .a-alerts { overflow: hidden; min-height: 0; }
+    .tw-panel { flex: 1; max-height: none; }
+    .a-alerts .list { flex: 1; max-height: none; }
   }
   @container pane (min-width: 72rem) {
-    .today-layout { grid-template-rows: auto auto minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, .8fr); }
+    .today-layout { grid-template-rows: auto minmax(0, 1fr); }
   }
 }
 
+/* ---- Today's main panel: tabs ---- */
+.a-work { padding: .7rem .9rem .75rem; }
+.tw-head { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem .75rem; margin-bottom: .55rem; }
+.tw-tabs {
+  display: inline-flex; gap: .2rem; padding: .2rem; max-width: 100%; overflow-x: auto; scrollbar-width: none;
+  border-radius: var(--r-pill); border: 1px solid var(--line); background: rgb(255 255 255 / .035); box-shadow: var(--hi);
+}
+.tw-tabs [role=tab] {
+  display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .9rem; font: 600 .9rem var(--font-ui);
+  color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: var(--r-pill); box-shadow: none;
+}
+.tw-tabs [role=tab]:hover { color: var(--text); background: rgb(255 255 255 / .06); border-color: transparent; box-shadow: none; }
+.tw-tabs [role=tab][aria-selected=true] {
+  color: var(--accent); background: rgb(var(--accent-rgb) / .14); border-color: rgb(var(--accent-rgb) / .55);
+  text-shadow: 0 0 .7rem rgb(var(--accent-rgb) / .4); box-shadow: 0 0 1rem rgb(var(--accent-rgb) / .16);
+}
+.tw-tabs [role=tab]:focus-visible { outline-offset: 0; }
+.tw-tabs .chip:empty { display: none; }
+.tw-tabs [role=tab][aria-selected=true] .chip { color: var(--text); }
+.tw-urgent {
+  font: 700 .62rem/1.5 var(--font-ui); letter-spacing: .05em; text-transform: uppercase; padding: .02rem .45rem; border-radius: var(--r-pill);
+  color: #fff; background: #c8102e; border: 1px solid var(--red); box-shadow: 0 0 .5rem rgb(var(--red-rgb) / .5); text-shadow: none;
+}
+.tw-tools { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; margin-left: auto; }
+/* While a task is dragged: the agenda tab says "hover here", and opens. */
+body.drag-task #tw-tab-agenda[aria-selected=false] { color: var(--accent); border: 1px dashed var(--accent); background: rgb(var(--accent-rgb) / .08); }
+
+/* ---- task priority ---- */
+button.prio-pill {
+  flex: none; align-self: center; display: inline-flex; align-items: center; justify-content: center; gap: .25rem; min-width: 4.2rem;
+  padding: .08rem .5rem; font: 700 .62rem/1.5 var(--font-ui); letter-spacing: .07em; text-transform: uppercase;
+  border-radius: var(--r-pill); box-shadow: none;
+}
+button.prio-pill.high { color: #fff; background: #c8102e; border-color: var(--red); box-shadow: 0 0 .55rem rgb(var(--red-rgb) / .45); }
+button.prio-pill.normal { color: var(--muted); background: transparent; border-color: var(--line); }
+button.prio-pill.low { color: var(--dim); background: transparent; border: 1px dashed var(--line); }
+button.prio-pill:hover { color: #fff; border-color: rgb(var(--accent-rgb) / .7); }
+.list li.task.prio-high .title { color: #fff; }
+.list li.task.prio-low .title { color: var(--muted); font-weight: 500; }
+
+/* ---- popup menus (⋯ on follow-up rows, task priority) ---- */
+.cc-menu {
+  position: fixed; z-index: 66; min-width: 11rem; max-width: 20rem; display: flex; flex-direction: column; gap: 1px; padding: .3rem;
+  border-radius: .75rem; background: var(--glass-strong); -webkit-backdrop-filter: blur(24px) saturate(150%); backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid rgb(255 255 255 / .13); box-shadow: 0 1rem 2.5rem -.5rem rgb(0 0 0 / .7), var(--hi); animation: dlg-in .14s var(--ease);
+}
+.cc-menu > .cc-menu-item {
+  display: flex; align-items: center; gap: .5rem; width: 100%; justify-content: flex-start; text-align: left; white-space: nowrap;
+  padding: .42rem .7rem; font: 600 .82rem var(--font-ui); color: var(--text); background: transparent; border: 1px solid transparent;
+  border-radius: .5rem; box-shadow: none; opacity: 1;
+}
+.cc-menu > .cc-menu-item:hover, .cc-menu > .cc-menu-item:focus-visible {
+  color: #fff; background: rgb(var(--accent-rgb) / .14); border-color: rgb(var(--accent-rgb) / .45); box-shadow: none; outline: none;
+}
+.cc-menu > [aria-checked=true]::after { content: "✓"; margin-left: auto; padding-left: 1rem; color: var(--accent); }
+
 /* ---- clock + weather ---- */
-.weather-head { margin-bottom: 0; flex-wrap: wrap; row-gap: .3rem; }
+.weather-head { display: flex; align-items: center; gap: .5rem; margin-bottom: 0; flex-wrap: wrap; row-gap: .3rem; }
 /* Segmented control (e.g. the weather location) */
 .seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--r-pill); background: rgb(255 255 255 / .04); }
 .seg-btn {
@@ -507,7 +576,6 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 .segments i.on { background: var(--accent); box-shadow: 0 0 .35rem rgb(var(--accent-rgb) / .5); }
 .segments.hot i.on { background: var(--amber); box-shadow: 0 0 .35rem rgb(var(--amber-rgb) / .5); }
 .hours { display: grid; grid-template-columns: repeat(6, 1fr); gap: .5rem; border-top: 1px solid var(--line); padding-top: .75rem; }
-.a-weather .weather-main > div:nth-child(2) { min-width: 0; flex: 1 1 10rem; }
 .hour { text-align: center; font: 600 .8rem var(--font-ui); color: var(--muted); }
 .hour .hi { font-size: 1.4rem; margin: .1rem 0; }
 .hour b { color: var(--text); font: 700 .95rem var(--font-ui); font-variant-numeric: tabular-nums; }
@@ -535,16 +603,58 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
   text-shadow: 0 0 .9rem color-mix(in srgb, var(--c, var(--accent)) 45%, transparent);
 }
 .stat .l { position: relative; font: 600 .74rem var(--font-ui); letter-spacing: .06em; color: var(--muted); margin-top: .4rem; text-transform: uppercase; }
+.stat .sub { position: relative; font: 600 .7rem var(--font-mono); color: var(--text); margin-top: .2rem; font-variant-numeric: tabular-nums; }
+.stat.clickable { cursor: pointer; }
 
-.followups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr)); gap: var(--gap); }
-.fu-group { display: flex; flex-direction: column; min-width: 0; }
-.fu-group h4 {
-  margin: 0 0 .45rem; display: flex; align-items: center; gap: .5rem; padding-left: .15rem;
-  font: 700 .76rem var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--text);
+/* ---- follow-ups: a dense list ----
+   Section headers (collapsible, with counts) and one row per item: source | who | subject | age | actions. The
+   main action is always there; Snooze / Dismiss / the second action appear on hover or keyboard focus; the rest
+   are in the row's ⋯ menu. In a narrow panel the subject moves to a second line. */
+.a-follow { container: follow / inline-size; }
+.followups { display: flex; flex-direction: column; gap: .15rem; }
+.fu-sec-h {
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: .6rem; margin: 0; padding: .15rem .1rem;
+  background: var(--panel-solid); border-bottom: 1px solid var(--line-soft);
 }
-.fu-group h4 .chip { margin-left: auto; }
-.fu-group .list { border: 1px solid var(--line-soft); border-radius: var(--r-card); background: rgb(0 0 0 / .2); padding: .25rem; max-height: 22rem; overflow-y: auto; }
-.fu-note { font: .8rem var(--font-ui); color: var(--muted); margin-top: .45rem; }
+.fu-toggle {
+  display: inline-flex; align-items: center; gap: .5rem; padding: .28rem .45rem; border: 1px solid transparent; border-radius: .45rem;
+  background: none; box-shadow: none; font: 700 .72rem var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--text);
+}
+button.fu-toggle:hover { color: #fff; background: rgb(255 255 255 / .06); border-color: transparent; box-shadow: none; }
+.fu-caret::before { content: "▾"; display: inline-block; width: .7rem; color: var(--muted); transition: transform .15s; }
+button.fu-toggle[aria-expanded=false] .fu-caret::before { transform: rotate(-90deg); }
+.fu-sec.is-empty .fu-caret::before { content: ""; }
+.fu-sec.is-empty .fu-toggle { color: var(--muted); }
+.fu-empty { font: italic 500 .8rem var(--font-ui); color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fu-sec.hot .fu-sec-title { color: var(--red); }
+.fu-sec.hot .chip { color: #fff; background: #c8102e; border-color: var(--red); box-shadow: 0 0 .6rem rgb(var(--red-rgb) / .6); }
+.fu-sec.urgent .fu-sec-title::before { content: "▲ "; color: var(--red); font-size: .66rem; }
+.fu-rows { padding: .1rem 0 .3rem; }
+.list li.fu-row {
+  display: grid; grid-template-columns: 4.7rem minmax(5rem, 11.5rem) minmax(0, 1fr) 2.6rem auto; gap: .65rem; align-items: center;
+  padding: .26rem .45rem .26rem .6rem; min-height: 2.3rem;
+}
+.list li.fu-row:hover { background-color: rgb(255 255 255 / .045); }
+.fu-src { min-width: 0; } .fu-src .src { margin: 0; }
+.fu-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .86rem var(--font-ui); color: var(--text); }
+.fu-subj { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 .92rem var(--font-body); color: var(--text); }
+.fu-subj .tag { margin: 0 .45rem 0 0; }
+.list li.fu-row.unread .fu-subj { color: #fff; font-weight: 650; }
+.fu-age { font: 600 .74rem var(--font-mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fu-acts { display: flex; align-items: center; justify-content: flex-end; gap: .3rem; }
+.fu-row button.small, .fu-row button.icon { padding: .18rem .55rem; font-size: .74rem; }
+.fu-quick { display: inline-flex; gap: .3rem; max-width: 0; overflow: hidden; opacity: 0; transition: opacity .12s; }
+.fu-row:hover .fu-quick, .fu-row:focus-within .fu-quick { max-width: 26rem; overflow: visible; opacity: 1; }
+@media (hover: none) { .fu-quick { max-width: none; overflow: visible; opacity: 1; } }
+button.fu-more { font-size: .9rem; line-height: 1; padding: .14rem .45rem; }
+.fu-note { font: .78rem var(--font-ui); color: var(--muted); padding: .1rem .6rem .35rem; }
+@container follow (max-width: 40rem) {
+  .list li.fu-row {
+    grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "src who age acts" "subj subj subj subj";
+    row-gap: .1rem; column-gap: .5rem; padding-block: .3rem;
+  }
+  .fu-src { grid-area: src; } .fu-who { grid-area: who; } .fu-subj { grid-area: subj; } .fu-age { grid-area: age; } .fu-acts { grid-area: acts; }
+}
 
 /* ---- mail / sql / teams (sized by the pane, not the window) ---- */
 .split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }
@@ -606,30 +716,6 @@ dialog .field-label { display: block; font: 600 .74rem var(--font-ui); letter-sp
 #palette-results .item.active .label { color: #fff; }
 .palette-foot { display: flex; gap: 1rem; padding: .55rem 1.3rem; border-top: 1px solid var(--line); font: .76rem var(--font-ui); color: var(--muted); }
 
-/* ---- launch bar (hotbar) ---- */
-.hotbar { flex-direction: row; align-items: center; gap: .9rem; padding: .55rem 1.15rem; }
-.hotbar > .panel-label { flex-shrink: 0; }
-.launch-slots { display: flex; flex-wrap: wrap; gap: .5rem; flex: 1; min-width: 0; }
-.hot-slot {
-  display: inline-flex; align-items: center; gap: .5rem; padding: .3rem .85rem .3rem .32rem;
-  font: 600 .86rem var(--font-ui); color: var(--text); border-radius: .65rem;
-  background: linear-gradient(180deg, rgb(255 255 255 / .07), rgb(255 255 255 / .02)); border-color: var(--line);
-}
-.hot-slot .key {
-  display: inline-grid; place-items: center; min-width: 1.4rem; height: 1.4rem; padding: 0 .25rem; border-radius: .4rem;
-  font: 700 .74rem var(--font-mono); color: var(--on-accent); background: var(--accent);
-}
-.hot-slot .glyph { color: var(--accent-2); font-size: .9rem; }
-.hot-slot:hover { color: #fff; border-color: rgb(var(--accent-rgb) / .7); transform: translateY(-1px); }
-.hot-slot.add { color: var(--accent); padding: .3rem .85rem; border-style: dashed; border-color: rgb(var(--accent-rgb) / .5); background: transparent; }
-.hot-slot.fired { animation: fire .6s ease-out; }
-@keyframes fire { 0% { background: var(--accent); color: var(--on-accent); box-shadow: var(--glow); } }
-.launch-edit { list-style: none; margin: 0 0 .5rem; padding: 0; max-height: 55vh; overflow-y: auto; }
-.launch-edit li { display: grid; grid-template-columns: 1.6rem minmax(6rem, 1fr) minmax(8rem, 2fr) auto auto auto; gap: .4rem; align-items: center; padding: .3rem 0; border-bottom: 1px solid var(--line-soft); }
-.launch-edit li.empty { display: block; color: var(--muted); padding: .8rem 0; }
-.launch-edit input { margin: 0; }
-.launch-edit .key { font: 700 .8rem var(--font-mono); color: var(--accent); text-align: center; }
-.launch-edit button:disabled { opacity: .35; cursor: default; }
 button.danger { color: #ffb3bf; border-color: rgb(var(--red-rgb) / .55); background: rgb(var(--red-rgb) / .07); }
 button.danger:hover { color: #fff; border-color: var(--red); background: rgb(var(--red-rgb) / .22); box-shadow: 0 0 .9rem rgb(var(--red-rgb) / .35); }
 
@@ -662,10 +748,6 @@ dialog h3.gap { margin-top: 1.2rem; }
 .tag.urgent { color: #fff; background: #c8102e; border-color: var(--red); box-shadow: 0 0 .6rem rgb(var(--red-rgb) / .55); animation: pulse-soft 1.6s ease-in-out infinite; }
 .tag.locked { color: var(--muted); border-color: var(--line); }
 .list li.sev-urgent { box-shadow: inset 3px 0 0 var(--red); background: linear-gradient(90deg, rgb(var(--red-rgb) / .14), transparent 75%); }
-.fu-group.hot h4 { color: var(--red); }
-.fu-group.hot h4 .chip { color: #fff; background: #c8102e; border-color: var(--red); box-shadow: 0 0 .6rem rgb(var(--red-rgb) / .6); }
-.fu-group.hot .list { border-color: rgb(var(--red-rgb) / .5); box-shadow: 0 0 1.2rem -.3rem rgb(var(--red-rgb) / .3); }
-.fu-group.urgent h4::before { content: "▲"; color: var(--red); font-size: .7rem; }
 .fu-preview { font-size: .85rem; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .stat.alarm { border-color: rgb(var(--red-rgb) / .7); box-shadow: var(--shadow), inset 0 0 1.2rem rgb(var(--red-rgb) / .16), 0 0 1rem rgb(var(--red-rgb) / .2); }
 .stat.alarm .n { animation: pulse-soft 1.8s ease-in-out infinite; }
@@ -764,7 +846,7 @@ body > header.nav-wrap .navs { order: 3; flex-basis: 100%; }
 @media (max-width: 340px) { .search-btn span { display: none; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
-  .stat:hover, button:active, .hot-slot:hover, .snooze-opt:hover { transform: none; }
+  .stat:hover, button:active, .snooze-opt:hover { transform: none; }
 }
 
 

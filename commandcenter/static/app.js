@@ -132,20 +132,32 @@ const store = {
 const SPLIT_MIN_WIDTH = 1600;
 const SPLIT_DEFAULT = 0.44;
 const PANE_OF = {
-  today: "comms", alerts: "comms", mail: "comms", calendar: "comms", teams: "comms",
-  projects: "work", vscode: "work", toolkit: "work", sql: "work", pulse: "work", websites: "work",
+  today: "comms", alerts: "comms", mail: "comms", calendar: "comms", teams: "comms", "pulse-feedback": "comms", personal: "comms",
+  vscode: "work", toolkit: "work", sql: "work", pulse: "work", websites: "work",
 };
-const TAB_ORDER = { comms: ["today", "alerts", "mail", "calendar", "teams"], work: ["projects", "vscode", "toolkit", "sql", "pulse", "websites"] };
+const TAB_ORDER = { comms: ["today", "alerts", "mail", "calendar", "teams", "pulse-feedback", "personal"], work: ["vscode", "toolkit", "sql", "pulse", "websites"] };
 const TAB_ID = /^[a-z0-9_-]{1,40}$/i;
+// "projects" was the terminal Claude tab; Claude now lives in the VS Code tab.
+const pickTab = (v, d) => (v === "projects" ? "vscode" : typeof v === "string" && TAB_ID.test(v) ? v : d);
+
+// Focus layout: the Pulse site on the left, VS Code on the right; the header (nav, badges, status, clock) stays as
+// it is. While it's on, the Pulse tab and its nav button move to COMMS (VS Code stays put: moving its iframe would
+// reload it), so the other tabs still work: COMMS tabs replace Pulse on the left, WORK tabs replace VS Code.
+// It needs two panes; in a narrow window it falls back to one pane at a time, Pulse under COMMS.
+const FOCUS_LEFT = "pulse", FOCUS_RIGHT = "vscode";
+const FOCUS_SPLIT_DEFAULT = 0.5;
 
 const layout = (() => {
-  let saved = {};
+  let saved = {}, focus = null;
   try { saved = JSON.parse(store.get("cc.layout.tabs") || "{}") || {}; } catch { saved = {}; }
-  const pick = (v, d) => (typeof v === "string" && TAB_ID.test(v) ? v : d);
+  try { focus = JSON.parse(store.get("cc.layout.focus") || "null"); } catch { focus = null; }
+  const prev = focus && focus.on === true && focus.prev && typeof focus.prev === "object" ? focus.prev : null;
   return {
     split: false,
-    active: { comms: pick(saved.comms, "today"), work: pick(saved.work, "projects") },
+    active: { comms: pickTab(saved.comms, "today"), work: pickTab(saved.work, "vscode") },
     shown: saved.shown === "work" ? "work" : "comms",   // the pane shown in single mode
+    // {prev: {comms, work, shown}}: on, with the tabs to go back to when it's turned off
+    focus: focus && focus.on === true ? { prev: { comms: pickTab(prev?.comms, "today"), work: pickTab(prev?.work, "vscode"), shown: prev?.shown === "work" ? "work" : "comms" } } : null,
     visible: new Set(),
     ready: false,
   };
@@ -159,16 +171,65 @@ function saveLayoutTabs() {
   store.set("cc.layout.tabs", JSON.stringify({ comms: layout.active.comms, work: layout.active.work, shown: layout.shown }));
 }
 
+// Focus layout is available once both its tabs are registered (pulseview.js, vscode.js).
+const focusReady = () => !!($(`#tab-${FOCUS_LEFT}`) && $(`#tab-${FOCUS_RIGHT}`) && navButton(FOCUS_LEFT));
+const focusOn = () => !!layout.focus && focusReady();
+
 function wantSplit() {
-  return window.innerWidth >= SPLIT_MIN_WIDTH && store.get("cc.layout.mode") !== "single";
+  return window.innerWidth >= SPLIT_MIN_WIDTH && (focusOn() || store.get("cc.layout.mode") !== "single");
+}
+
+// Moves the Pulse tab (section + nav button) into COMMS for the focus layout, or back to its place in WORK.
+function placeFocusTab() {
+  const sec = $(`#tab-${FOCUS_LEFT}`), btn = navButton(FOCUS_LEFT);
+  if (!sec || !btn) return;
+  const pane = focusOn() ? "comms" : "work";
+  const body = $(`#pane-${pane}-body`), nav = $(`#nav-${pane}`);
+  if (sec.parentElement !== body) body.append(sec);
+  if (btn.parentElement === nav) return;
+  const later = TAB_ORDER[pane].slice(TAB_ORDER[pane].indexOf(FOCUS_LEFT) + 1);
+  const ref = pane === "work" ? [...nav.querySelectorAll("button[data-tab]")].find((b) => later.includes(b.dataset.tab)) : null;
+  ref ? nav.insertBefore(btn, ref) : nav.append(btn);
+}
+
+function setFocusLayout(on) {
+  if (on === !!layout.focus || (on && !focusReady())) return;
+  if (on) {
+    layout.focus = { prev: { comms: layout.active.comms, work: layout.active.work, shown: layout.shown } };
+    Object.assign(layout.active, { comms: FOCUS_LEFT, work: FOCUS_RIGHT });
+    layout.shown = "comms";
+  } else {
+    const prev = layout.focus.prev;
+    layout.focus = null;
+    // A pane still showing its focus tab goes back to the tab it had before; one Joe has since switched keeps it.
+    if (layout.active.comms === FOCUS_LEFT) layout.active.comms = prev.comms === FOCUS_LEFT ? "today" : prev.comms;
+    if (layout.active.work === FOCUS_RIGHT) layout.active.work = prev.work;
+    layout.shown = prev.shown;
+  }
+  store.set("cc.layout.focus", layout.focus ? JSON.stringify({ on: true, prev: layout.focus.prev }) : null);
+  saveLayoutTabs();
+  splitFrac = savedSplit();
+  runLoaders(applyLayout());
+}
+
+function renderFocusButton() {
+  const b = $("#focus-layout");
+  if (!b) return;
+  const on = focusOn(), narrow = window.innerWidth < SPLIT_MIN_WIDTH;
+  b.hidden = !focusReady();
+  b.setAttribute("aria-pressed", String(on));
+  b.title = on ? `Focus layout: Pulse left, VS Code right${narrow ? " (window too narrow for both: one pane at a time)" : ""}. Click to go back.`
+    : "Focus layout: the Pulse site on the left and VS Code on the right; the header and alerts stay";
 }
 
 // Puts the classes in line with the layout state. Returns the tabs that just became visible.
 function applyLayout() {
+  placeFocusTab();
   layout.split = wantSplit();
   const main = $("#workspace");
   main.classList.toggle("ws-split", layout.split);
   main.classList.toggle("ws-single", !layout.split);
+  main.classList.toggle("ws-focus", focusOn());
   document.body.classList.toggle("split-view", layout.split);
   const nowVisible = new Set();
   for (const pane of ["comms", "work"]) {
@@ -187,13 +248,14 @@ function applyLayout() {
   const fresh = [...nowVisible].filter((id) => !layout.visible.has(id));
   layout.visible = nowVisible;
   const toggle = $("#layout-toggle");
-  toggle.hidden = window.innerWidth < SPLIT_MIN_WIDTH;
+  toggle.hidden = window.innerWidth < SPLIT_MIN_WIDTH || focusOn();  // the focus layout is always two panes
   toggle.textContent = layout.split ? "◧ Split" : "▭ Single";
   toggle.setAttribute("aria-pressed", String(layout.split));
   toggle.title = layout.split ? "Two panes: COMMS left, WORK right. Click for a single pane." : "One pane at a time. Click to show COMMS and WORK side by side.";
+  renderFocusButton();
   if (layout.split) applySplit();
   navPill();
-  document.dispatchEvent(new CustomEvent("cc:layout", { detail: { split: layout.split } }));
+  document.dispatchEvent(new CustomEvent("cc:layout", { detail: { split: layout.split, focus: focusOn() } }));
   return fresh;
 }
 
@@ -232,9 +294,16 @@ $("#layout-toggle").addEventListener("click", () => {
   runLoaders(applyLayout());
 });
 
+// Focus layout button, next to Split/Single (its state is drawn by renderFocusButton).
+$("#layout-toggle").after(el("button", {
+  id: "focus-layout", class: "layout-toggle focus-layout small subtle", type: "button", hidden: true, "aria-pressed": "false",
+  onclick: () => setFocusLayout(!layout.focus),
+}, "⧉ Pulse | Code"));
+
 window.addEventListener("resize", () => {
   if (!layout.ready) return;
-  if (wantSplit() !== layout.split || $("#layout-toggle").hidden !== (window.innerWidth < SPLIT_MIN_WIDTH)) runLoaders(applyLayout());
+  const toggleHidden = window.innerWidth < SPLIT_MIN_WIDTH || focusOn();
+  if (wantSplit() !== layout.split || $("#layout-toggle").hidden !== toggleHidden) runLoaders(applyLayout());
   else if (layout.split) applySplit();
 });
 
@@ -274,7 +343,11 @@ document.querySelector(".navs").addEventListener("scroll", navFade, { passive: t
 
 // ---- splitter between the panes ------------------------------------------------
 
-let splitFrac = (() => { const v = parseFloat(store.get("cc.layout.split")); return v >= 0.1 && v <= 0.9 ? v : SPLIT_DEFAULT; })();
+// The focus layout keeps its own splitter position (cc.layout.focusSplit), so Pulse | VS Code and COMMS | WORK each stay put.
+const splitKey = () => (focusOn() ? "cc.layout.focusSplit" : "cc.layout.split");
+const splitDefault = () => (focusOn() ? FOCUS_SPLIT_DEFAULT : SPLIT_DEFAULT);
+function savedSplit() { const v = parseFloat(store.get(splitKey())); return v >= 0.1 && v <= 0.9 ? v : splitDefault(); }
+let splitFrac = SPLIT_DEFAULT;  // read in initLayout, once the module tabs (and so the focus layout) are known
 
 function splitBounds() {
   const main = $("#workspace");
@@ -302,7 +375,7 @@ function setSplit(frac, save = true) {
   if (!w) return;
   splitFrac = Math.max(minL, Math.min(maxL, frac * w)) / w;
   applySplit();
-  if (save) store.set("cc.layout.split", splitFrac.toFixed(4));
+  if (save) store.set(splitKey(), splitFrac.toFixed(4));
 }
 
 (() => {
@@ -327,15 +400,15 @@ function setSplit(frac, save = true) {
     if (!drag || e.pointerId !== drag.id) return;
     drag = null;
     document.body.classList.remove("resizing");
-    store.set("cc.layout.split", splitFrac.toFixed(4));
+    store.set(splitKey(), splitFrac.toFixed(4));
   };
   sp.addEventListener("pointerup", end);
   sp.addEventListener("pointercancel", end);
   sp.addEventListener("lostpointercapture", end);
-  sp.addEventListener("dblclick", () => setSplit(SPLIT_DEFAULT));
+  sp.addEventListener("dblclick", () => setSplit(splitDefault()));
   sp.addEventListener("keydown", (e) => {
     const step = e.shiftKey ? 0.1 : 0.02;
-    const map = { ArrowLeft: splitFrac - step, ArrowRight: splitFrac + step, Home: 0, End: 1, Enter: SPLIT_DEFAULT };
+    const map = { ArrowLeft: splitFrac - step, ArrowRight: splitFrac + step, Home: 0, End: 1, Enter: splitDefault() };
     if (!(e.key in map)) return;
     e.preventDefault();
     setSplit(map[e.key]);
@@ -395,7 +468,7 @@ const meetingActionSources = [];
 function meetingActions(m, where) {
   return meetingActionSources.flatMap((fn) => { try { return [fn(m, where)].flat().filter(Boolean); } catch { return []; } });
 }
-// ...and to received emails (Mail list rows, the reader, follow-up cards): CC.addMailAction(fn(mail, where)),
+// ...and to received emails (Mail list rows, the reader, a follow-up row's ⋯ menu): CC.addMailAction(fn(mail, where)),
 // where = "row" | "reader" | "followup".
 const mailActionSources = [];
 function mailActions(m, where) {
@@ -436,12 +509,11 @@ loaders.alerts = () => guarded(async () => {
   fill($("#alerts-list"), alerts.map((a) => alertRow(a)), "No alerts yet");
 });
 
-// The newest alerts, on Today (unread first, then by time).
+// The newest unread alerts, on Today (read ones are only on the Alerts tab).
 async function loadTodayAlerts() {
   try {
-    const { alerts, unread } = await api("/api/alerts?unread_only=false");
-    const rows = alerts.slice(0, 40).sort((a, b) => (a.read ? 1 : 0) - (b.read ? 1 : 0)).slice(0, 12);
-    fill($("#today-alerts"), rows.map((a) => alertRow(a, true)), "No alerts yet");
+    const { alerts, unread } = await api("/api/alerts?unread_only=true");
+    fill($("#today-alerts"), alerts.slice(0, 12).map((a) => alertRow(a, true)), "No unread alerts");
     $("#today-alerts-count").textContent = unread ? `${unread} UNREAD` : "ALL READ";
   } catch (e) {
     fill($("#today-alerts"), [el("li", { class: "err" }, e.message)], "");
@@ -617,7 +689,7 @@ async function orderDialog(number) {
     showDialog(el("h3", {}, `Order ${number}`),
       el("p", {}, "Order lookup isn't set up yet."), el("p", { class: "setup" }, info.problem),
       el("div", { class: "row" },
-        el("button", { type: "button", class: "primary", onclick: () => { d.close(); openTab("sql"); } }, "Go to SQL tab"),
+        el("button", { type: "button", class: "primary", onclick: () => { d.close(); CC.sqlShow?.("queries"); openTab("sql"); } }, "Go to SQL tab"),
         el("button", {}, "Close")));
     return;
   }
@@ -1021,25 +1093,25 @@ async function selectWeather(zip, button) {
 
 function renderWeather(w) {
   const panel = $("#weather");
+  const head = (label) => el("div", { class: "weather-head" },
+    el("span", { class: "panel-label" }, label), el("span", { class: "spacer" }), weatherToggle(w));
   if (w.error) {
-    panel.replaceChildren(el("div", { class: "panel-head weather-head" }, el("span", { class: "panel-label" }, "ENV.WEATHER"), el("span", { class: "spacer" }), weatherToggle(w)),
-      el("p", { class: "err" }, w.error));
+    panel.replaceChildren(head("ENV.WEATHER"), el("p", { class: "err" }, w.error));
     return;
   }
   panel.replaceChildren(
-    el("div", { class: "panel-head weather-head" },
-      el("span", { class: "panel-label" }, `ENV.WEATHER // ${w.location} ${w.zip}`), el("span", { class: "spacer" }), weatherToggle(w)),
+    head(`ENV.WEATHER // ${w.location} ${w.zip}`),
     el("div", { class: "weather-main" },
       el("div", { class: "w-icon" }, w.icon),
-      el("div", {},
-        el("div", { class: "w-temp" }, w.temp, el("small", {}, w.unit)),
+      el("div", { class: "w-temp" }, w.temp, el("small", {}, w.unit)),
+      el("div", { class: "w-info" },
         el("div", { class: "w-desc" }, w.text),
         // Each piece wraps as a whole (never "6:06" on one line and "PM" on the next).
         el("div", { class: "w-loc" },
           el("span", {}, `FEELS ${w.feels_like}°`), " · ", el("span", {}, `H ${w.high}° / L ${w.low}°`), " · ",
           el("span", { title: "Sunrise" }, `☀ ${timeOf(w.sunrise)}`), " ", el("span", { title: "Sunset" }, `☾ ${timeOf(w.sunset)}`))),
       el("div", { class: "w-meters" },
-        meter("Rain chance", `${w.rain_chance ?? 0}%`, w.rain_chance ?? 0, 100, false),
+        meter("Rain", `${w.rain_chance ?? 0}%`, w.rain_chance ?? 0, 100, false),
         meter("Humidity", `${w.humidity}%`, w.humidity, 100, false),
         meter("Wind", `${w.wind} ${w.wind_unit}`, w.wind, 30, w.wind >= 20))),
     el("div", { class: "hours" }, w.hours.map((h) => el("div", { class: "hour" },
@@ -1061,45 +1133,106 @@ function dueText(due) {
   return due ? `Due ${new Date(due + "T00:00").toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}` : "No due date";
 }
 
+// Follow-up totals, shared by the stat tiles and the Follow-ups tab.
+function followupCounts(d) {
+  const f = d?.followups && !d.followups.error ? d.followups : {};
+  return {
+    total: ["urgent_reply", "needs_reply", "teams_reply", "awaiting_reply", "flagged", "unread_vip"].reduce((n, k) => n + (f[k]?.length || 0), 0),
+    urgent: (f.urgent_reply?.length || 0) + (f.teams_reply || []).filter((m) => m.urgent).length,
+    needs: f.needs_reply?.length || 0,
+  };
+}
+
+// A stat tile. With onclick it is a button (Enter / Space too).
+function statTile(n, label, color, { cls = "", title = "", onclick = null, sub = null } = {}) {
+  const tile = el("div", { class: `stat ${cls}`, style: `--c:${color}` }, el("div", { class: "n" }, n), el("div", { class: "l" }, label),
+    sub && el("div", { class: "sub" }, sub));
+  if (title) tile.title = title;
+  if (onclick) {
+    tile.classList.add("clickable");
+    tile.setAttribute("role", "button");
+    tile.tabIndex = 0;
+    tile.addEventListener("click", onclick);
+    tile.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onclick(); } });
+  }
+  return tile;
+}
+
+// Tiles from feature modules: CC.addStatTile(fn(todayData) -> tile | [tiles] | null, or a Promise of one).
+const statSources = [];
+let statSeq = 0;
+
+function pulseTiles() {
+  // Pulse tiles appear once the Pulse connection is set up.
+  return api("/api/pulse/summary").then((p) => {
+    if (!p.configured || p.error) return [];
+    const open = () => openTab("pulse-feedback");
+    const tiles = [statTile(p.open_mine, "Pulse tickets on you", p.high_priority ? "var(--red)" : p.open_mine ? "var(--amber)" : "var(--accent)",
+      { title: `${p.new_today} new today · ${p.high_priority} high priority · ${p.open_total} open`, onclick: open })];
+    // Tickets waiting on Joe longer than the warn/overdue thresholds (business days); no tile while all are fresh.
+    const over = p.aging_overdue || 0, warn = p.aging_warn || 0;
+    if (p.aging_waiting && (over || warn)) {
+      tiles.push(statTile(over || warn, over ? "Pulse overdue" : "Pulse aging", over ? "var(--red)" : "var(--amber)", {
+        cls: over ? "alarm" : "", onclick: open,
+        title: p.oldest_days != null
+          ? `Oldest waiting ${p.oldest_days} business day${p.oldest_days === 1 ? "" : "s"}` + (p.oldest_ticket_no != null ? ` (#${p.oldest_ticket_no})` : "")
+          : `${p.aging_waiting} waiting on you`,
+      }));
+    }
+    return tiles;
+  });
+}
+
+// A stat tile's rows, once shown: scrolled into view and briefly highlighted. The rows may still be loading (the
+// Alerts tab fetches when opened), so it looks again for up to 2 s.
+function spotlight(selector, tries = 10) {
+  const nodes = [...document.querySelectorAll(selector)].filter((n) => n.offsetParent !== null);
+  if (!nodes.length) { if (tries > 0) setTimeout(() => spotlight(selector, tries - 1), 200); return; }
+  nodes[0].scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  for (const n of nodes) { n.classList.remove("spotlight"); void n.offsetWidth; n.classList.add("spotlight"); }
+  setTimeout(() => nodes.forEach((n) => n.classList.remove("spotlight")), 2600);
+}
+
+// Opens collapsed follow-up sections so their rows can be shown.
+function expandFollowups(...keys) {
+  for (const k of keys) document.querySelector(`.fu-toggle[aria-controls="fu-${k}"][aria-expanded="false"]`)?.click();
+}
+
 function renderStats(d) {
   const agenda = Array.isArray(d.agenda) ? d.agenda : [];
   const left = agenda.filter((m) => new Date(m.end) > new Date()).length;
   const today = isoDate(new Date());
   const due = d.tasks.items.filter((t) => t.due && t.due <= today).length;
-  const f = d.followups.error ? {} : d.followups;
-  const fu = ["urgent_reply", "needs_reply", "teams_reply", "awaiting_reply", "flagged", "unread_vip"].reduce((n, k) => n + (f[k]?.length || 0), 0);
-  const urgent = (f.urgent_reply?.length || 0) + (f.teams_reply || []).filter((m) => m.urgent).length;
-  const stat = (n, label, color, cls = "") => el("div", { class: `stat ${cls}`, style: `--c:${color}` }, el("div", { class: "n" }, n), el("div", { class: "l" }, label));
-  $("#stats").replaceChildren(
-    stat(urgent, "Urgent replies", urgent ? "var(--red)" : "var(--accent)", urgent ? "alarm" : ""),
-    stat(left, "Meetings left today", "var(--accent-2)"),
-    stat(due, "Tasks due / overdue", due ? "var(--amber)" : "var(--accent)"),
-    stat(f.needs_reply?.length || 0, "Need your reply", "var(--hot)"),
-    stat(fu, "Follow-ups total", "var(--accent-2)"),
-    stat(Math.max(0, lastUnread), "Unread alerts", lastUnread > 0 ? "var(--red)" : "var(--accent)"));
-  // Pulse tile appears once the Pulse connection is set up.
-  api("/api/pulse/summary").then((p) => {
-    if (!p.configured || p.error) return;
-    const tile = stat(p.open_mine, "Pulse tickets on you", p.high_priority ? "var(--red)" : p.open_mine ? "var(--amber)" : "var(--accent)");
-    tile.title = `${p.new_today} new today · ${p.high_priority} high priority · ${p.open_total} open`;
-    tile.style.cursor = "pointer";
-    tile.addEventListener("click", () => openTab("pulse"));
-    $("#stats").append(tile);
-    // Tickets waiting on Joe longer than the warn/overdue thresholds (business days); no tile while all are fresh.
-    const over = p.aging_overdue || 0, warn = p.aging_warn || 0;
-    if (p.aging_waiting && (over || warn)) {
-      const aging = stat(over || warn, over ? "Pulse overdue" : "Pulse aging", over ? "var(--red)" : "var(--amber)", over ? "alarm" : "");
-      aging.title = p.oldest_days != null
-        ? `Oldest waiting ${p.oldest_days} business day${p.oldest_days === 1 ? "" : "s"}` + (p.oldest_ticket_no != null ? ` (#${p.oldest_ticket_no})` : "")
-        : `${p.aging_waiting} waiting on you`;
-      aging.style.cursor = "pointer";
-      aging.addEventListener("click", () => openTab("pulse"));
-      $("#stats").append(aging);
-    }
+  const { total: fu, urgent, needs } = followupCounts(d);
+  const go = (tab, selector, ...sections) => () => {
+    selectTodayTab(tab, { focus: true });
+    expandFollowups(...sections);
+    spotlight(selector);
+  };
+  const FU_ALL = ["urgent", "reply", "teams", "awaiting", "flagged", "vip"];
+  const builtIn = [
+    statTile(urgent, "Urgent replies", urgent ? "var(--red)" : "var(--accent)", { cls: urgent ? "alarm" : "",
+      onclick: go("follow", "#fu-urgent .fu-row, #fu-teams .fu-row.sev-urgent", "urgent", "teams") }),
+    statTile(left, "Meetings left today", "var(--accent-2)",
+      { onclick: go("agenda", "#agenda > li:not(.past):not(.slot):not(.weekend-row):not(.empty):not(.err)") }),
+    statTile(due, "Tasks due / overdue", due ? "var(--amber)" : "var(--accent)", { onclick: go("tasks", "#tasks > li.overdue, #tasks > li.due-today") }),
+    statTile(needs, "Need your reply", "var(--hot)", { onclick: go("follow", "#fu-reply .fu-row", "reply") }),
+    statTile(fu, "Follow-ups total", "var(--accent-2)", { onclick: go("follow", "#followups .fu-row", ...FU_ALL) }),
+    statTile(Math.max(0, lastUnread), "Unread alerts", lastUnread > 0 ? "var(--red)" : "var(--accent)",
+      { onclick: () => { openTab("alerts"); spotlight("#alerts-list > li.unread"); } }),
+  ];
+  // Module and Pulse tiles can be async: everything is put in at once, in a fixed order, so nothing jumps or
+  // flickers on a refresh; a source that fails or takes over 3 s is left out this time.
+  const seq = ++statSeq;
+  const settle = (fn) => Promise.race([Promise.resolve().then(fn), new Promise((r) => setTimeout(() => r(null), 3000))]).catch(() => null);
+  Promise.all([settle(pulseTiles), ...statSources.map((fn) => settle(() => fn(d)))]).then((extra) => {
+    if (seq !== statSeq) return;
+    $("#stats").replaceChildren(...builtIn, ...extra.flat().filter((n) => n instanceof Node));
     balanceStats();
-  }).catch(() => {});
-  balanceStats();
+  });
 }
+
+function refreshStats() { if (todayData) renderStats(todayData); }
 
 // The stat tiles sit in balanced rows: all on one row if they fit, else two even rows (3+3, 4+3), else
 // three, never a lone tile on a row of its own.
@@ -1159,7 +1292,6 @@ function endDrag() { dragTask = null; document.body.classList.remove("drag-task"
 function renderAgenda(agenda) {
   if (agenda.error) { fill($("#agenda"), [el("li", { class: "err" }, agenda.error)], ""); return; }
   const now = new Date();
-  $("#agenda-count").textContent = `${agenda.length} EVENT${agenda.length === 1 ? "" : "S"}`;
   const rows = agenda.map((m) => {
     const start = new Date(m.start), end = new Date(m.end);
     const live = start <= now && now < end;
@@ -1189,7 +1321,50 @@ function renderAgenda(agenda) {
   fill($("#agenda"), nodes, "No meetings today. Clear skies.");
 }
 
+// Task priority: High / Normal / Low. Outlook / To Do tasks store it in Outlook's own Importance (it shows in
+// Outlook and To Do too); Asana tasks keep it on this PC (today.py). The list is sorted by priority, then due date.
+const PRIO = { high: ["High", "▲"], normal: ["Normal", ""], low: ["Low", "▼"] };
+const PRIO_RANK = { high: 0, normal: 1, low: 2 };
+const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+function sortTasks(items) {
+  return items.sort((a, b) => (PRIO_RANK[a.priority] ?? 1) - (PRIO_RANK[b.priority] ?? 1)
+    || (!a.due) - (!b.due) || cmp(a.due || "", b.due || "") || cmp(String(a.subject).toLowerCase(), String(b.subject).toLowerCase()));
+}
+const taskKey = (t) => `${t.source}:${t.id}`;
+
+function priorityButton(task) {
+  const p = PRIO[task.priority] ? task.priority : "normal";
+  return menuButton([PRIO[p][1] && el("span", { "aria-hidden": "true" }, PRIO[p][1]), PRIO[p][0]],
+    `Priority ${PRIO[p][0]}: change priority of "${task.subject}"`,
+    () => Object.keys(PRIO).map((k) => el("button", { type: "button", role: "menuitemradio", "aria-checked": String(k === p),
+      onclick: () => setTaskPriority(task, k) }, PRIO[k][1] ? `${PRIO[k][1]} ${PRIO[k][0]}` : PRIO[k][0])),
+    `prio-pill ${p}`, "left");
+}
+
+async function setTaskPriority(task, priority) {
+  if ((task.priority || "normal") === priority) return;
+  const before = task.priority;
+  const redraw = () => {
+    if (!todayData) return;
+    sortTasks(todayData.tasks.items);
+    renderTasks(todayData.tasks);
+    updateTodayTabs(todayData);
+    requestAnimationFrame(() => $(`#tasks li[data-key="${CSS.escape(taskKey(task))}"] .prio-pill`)?.focus());
+  };
+  task.priority = priority;
+  redraw();
+  try {
+    await api("/api/tasks/priority", { source: task.source, id: task.id, priority });
+    toast(`${PRIO[priority][0]} priority${task.source === "outlook" ? " · saved in Outlook" : ""}: ${task.subject}`);
+  } catch (e) {
+    task.priority = before;
+    redraw();
+    showMessage("Priority not changed", e.message);
+  }
+}
+
 function renderTasks(t) {
+  closeMenu();
   asanaConnected = t.asana.connected;
   const btn = $("#asana-btn");
   btn.textContent = asanaConnected ? "Asana ✓" : "Connect Asana";
@@ -1198,9 +1373,10 @@ function renderTasks(t) {
   $("#tasks-note").replaceChildren(...notes.map((n) => el("div", { class: "err" }, n)));
   const today = isoDate(new Date());
   fill($("#tasks"), t.items.map((task) => el("li", {
-      class: `task ${task.due && task.due < today ? "overdue" : task.due === today ? "due-today" : ""}`,
+      class: `task ${task.due && task.due < today ? "overdue" : task.due === today ? "due-today" : ""} prio-${PRIO[task.priority] ? task.priority : "normal"}`,
+      "data-key": taskKey(task),
       draggable: "true",
-      title: "Drag onto an open slot in the agenda to block time for it",
+      title: "Drag onto an open slot in the agenda to block time for it (hover Today's Agenda to switch to it)",
       ondragstart: (e) => {
         dragTask = task;
         e.dataTransfer.effectAllowed = "copy";
@@ -1210,6 +1386,7 @@ function renderTasks(t) {
       ondragend: endDrag,
     },
     el("button", { class: "check", title: "Mark complete", "aria-label": `Mark "${task.subject}" complete`, onclick: () => completeTask(task) }),
+    priorityButton(task),
     el("div", { class: "grow" },
       el("div", { class: "title" }, task.subject, srcTag(task.source === "asana" ? "asana" : "todo", task.project || ""), dueTag(task.due)),
       el("div", { class: "muted" }, dueText(task.due), task.project ? ` · ${task.project}` : "")),
@@ -1354,74 +1531,146 @@ async function completeTask(task) {
   await guarded(async () => { await api("/api/tasks/complete", { source: task.source, id: task.id }); loaders.today(); });
 }
 
-function fuGroup(title, items, render, note, empty, cls = "") {
-  items = items || [];
-  return el("div", { class: `fu-group ${cls}` },
-    el("h4", {}, title, el("span", { class: "chip" }, items.length)),
-    el("ul", { class: "list" }, items.length ? items.map(render) : el("li", { class: "empty" }, empty)),
-    note && el("div", { class: "fu-note" }, note));
+// ---- follow-ups: a dense list, one row per item ----------------------------------------------------------
+// Each group (Urgent, Needs your reply, Teams, Awaiting their reply, Flagged, VIP unread) is a list section with
+// its count; a section can be collapsed (remembered per viewer in cc.today.fu.collapsed). A row shows the source
+// tag, who, the subject, how long ago, and its main action; Snooze, Dismiss and the second action appear on hover
+// or keyboard focus, and the rest (Teams chat, Mark urgent, Mute, module actions such as Spam) are in its ⋯ menu.
+const FU_COLLAPSED = "cc.today.fu.collapsed";
+const fuCollapsed = (() => { try { return new Set(JSON.parse(store.get(FU_COLLAPSED) || "[]")); } catch { return new Set(); } })();
+
+// "44m", "3h", "2d" since a time (the full date and time is the tooltip).
+function ago(iso) {
+  const mins = Math.round((Date.now() - new Date(iso)) / 60000);
+  if (!iso || !Number.isFinite(mins)) return "";
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  return mins < 48 * 60 ? `${Math.floor(mins / 60)}h` : `${Math.floor(mins / 1440)}d`;
 }
 
-// Every follow-up gets Snooze and Dismiss; Mute only where muting the sender makes sense.
-const fuActions = (m, { mute, who, kind = "mail" } = {}, ...buttons) => el("div", { class: "actions" }, ...buttons,
-  mailActions(m, "followup"),
-  el("button", { class: "icon subtle", title: "Snooze", onclick: () => snoozeDialog({ id: m.id, subject: m.subject, who: who ?? m.sender_name, kind }) }, "Snooze"),
-  mute && el("button", { class: "icon subtle", title: `Mute ${mute}`, onclick: () => muteSender(mute) }, "Mute"),
-  el("button", { class: "icon subtle", title: "Dismiss", "aria-label": `Dismiss "${m.subject}"`, onclick: () => dismissFollowup(m.id) }, "✕"));
+function fuSection(key, title, items, row, { empty, note, hot = false, urgent = false } = {}) {
+  items = items || [];
+  const id = `fu-${key}`;
+  const collapsed = items.length > 0 && fuCollapsed.has(key);
+  const list = items.length ? el("ul", { class: "list fu-rows", id, hidden: collapsed }, items.map(row)) : null;
+  const noteEl = note ? el("div", { class: "fu-note", hidden: collapsed }, note) : null;
+  const label = [el("span", { class: "fu-caret", "aria-hidden": "true" }), el("span", { class: "fu-sec-title" }, title), el("span", { class: "chip" }, items.length)];
+  const toggle = (e) => {
+    const open = e.currentTarget.getAttribute("aria-expanded") !== "true";
+    e.currentTarget.setAttribute("aria-expanded", String(open));
+    list.hidden = !open;
+    if (noteEl) noteEl.hidden = !open;
+    open ? fuCollapsed.delete(key) : fuCollapsed.add(key);
+    store.set(FU_COLLAPSED, JSON.stringify([...fuCollapsed]));
+  };
+  return el("section", { class: `fu-sec${hot ? " hot" : ""}${urgent ? " urgent" : ""}${items.length ? "" : " is-empty"}`, "aria-label": title },
+    el("h4", { class: "fu-sec-h" },
+      items.length ? el("button", { type: "button", class: "fu-toggle", "aria-expanded": String(!collapsed), "aria-controls": id, onclick: toggle }, label)
+                   : el("span", { class: "fu-toggle" }, label),
+      !items.length && el("span", { class: "fu-empty" }, empty)),
+    list, noteEl);
+}
+
+// One row. `more` builds the ⋯ menu's items (called again each time it opens); no items, no ⋯.
+function fuRow(m, { cls = "", src, who, whoTitle = who, subject, about = subject, tags = [], at, primary, quick = [], more = () => [] }) {
+  const extra = more().filter(Boolean);
+  return el("li", { class: `fu-row ${cls}` },
+    el("span", { class: "fu-src" }, src),
+    el("span", { class: "fu-who", title: whoTitle }, who),
+    el("span", { class: "fu-subj", title: about }, tags.filter(Boolean), el("span", { class: "fu-subj-text" }, subject)),
+    el("span", { class: "fu-age", title: at ? when(at) : "" }, ago(at)),
+    el("span", { class: "fu-acts" }, primary, el("span", { class: "fu-quick" }, quick.filter(Boolean)),
+      extra.length ? menuButton("⋯", `More actions: ${m.subject || "this item"}`, () => more().filter(Boolean), "icon subtle fu-more") : null));
+}
 
 const viewMail = (id) => el("button", { class: "small", onclick: () => { openTab("mail"); showMail(id); } }, "View");
+const fuView = (m) => el("button", { type: "button", class: "small", "aria-label": `View "${m.subject}"`, onclick: () => { openTab("mail"); showMail(m.id); } }, "View");
+const fuSnooze = (m, who = m.sender_name, kind = "mail") => el("button", { type: "button", class: "icon subtle", title: "Snooze",
+  "aria-label": `Snooze "${m.subject}"`, onclick: () => snoozeDialog({ id: m.id, subject: m.subject, who, kind }) }, "Snooze");
+const fuDismiss = (m) => el("button", { type: "button", class: "icon subtle", title: "Dismiss", "aria-label": `Dismiss "${m.subject}"`, onclick: () => dismissFollowup(m.id) }, "✕");
+const fuMute = (who) => who && el("button", { type: "button", title: `Hide follow-ups from ${who}`, onclick: () => muteSender(who) }, "Mute sender");
 
 function replyRow(m, { urgent = false } = {}) {
-  return el("li", { class: `${m.unread ? "unread" : ""} ${urgent ? "sev-urgent" : ""}` },
-    el("div", { class: "grow" }, el("div", { class: "title" }, m.subject, urgent && el("span", { class: "tag urgent" }, "Urgent")),
-      el("div", { class: "muted src-line" }, srcTag("outlook", m.internal ? "internal sender" : "external sender"), `${fromLine(m.sender_name, m.sender)} · ${when(m.received)}`)),
-    fuActions(m, { mute: urgent ? null : m.sender || m.sender_name }, viewMail(m.id),
-      el("button", { class: "small primary", onclick: () => replyDialog(m, false) }, "Reply"),
-      m.sender && el("button", { class: "small alt", title: "Chat in Teams", onclick: () => openTeamsChat(m.sender, "") }, "Teams"),
-      !urgent && (m.sender || m.sender_name) && el("button", { class: "icon subtle", title: `Always treat ${m.sender_name || m.sender} as urgent`, onclick: () => markUrgent(m.sender || m.sender_name) }, "Mark urgent")));
+  const sender = m.sender || m.sender_name;
+  return fuRow(m, {
+    cls: `${m.unread ? "unread" : ""} ${urgent ? "sev-urgent" : ""}`,
+    src: srcTag("outlook", m.internal ? "internal sender" : "external sender"),
+    who: m.sender_name || m.sender, whoTitle: fromLine(m.sender_name, m.sender), subject: m.subject, at: m.received,
+    tags: [urgent && el("span", { class: "tag urgent" }, "Urgent")],
+    primary: el("button", { type: "button", class: "small primary", "aria-label": `Reply to "${m.subject}"`, onclick: () => replyDialog(m, false) }, "Reply"),
+    quick: [fuView(m), fuSnooze(m), fuDismiss(m)],
+    more: () => [
+      m.sender && el("button", { type: "button", onclick: () => openTeamsChat(m.sender, "") }, "Chat in Teams"),
+      !urgent && sender && el("button", { type: "button", title: `Always treat ${m.sender_name || m.sender} as urgent`, onclick: () => markUrgent(sender) }, "Mark urgent"),
+      !urgent && fuMute(sender),
+      ...mailActions(m, "followup")],
+  });
 }
 
 function teamsRow(m) {
-  return el("li", { class: `${m.unread ? "unread" : ""} ${m.urgent ? "sev-urgent" : ""}` },
-    el("div", { class: "grow" },
-      el("div", { class: "title" }, m.from_name || m.subject, m.urgent && el("span", { class: "tag urgent" }, "Urgent")),
-      el("div", { class: "muted src-line" }, srcTag("teams", `notification from ${m.sender || "Teams"}`), [m.from_name ? m.subject : "", when(m.received)].filter(Boolean).join(" · ")),
-      m.preview && el("div", { class: "fu-preview" }, String(m.preview).slice(0, 160))),
-    fuActions(m, { who: m.from_name || m.sender_name },
-      el("button", { class: "small alt", onclick: () => openExternal("msteams:") }, "Open Teams"),
-      el("button", { class: "small", title: "Mark this Teams email read", onclick: () => guarded(async () => { await api("/api/mail/read", { id: m.id, read: true }); loaders.today(); }) }, "Done")));
+  const who = m.from_name || m.sender_name;
+  const text = m.preview ? String(m.preview).slice(0, 200) : m.subject;
+  return fuRow(m, {
+    cls: `${m.unread ? "unread" : ""} ${m.urgent ? "sev-urgent" : ""}`,
+    src: srcTag("teams", `notification from ${m.sender || "Teams"}`),
+    who: m.from_name || m.subject, subject: text, about: [m.subject, m.preview].filter(Boolean).join(" — "), at: m.received,
+    tags: [m.urgent && el("span", { class: "tag urgent" }, "Urgent")],
+    primary: el("button", { type: "button", class: "small alt", onclick: () => openExternal("msteams:") }, "Open Teams"),
+    quick: [el("button", { type: "button", class: "small", title: "Mark this Teams email read", "aria-label": `Done: ${m.subject}`,
+      onclick: () => guarded(async () => { await api("/api/mail/read", { id: m.id, read: true }); loaders.today(); }) }, "Done"),
+    fuSnooze(m, who), fuDismiss(m)],
+    more: () => mailActions(m, "followup"),
+  });
+}
+
+function awaitingRow(m) {
+  const to = String(m.to || "").slice(0, 60);
+  return fuRow(m, {
+    src: srcTag("sent"), who: `To ${to}`, whoTitle: `To ${m.to || ""}`, subject: m.subject, at: m.sent,
+    primary: el("button", { type: "button", class: "small", title: "Opens a follow-up draft in Outlook", onclick: () => nudge(m) }, "Nudge"),
+    quick: [el("button", { type: "button", class: "small", title: "Alert me if nobody replies", onclick: () => remindDialog(m) }, "Remind me"),
+      fuSnooze(m, `to ${to}`), fuDismiss(m)],
+    more: () => mailActions(m, "followup"),
+  });
+}
+
+function flaggedRow(m) {
+  return fuRow(m, {
+    src: srcTag("flagged"), who: m.sender_name || m.sender, whoTitle: fromLine(m.sender_name, m.sender), subject: m.subject, at: m.received,
+    tags: [dueTag(m.due)],
+    primary: fuView(m),
+    quick: [el("button", { type: "button", class: "small", title: "Clear the flag in Outlook", "aria-label": `Unflag "${m.subject}"`,
+      onclick: () => guarded(async () => { await api("/api/mail/flag", { id: m.id, flagged: false }); loaders.today(); }) }, "Unflag"),
+    fuSnooze(m), fuDismiss(m)],
+    more: () => [el("button", { type: "button", title: "Mark the flag complete in Outlook", onclick: () => completeTask({ source: "outlook", id: m.id, subject: m.subject }) }, "Mark flag complete"),
+      fuMute(m.sender || m.sender_name), ...mailActions(m, "followup")],
+  });
+}
+
+function vipRow(m) {
+  return fuRow(m, {
+    cls: "unread", src: srcTag("outlook", "VIP sender"), who: m.sender_name || m.sender, whoTitle: fromLine(m.sender_name, m.sender),
+    subject: m.subject, at: m.received, primary: fuView(m), quick: [fuSnooze(m), fuDismiss(m)],
+    more: () => [fuMute(m.sender || m.sender_name), ...mailActions(m, "followup")],
+  });
 }
 
 function renderFollowups(f) {
+  closeMenu();
   const box = $("#followups");
   if (f.error) { box.replaceChildren(el("div", { class: "err" }, f.error)); return; }
   const h = f.flagged_hidden || {};
-  const hiddenNote = [h.more && `${h.more} more`, h.older && `${h.older} older`, h.automated && `${h.automated} automated`]
+  const hiddenNote = [h.more && `${h.more} more`, h.older && `${h.older} older`, h.automated && `${h.automated} automated`,
+    h.before && `${h.before.toLocaleString()} flagged before ${new Date(`${h.since}T00:00`).toLocaleDateString([], { month: "short", day: "numeric" })}`]
     .filter(Boolean).join(" · ");
   box.replaceChildren(
-    fuGroup("Urgent — reply needed", f.urgent_reply, (m) => replyRow(m, { urgent: true }),
-      null, "No urgent replies. Set who counts under Urgent people.", `urgent ${f.urgent_reply?.length ? "hot" : ""}`),
-    fuGroup("Needs your reply", f.needs_reply, (m) => replyRow(m), null, "Nothing waiting on you."),
-    fuGroup("Teams — reply needed", f.teams_reply, teamsRow, null, "No unread Teams messages.",
-      f.teams_reply?.some((m) => m.urgent) ? "hot" : ""),
-    fuGroup("Awaiting their reply", f.awaiting_reply, (m) => el("li", {},
-      el("div", { class: "grow" }, el("div", { class: "title" }, m.subject),
-        el("div", { class: "muted src-line" }, srcTag("sent"), `To ${String(m.to || "").slice(0, 60)} · sent ${when(m.sent)}`)),
-      fuActions(m, { who: `to ${String(m.to || "").slice(0, 60)}` },
-        el("button", { class: "small", title: "Opens a follow-up draft in Outlook", onclick: () => nudge(m) }, "Nudge"),
-        el("button", { class: "small", title: "Alert me if nobody replies", onclick: () => remindDialog(m) }, "Remind me"))),
-      null, "No one owes you a reply."),
-    fuGroup("Flagged", f.flagged, (m) => el("li", {},
-      el("div", { class: "grow" }, el("div", { class: "title" }, m.subject, dueTag(m.due)),
-        el("div", { class: "muted src-line" }, srcTag("flagged"), `${fromLine(m.sender_name, m.sender)} · ${when(m.received)}`)),
-      fuActions(m, { mute: m.sender || m.sender_name }, viewMail(m.id),
-        el("button", { class: "small", onclick: () => completeTask({ source: "outlook", id: m.id, subject: m.subject }) }, "Done"))),
-      hiddenNote && `Hidden: ${hiddenNote} (of ${h.total} flagged)`, "No recent flags."),
-    fuGroup("Unread from VIPs", f.unread_vip, (m) => el("li", { class: "unread" },
-      el("div", { class: "grow" }, el("div", { class: "title" }, m.subject),
-        el("div", { class: "muted src-line" }, srcTag("outlook", "VIP sender"), `${fromLine(m.sender_name, m.sender)} · ${when(m.received)}`)),
-      fuActions(m, { mute: m.sender || m.sender_name }, viewMail(m.id))),
-      null, "No unread VIP mail."));
+    fuSection("urgent", "Urgent — reply needed", f.urgent_reply, (m) => replyRow(m, { urgent: true }),
+      { empty: "None. Set who counts under Urgent people.", hot: !!f.urgent_reply?.length, urgent: true }),
+    fuSection("reply", "Needs your reply", f.needs_reply, (m) => replyRow(m), { empty: "Nothing waiting on you." }),
+    fuSection("teams", "Teams — reply needed", f.teams_reply, teamsRow, { empty: "No unread Teams messages.", hot: !!f.teams_reply?.some((m) => m.urgent) }),
+    fuSection("awaiting", "Awaiting their reply", f.awaiting_reply, awaitingRow, { empty: "No one owes you a reply." }),
+    fuSection("flagged", "Flagged", f.flagged, flaggedRow, { empty: "No recent flags.", note: hiddenNote && `Hidden: ${hiddenNote} (of ${Number(h.total || 0).toLocaleString()} flagged)` }),
+    fuSection("vip", "Unread from VIPs", f.unread_vip, vipRow, { empty: "No unread VIP mail." }));
 }
 
 // ---- urgent people ---------------------------------------------------------------
@@ -1575,6 +1824,7 @@ loaders.today = (refresh = false) => guarded(async () => {
     renderFollowups(todayData.followups);
     renderStats(todayData);
     renderSnoozedButton(todayData);
+    updateTodayTabs(todayData);
     loadTodayAlerts();
     // Feature modules (static/<module>.js) can react to fresh Today data without editing this file.
     document.dispatchEvent(new CustomEvent("cc:today", { detail: todayData }));
@@ -1587,110 +1837,136 @@ $("#today-refresh").addEventListener("click", () => loaders.today(true));
 $("#snoozed-btn").addEventListener("click", snoozedDialog);
 $("#urgent-btn").addEventListener("click", urgentDialog);
 
-// ---- launch bar (hotbar) -----------------------------------------------------------
+// ---- small popup menus (⋯ on follow-up rows, task priority) ---------------------------------------------------
+// role=menu under its button: arrow keys / Home / End move, Enter or Space picks, Esc and Tab close (focus goes
+// back to the button). Closes on an outside click, any scroll or resize, and when the list under it re-renders.
+let menuOpen = null;
 
-let launchItems = [];
-
-const launchGlyph = (url) => /^https?:/i.test(url) ? "◈" : /^msteams:/i.test(url) ? "✉" : "▣";
-
-async function loadLauncher() {
-  try { launchItems = (await api("/api/launcher")).items || []; } catch { /* keep what we have */ }
-  renderLauncher();
+function closeMenu(refocus = false) {
+  if (!menuOpen) return;
+  const { btn, menu } = menuOpen;
+  menuOpen = null;
+  menu.remove();
+  btn.setAttribute("aria-expanded", "false");
+  if (refocus && btn.isConnected) btn.focus();
 }
 
-function renderLauncher() {
-  $("#launch-slots").replaceChildren(
-    ...launchItems.map((it, i) => el("button", {
-        type: "button", class: "hot-slot", "data-i": i,
-        title: `${it.url}${i < 9 ? `  (Alt+${i + 1})` : ""}`,
-        "aria-label": `Open ${it.name}${i < 9 ? `, Alt+${i + 1}` : ""}`,
-        onclick: () => openLaunch(i),
-      },
-      el("span", { class: "key", "aria-hidden": "true" }, i < 9 ? String(i + 1) : "·"),
-      el("span", { class: "glyph", "aria-hidden": "true" }, launchGlyph(it.url)),
-      el("span", { class: "name" }, it.name))),
-    el("button", { type: "button", class: "hot-slot add", onclick: launchAddDialog }, "+ Add"));
-}
-
-function openLaunch(i) {
-  const slot = document.querySelector(`.hot-slot[data-i="${i}"]`);
-  if (slot) { slot.classList.remove("fired"); void slot.offsetWidth; slot.classList.add("fired"); }
-  guarded(() => api("/api/launcher/open", { index: i }));
-}
-
-async function saveLauncher(items) {
-  const r = await api("/api/launcher", { items });
-  launchItems = r.items;
-  renderLauncher();
-  $("#dialog").close();
-  toast("Hotbar saved.");
-}
-
-const LAUNCH_HINT = "A web address (https://…), a Teams link (msteams:…) or a folder/file path (C:\\… or \\\\server\\share\\…).";
-
-function launchAddDialog() {
-  const name = el("input", { placeholder: "Name (e.g. Pulse)", maxlength: "40", "aria-label": "Name" });
-  const url = el("input", { placeholder: "https://… or C:\\folder", "aria-label": "Link or path", class: "mono" });
-  const err = el("div", { class: "err", role: "alert" });
-  const save = () => guardedIn(err, async () => {
-    if (!name.value.trim()) { name.focus(); throw new Error("Give the button a name."); }
-    await saveLauncher([...launchItems, { name: name.value.trim(), url: url.value.trim() }]);
+function showMenu(btn, nodes, label) {
+  closeMenu();
+  const menu = el("div", { class: "cc-menu", role: "menu", "aria-label": label }, nodes);
+  for (const n of nodes) {
+    if (!String(n.getAttribute("role") || "").startsWith("menuitem")) n.setAttribute("role", "menuitem");
+    n.tabIndex = -1;
+    n.classList.add("cc-menu-item");
+  }
+  document.body.append(menu);
+  const r = btn.getBoundingClientRect(), mr = menu.getBoundingClientRect();
+  menu.style.top = `${r.bottom + mr.height + 8 > innerHeight ? Math.max(8, r.top - mr.height - 4) : r.bottom + 4}px`;
+  const x = btn.dataset.menuAlign === "left" ? r.left : r.right - mr.width;  // under the button, on its own side
+  menu.style.left = `${Math.max(8, Math.min(innerWidth - mr.width - 8, x))}px`;
+  btn.setAttribute("aria-expanded", "true");
+  menuOpen = { btn, menu, at: performance.now() };
+  const items = () => [...menu.querySelectorAll("[role^=menuitem]")].filter((b) => !b.disabled);
+  menu.addEventListener("keydown", (e) => {
+    const list = items(), i = list.indexOf(document.activeElement);
+    const go = (j) => { e.preventDefault(); list[(j + list.length) % list.length]?.focus(); };
+    if (e.key === "ArrowDown") go(i + 1);
+    else if (e.key === "ArrowUp") go(i - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(list.length - 1);
+    else if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
   });
-  url.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } });
-  showDialog(el("h3", {}, `Add hotbar slot ${launchItems.length + 1}`),
-    el("label", { class: "field-label" }, "Name"), name,
-    el("label", { class: "field-label" }, "Opens"), url,
-    el("p", { class: "muted" }, LAUNCH_HINT), err,
-    el("div", { class: "row" },
-      el("button", { type: "button", class: "subtle", onclick: () => launchEditDialog() }, "Edit all…"),
-      el("span", { class: "spacer" }),
-      el("button", { value: "cancel", class: "subtle" }, "Cancel"),
-      el("button", { type: "button", class: "primary", onclick: save }, "Add")));
-  name.focus();
+  // Closes after the item's own handler (which may stop the click's propagation); if that opened a dialog, the
+  // dialog keeps the focus.
+  menu.addEventListener("click", (e) => {
+    if (!e.target.closest("[role^=menuitem]")) return;
+    const mine = menuOpen;
+    setTimeout(() => { if (menuOpen === mine) closeMenu(!document.querySelector("dialog[open]")); });
+  }, true);
+  (menu.querySelector("[aria-checked=true]") || items()[0])?.focus();
 }
 
-function launchEditDialog() {
-  const rows = launchItems.map((x) => ({ ...x }));
-  const list = el("ol", { class: "launch-edit" });
-  const err = el("div", { class: "err", role: "alert" });
-  const draw = (focus) => {
-    list.replaceChildren(...rows.map((r, i) => {
-      const move = (to) => { [rows[i], rows[to]] = [rows[to], rows[i]]; draw(`[data-move="${to}${to < i ? "u" : "d"}"]`); };
-      return el("li", {},
-        el("span", { class: "key", "aria-hidden": "true" }, i + 1),
-        el("input", { value: r.name, placeholder: "Name", maxlength: "40", "aria-label": `Slot ${i + 1} name`, oninput: (e) => { r.name = e.target.value; } }),
-        el("input", { value: r.url, placeholder: "https://… or C:\\folder", class: "mono", "aria-label": `Slot ${i + 1} link`, oninput: (e) => { r.url = e.target.value; } }),
-        el("button", { type: "button", class: "icon subtle", "data-move": `${i}u`, title: "Move up", "aria-label": `Move slot ${i + 1} up`, disabled: i === 0, onclick: () => move(i - 1) }, "↑"),
-        el("button", { type: "button", class: "icon subtle", "data-move": `${i}d`, title: "Move down", "aria-label": `Move slot ${i + 1} down`, disabled: i === rows.length - 1, onclick: () => move(i + 1) }, "↓"),
-        el("button", { type: "button", class: "icon subtle danger", title: "Remove", "aria-label": `Remove slot ${i + 1}`, onclick: () => { rows.splice(i, 1); draw(); } }, "✕"));
-    }));
-    if (!rows.length) list.append(el("li", { class: "empty" }, "No buttons. Add one below."));
-    if (focus) list.querySelector(focus)?.focus();
-  };
-  draw();
-  const save = () => guardedIn(err, async () => {
-    const items = rows.map((r) => ({ name: r.name.trim(), url: r.url.trim() })).filter((r) => r.name || r.url);
-    const bad = items.find((r) => !r.name);
-    if (bad) throw new Error(`${bad.url}: give it a name.`);
-    await saveLauncher(items);
-  });
-  showDialog(el("h3", {}, "Edit hotbar"),
-    el("p", { class: "muted" }, `${LAUNCH_HINT} Slots 1–9 also open with Alt+number.`),
-    list, err,
-    el("div", { class: "row" },
-      el("button", { type: "button", class: "subtle", onclick: () => { if (rows.length < 24) { rows.push({ name: "", url: "" }); draw("li:last-child input"); } } }, "+ Add slot"),
-      el("span", { class: "spacer" }),
-      el("button", { value: "cancel", class: "subtle" }, "Cancel"),
-      el("button", { type: "button", class: "primary", onclick: save }, "Save")));
+function menuButton(label, name, build, cls = "icon subtle", align = "right") {
+  const open = () => showMenu(btn, build(), name);
+  const btn = el("button", { type: "button", class: cls, "aria-haspopup": "menu", "aria-expanded": "false", "aria-label": name, title: name,
+    "data-menu-align": align,
+    onclick: (e) => { e.stopPropagation(); menuOpen?.btn === btn ? closeMenu(true) : open(); },
+    onkeydown: (e) => { if (e.key === "ArrowDown") { e.preventDefault(); open(); } } }, label);
+  return btn;
 }
 
-$("#launch-edit").addEventListener("click", () => launchEditDialog());
-document.addEventListener("keydown", (e) => {
-  if (!e.altKey || e.ctrlKey || e.metaKey || !/^[1-9]$/.test(e.key)) return;
-  if (modalOpen() || $("#palette").classList.contains("open")) return;
-  const i = Number(e.key) - 1;
-  if (launchItems[i]) { e.preventDefault(); openLaunch(i); }
+document.addEventListener("pointerdown", (e) => { if (menuOpen && !menuOpen.menu.contains(e.target) && !menuOpen.btn.contains(e.target)) closeMenu(); }, true);
+// (A scroll right after opening is the button being scrolled into view: ignored.)
+document.addEventListener("scroll", (e) => { if (menuOpen && !menuOpen.menu.contains(e.target) && performance.now() - menuOpen.at > 250) closeMenu(); }, true);
+window.addEventListener("resize", () => closeMenu());
+
+// ---- Today's main panel: Today's Agenda / Tasks / Follow-ups tabs ------------------------------------------
+// ARIA tabs (arrow keys, Home / End; the tools next to them follow the open tab). The tab last picked is
+// remembered per viewer (cc.today.tab); with nothing remembered yet, Today opens on Follow-ups when something is
+// urgent, else on the agenda. Urgent follow-ups always show as a red count on the Follow-ups tab.
+const TW = ["agenda", "tasks", "follow"];
+let twPicked = TW.includes(store.get("cc.today.tab")) ? store.get("cc.today.tab") : null;  // remembered choice
+let twTab = twPicked || "agenda";  // the tab showing
+let twAuto = false;  // the first-data default was applied
+
+function selectTodayTab(name, { save = true, focus = false } = {}) {
+  if (!TW.includes(name)) return;
+  twTab = name;
+  if (save) { twPicked = name; store.set("cc.today.tab", name); }
+  for (const t of TW) {
+    const on = t === name, tab = $(`#tw-tab-${t}`);
+    tab.setAttribute("aria-selected", String(on));
+    tab.tabIndex = on ? 0 : -1;
+    $(`#tw-${t}`).hidden = !on;
+    document.querySelector(`.tw-tools[data-for="${t}"]`).hidden = !on;
+  }
+  closeMenu();
+  if (focus) {
+    if (!$("#tab-today").classList.contains("active")) openTab("today");
+    $(`#tw-tab-${name}`).focus();
+  }
+}
+
+function setBadge(sel, n, text) {
+  const b = $(sel);
+  b.hidden = !n;
+  b.textContent = n ? text : "";
+}
+
+function updateTodayTabs(d) {
+  const agenda = Array.isArray(d.agenda) ? d.agenda : [];
+  $("#agenda-count").textContent = d.agenda?.error ? "!" : agenda.length;
+  const items = d.tasks?.items || [];
+  const high = items.filter((t) => t.priority === "high").length;
+  $("#tasks-count").textContent = items.length;
+  setBadge("#tasks-high", high, `${high} high`);
+  const { total, urgent } = followupCounts(d);
+  $("#follow-count").textContent = d.followups?.error ? "!" : total;
+  setBadge("#follow-urgent", urgent, `${urgent} urgent`);
+  if (!twPicked && !twAuto) {
+    twAuto = true;
+    selectTodayTab(urgent ? "follow" : "agenda", { save: false });
+  }
+}
+
+$(".tw-tabs").addEventListener("click", (e) => { const b = e.target.closest("[role=tab]"); if (b) selectTodayTab(b.dataset.tw); });
+$(".tw-tabs").addEventListener("keydown", (e) => {
+  const i = TW.indexOf(e.target.closest("[role=tab]")?.dataset.tw || twTab);
+  const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TW.length - 1 }[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  selectTodayTab(TW[(to + TW.length) % TW.length], { focus: true });
 });
+// Dragging a task: hovering the Today's Agenda tab opens it, so the task can be dropped on an open slot.
+let twDragTimer = 0;
+$("#tw-tab-agenda").addEventListener("dragenter", () => {
+  if (!dragTask || twTab === "agenda") return;
+  clearTimeout(twDragTimer);
+  twDragTimer = setTimeout(() => { if (dragTask) selectTodayTab("agenda", { save: false }); }, 300);
+});
+$("#tw-tab-agenda").addEventListener("dragleave", () => clearTimeout(twDragTimer));
+selectTodayTab(twTab, { save: false });
+
 $("#new-task").addEventListener("click", () => newTaskDialog());
 $("#asana-btn").addEventListener("click", asanaDialog);
 $("#muted-btn").addEventListener("click", mutedDialog);
@@ -1761,8 +2037,77 @@ function openTeamsChat(to, message) {
 }
 
 async function teamsLogin() {
-  if (!await confirmDialog("Log in to Teams", "A browser window will open on Teams. Sign in (including MFA), wait until your chats load, then close that window. Command Center will then check your unread count every few minutes.", "Open browser")) return;
+  if (!await confirmDialog("Log in to Teams", "A browser window will open on Teams. Sign in (including MFA), wait until your chats load, then close that window. Command Center will then check your unread DMs and mentions every few minutes (read-only).", "Open browser")) return;
   guarded(() => api("/api/teams/login", {}));
+}
+// Teams alerts carry a deep link to the chat or message (action type "teams").
+alertActionTypes.teams = (act) => linkButton(teamsLink(act.url) || "msteams:", "Open in Teams");
+
+// Counts from the background check (teams.py): DMs, group / meeting chats and @mentions unread; null = not readable.
+const teamsPlural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+function teamsTip(s) {
+  if (!s || s.badge == null) return s?.unread ? `${teamsPlural(s.unread, "unread item")} in Teams (details unavailable)` : "";
+  return [teamsPlural(s.dms_unread || 0, "DM"), s.groups_unread ? teamsPlural(s.groups_unread, "group chat") : "",
+    teamsPlural(s.mentions_unread || 0, "mention")].filter(Boolean).join(" · ");
+}
+// The number on the Teams tab: unread DMs + group chats + @mentions (the title count when details can't be read).
+let teamsChecked = null;
+function renderTeamsBadge(s) {
+  const badge = $("#teams-badge");
+  if (!badge) return;
+  const n = !s || s.ok === false ? 0 : s.badge ?? s.unread ?? 0;
+  badge.hidden = !n;
+  badge.textContent = n > 99 ? "99+" : String(n);
+  badge.closest("button").title = n ? teamsTip(s) : "";
+  // a new background read while the tab is open: show it
+  if (s?.checked && teamsChecked && s.checked !== teamsChecked && $("#tab-teams").classList.contains("active")) loaders.teams();
+  teamsChecked = s?.checked || teamsChecked;
+}
+
+function teamsCounts(s) {
+  const count = (n, label, cls = "") => el("div", { class: `teams-count ${n ? cls : ""}` },
+    el("div", { class: "n" }, n ?? "–"), el("div", { class: "l" }, label));
+  if (s.badge == null) {  // only the page title could be read
+    return [el("div", { class: "teams-counts" }, count(s.unread, "unread in Teams", "hot")),
+      s.ok !== false && s.checked && el("p", { class: "muted small" }, "DM and mention details unavailable on the last check; this is Teams' own unread total.")];
+  }
+  const others = [s.groups_unread ? teamsPlural(s.groups_unread, "group chat") : "", s.meetings_unread ? teamsPlural(s.meetings_unread, "meeting chat") : ""].filter(Boolean);
+  return [el("div", { class: "teams-counts", role: "group", "aria-label": "Unread in Teams" },
+      count(s.dms_unread, s.dms_unread === 1 ? "unread DM" : "unread DMs", "hot"),
+      count(s.mentions_unread, s.mentions_unread === 1 ? "unread mention" : "unread mentions", "hot")),
+    el("div", { class: "muted small" }, others.length ? `Also unread: ${others.join(", ")}` : "No unread group or meeting chats",
+      s.unread != null ? ` · Teams total ${s.unread}` : "")];
+}
+
+// Recent DMs and @mentions (newest first). Links come from teams.py; only Teams deep links are opened.
+const TEAMS_KIND = { dm: ["DM", "Direct message"], group: ["Group", "Group chat"], meeting: ["Meeting", "Meeting chat"], mention: ["Mention", "@mention of you"] };
+const teamsLink = (u) => (typeof u === "string" && /^(msteams:\/l\/|https:\/\/teams\.microsoft\.com\/l\/)[^\s"<>\\]+$/.test(u) ? u : null);
+function teamsRecentRow(r) {
+  const [label, about] = TEAMS_KIND[r.kind] || ["Teams", "Teams"];
+  const link = teamsLink(r.link);
+  return fuRow(r, {
+    cls: `teams-row ${r.unread ? "unread" : ""} ${r.urgent ? "sev-urgent" : ""}`,
+    src: el("span", { class: `src src-teams tk-${TEAMS_KIND[r.kind] ? r.kind : "dm"}`, title: `Microsoft Teams · ${about}${r.unread ? " · unread" : ""}` }, label),
+    who: r.who, whoTitle: r.where ? `${r.who} · ${r.where}` : r.who,
+    subject: r.preview || (r.kind === "mention" ? "mentioned you" : "(no preview)"),
+    about: [r.where && `in ${r.where}`, r.preview].filter(Boolean).join(": "),
+    tags: [r.urgent && el("span", { class: "tag urgent" }, "Urgent"), r.count > 1 && el("span", { class: "tag teams-n", title: `${r.count} unread messages` }, r.count),
+      r.where && el("span", { class: "tag teams-where" }, r.where)],
+    at: r.time,
+    primary: link
+      ? el("button", { type: "button", class: "small alt", title: "Open this chat in the Teams app", "aria-label": `Open in Teams: ${r.who}`, onclick: () => openExternal(link) }, "Open")
+      : el("button", { type: "button", class: "small alt", onclick: () => openExternal("msteams:") }, "Open Teams"),
+  });
+}
+function renderTeamsRecent(t) {
+  const s = t.state || {};
+  const recent = Array.isArray(t.recent) ? t.recent : [];
+  $("#teams-recent-note").textContent = t.read_at ? `read ${when(t.read_at)}` : "";
+  const empty = !t.set_up ? "Log in to Teams to see your DMs and mentions here."
+    : !t.read_at ? "Shows up after the next background check (or Check now)."
+    : s.details === "unavailable" ? "Details unavailable on the last check (only Teams' unread total could be read)."
+    : "No DMs or mentions in the last 3 days.";
+  fill($("#teams-recent-list"), recent.map(teamsRecentRow), empty);
 }
 
 loaders.teams = () => guarded(async () => {
@@ -1770,19 +2115,21 @@ loaders.teams = () => guarded(async () => {
   teamsUrl = t.url;
   const s = t.state || {};
   const box = $("#teams-status");
+  renderTeamsRecent(t);
   if (!t.set_up) {
     box.replaceChildren(el("div", { class: "panel-label" }, "TEAMS STATUS"),
-      el("p", {}, "Not connected yet. Log in once and Command Center will watch your Teams unread count in the background."),
+      el("p", {}, "Not connected yet. Log in once and Command Center will watch your Teams unread DMs and mentions in the background."),
       el("div", { class: "row" }, el("button", { class: "primary", onclick: teamsLogin }, "Log in to Teams")));
   } else {
-    box.replaceChildren(el("div", { class: "panel-label" }, "TEAMS STATUS"),
-      el("div", { class: "big-number" }, s.unread ?? "–"),
-      el("div", { class: "muted" }, "unread chats and mentions", s.checked ? ` · checked ${when(s.checked)}` : " · first check pending"),
+    // (replaceChildren would print a false as text, unlike el(): leave the gaps out)
+    box.replaceChildren(...[el("div", { class: "panel-label" }, "TEAMS STATUS"),
+      ...teamsCounts(s),
+      el("div", { class: "muted" }, s.checked ? `Checked ${when(s.checked)}` : "First check pending"),
       s.ok === false && el("p", { class: "err" }, s.error),
       el("div", { class: "row" },
         el("button", { class: "small", onclick: (e) => { e.target.disabled = true; e.target.textContent = "Checking…"; guarded(() => api("/api/teams/check", {})).then(loaders.teams); } }, "Check now"),
         el("button", { class: "small alt", onclick: () => openExternal("msteams:") }, "Open Teams app"),
-        el("button", { class: "small subtle", onclick: teamsLogin }, s.login_needed ? "Log in again" : "Re-login")));
+        el("button", { class: "small subtle", onclick: teamsLogin }, s.login_needed ? "Log in again" : "Re-login"))].filter(Boolean));
   }
   const act = t.activity;
   if (act.error) fill($("#teams-activity"), [el("li", { class: "err" }, act.error)], "");
@@ -1808,8 +2155,6 @@ function paletteSources() {
   }
   const order = /^#?(\d{7,10})$/.exec($("#palette-input").value.trim());
   if (order) add("Commands", `Look up order ${order[1]}`, "SQL", () => orderDialog(order[1]));
-  launchItems.forEach((it, i) => add("Commands", `Open ${it.name}`, `hotbar ${i + 1}`, () => openLaunch(i)));
-  add("Commands", "Edit hotbar", "launch buttons", () => launchEditDialog());
   add("Commands", "Show snoozed", "snoozes + no-reply reminders", snoozedDialog);
   add("Commands", "Urgent people", "who counts as urgent", urgentDialog);
   // "Go to <tab>" for every tab in both nav groups (module tabs included), each landing in its own pane.
@@ -1817,8 +2162,9 @@ function paletteSources() {
     const label = `Go to ${b.dataset.label || b.textContent.trim()}`;
     if (!out.some((i) => i.label === label)) add("Commands", label, `${b.closest(".nav-group").dataset.pane === "work" ? "WORK" : "COMMS"} tab`, () => openTab(b.dataset.tab));
   }
-  if (window.innerWidth >= SPLIT_MIN_WIDTH) add("Commands", layout.split ? "Single pane" : "Split panes", "layout", () => $("#layout-toggle").click());
-  for (const p of proj.list) add("Projects", `Work on: ${p.name}`, p.path, () => { setActiveProject(p.path); openTab("projects"); });
+  if (window.innerWidth >= SPLIT_MIN_WIDTH && !focusOn()) add("Commands", layout.split ? "Single pane" : "Split panes", "layout", () => $("#layout-toggle").click());
+  if (focusReady()) add("Commands", layout.focus ? "Leave focus layout" : "Focus layout: Pulse + VS Code", "Pulse left, VS Code right", () => setFocusLayout(!layout.focus));
+  for (const p of proj.list) add("Projects", `Work on: ${p.name}`, p.path, () => { setActiveProject(p.path); openTab("vscode"); });
   add("Commands", "New task", "Outlook or Asana", () => newTaskDialog());
   add("Commands", "Rescan follow-ups", "", () => { openTab("today"); loaders.today(true); });
   add("Commands", "Focus 30 minutes", "mute non-urgent alerts", () => setFocus(30));
@@ -1846,7 +2192,7 @@ function paletteSources() {
       add("Follow-ups", m.subject, m.sender_name, () => { openTab("mail"); showMail(m.id); });
     }
   }
-  for (const q of sqlInfo.queries || []) add("SQL", `Run query: ${q.name}`, q.connection, () => { openTab("sql"); $("#sql-query").value = q.name; renderParams(); });
+  for (const q of sqlInfo.queries || []) add("SQL", `Run query: ${q.name}`, q.connection, () => { CC.sqlShow?.("queries"); openTab("sql"); $("#sql-query").value = q.name; renderParams(); });
   for (const m of pal.mail) add("Mail", m.subject, `${m.folder === "Sent" ? "to " + m.to : m.sender_name} · ${when(m.received)}`, () => { openTab("mail"); showMail(m.id); });
   return out;
 }
@@ -1949,6 +2295,7 @@ async function refresh() {
       item(st.outlook ? st.outlook.ok : undefined, "Outlook"),
       item(st.teams ? st.teams.ok : undefined, "Teams"),
       ...(sites.length ? [item(sitesOk, "Websites")] : []));
+    renderTeamsBadge(st.teams);
     renderWindowControls(st);
     if (unread !== lastUnread && $("#tab-alerts").classList.contains("active")) loaders.alerts();
     if (unread !== lastUnread && lastUnread !== -1 && $("#tab-today").classList.contains("active")) loadTodayAlerts();
@@ -2011,7 +2358,6 @@ document.addEventListener("keydown", (e) => {
 });
 
 tickClock();
-loadLauncher();
 loadProjectList();
 refresh().then(() => loaders.today());
 setInterval(refresh, 5000);
@@ -2052,6 +2398,12 @@ window.CC = {
     if (layout.ready) runLoaders(applyLayout());
   },
   addPaletteSource(fn) { extraPaletteSources.push(fn); },
+  // Today's stats strip: fn(todayData) returns a tile (CC.statTile), a list of them, null, or a Promise of one.
+  addStatTile(fn) { if (typeof fn === "function") { statSources.push(fn); refreshStats(); } },
+  statTile,
+  refreshStats,
+  // Today's main panel: "agenda" | "tasks" | "follow".
+  todayTab(name) { selectTodayTab(name, { focus: true }); },
   wideDialog(...content) { $("#dialog").classList.add("wide"); showDialog(...content); },
   showMail(id) { openTab("mail"); showMail(id); },
   registerAlertAction(type, fn) {  // the built-in types can't be replaced
@@ -2076,6 +2428,7 @@ document.dispatchEvent(new Event("cc:ready"));
 function initLayout() {
   if (layout.ready) return;
   layout.ready = true;
+  splitFrac = savedSplit();
   runLoaders(applyLayout().filter((id) => id !== "today"));  // Today loads with the first status refresh
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initLayout, { once: true });

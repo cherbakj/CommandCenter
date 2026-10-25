@@ -36,8 +36,8 @@ ui:
 teams:
   enabled: true            # checks Teams once you've logged in on the Teams tab
   url: https://teams.microsoft.com/v2/
-  poll_minutes: 3
-  priority: normal
+  poll_minutes: 2          # each check opens Teams in a hidden Edge for ~20 s (read-only: unread DMs, @mentions)
+  priority: normal         # alerts for new DMs / @mentions; from urgent people they are always high
 
 followups:
   awaiting_reply_days: 7   # sent mail with no answer, looking back this many days
@@ -50,6 +50,7 @@ followups:
   urgent_people: []                    # names or emails; also editable in the app (Follow-ups > Urgent people)
   urgent_escalate_hours: 4             # one high-priority reminder if an urgent message is still unanswered
   flagged_days: 30         # flagged mail older than this (and not due) is hidden
+  flagged_since: ""            # YYYY-MM-DD: flags set before this day are ignored everywhere in CC (Outlook keeps them)
   ignore_subjects:         # regular expressions; matching mail never shows as a follow-up
     - "^Junk:"
     - "Hoxhunt"
@@ -137,8 +138,11 @@ websites: []          # no monitors. To add one: remove the [] and uncomment the
 # on the SQL tab or with:  run.cmd setpass <connection name>
 # Only saved SELECT queries run, each inside a transaction that is rolled back.
 # Use ? for each value you type in; list one label per ? under params.
+# The SQL tab docks SQL Server Management Studio (started with the Toolkit server and user, never
+# a password); these saved queries are under its "CC queries" switch.
 # ---------------------------------------------------------------------------
 sql:
+  # ssms_path: C:\Program Files (x86)\Microsoft SQL Server Management Studio 20\Common7\IDE\Ssms.exe  # (default)
   connections:
     - name: main
       server: YOURSERVER\INSTANCE       # or hostname,port
@@ -179,13 +183,17 @@ projects:
 # ---------------------------------------------------------------------------
 # Pulse feedback tickets (pulse.sonance.com), read-only. Command Center reads the
 # data_reviews table in Pulse's Supabase Postgres as a dedicated read-only login
-# (commandcenter_ro) that can only SELECT the ticket columns. Connect it on the Pulse
+# (commandcenter_ro) that can only SELECT the ticket columns. Connect it on the Pulse Feedback
 # tab: the password goes to Windows Credential Manager (CommandCenter-Pulse) only.
 # host/port/database/user are saved by the setup card; values here are just defaults.
 # ---------------------------------------------------------------------------
 pulse:
   enabled: true
-  url: https://pulse.sonance.com       # ticket links: <url>/feedback?ticket=<number>
+  url: https://pulse.sonance.com       # ticket links: <url>/feedback?ticket=<number>; the Pulse tab's Prod site
+  dev_url: https://dev.pulse.sonance.com  # the Pulse tab's Dev site
+  # The Pulse tab shows only the two sites above and their sign-in (sonance.okta.com); other pages open in the
+  # default browser. If the sign-in ever moves to another host, add it (exact host names, https only):
+  # view_sso_hosts: [login.microsoftonline.com]
   poll_minutes: 2
   me: [joec@sonance.com, Joe.Cherbak]  # your Pulse names: tickets you filed/closed count as yours
   high_priority_types: [Bug, DataIssue]  # Pulse has no priority field; these types are "high"
@@ -246,22 +254,37 @@ security:
 # ---------------------------------------------------------------------------
 vscode:
   extensions: [anthropic.claude-code]  # installed into web VS Code on first start (Marketplace, or your desktop copy offline)
+  mirror_desktop: true                 # before every start, copy desktop VS Code's extensions, settings, keybindings
+                                       # and snippets in (one way; desktop VS Code is never changed)
   # port: 37150                        # fixed port; default is a random free one, picked once and reused
                                        # (VS Code web keeps settings and folder trust per port)
   # install_dir: C:\Users\you\AppData\Local\Programs\Microsoft VS Code   # desktop VS Code, used to match its version
   # commit: <40-char commit>           # pin a specific VS Code build instead of matching desktop VS Code
 
-# Workday helpers (Top 3, uncommitted-work reminder, yesterday recap, meeting notes)
+# Workday helpers (uncommitted-work reminder, yesterday recap, meeting notes)
 daily:
-  uncommitted_after: "15:00"     # show the "projects with uncommitted work" chip after this time on workdays
+  uncommitted_after: "15:00"     # show the "uncommitted projects" tile on Today after this time on workdays
   meeting_notes_prompt: true     # ask "capture notes/actions?" when a meeting ends
+
+# ---------------------------------------------------------------------------
+# Off-hours work log: time you're active at this PC outside work hours, shown on Today (today + this week).
+# Counts minutes with Windows unlocked and keyboard/mouse use; pauses longer than idle_minutes don't count.
+# Only start/end times are stored (encrypted, retention.offhours_days), never what you were doing. Nothing is
+# logged while Command Center isn't running (it starts at sign-in) or while the PC sleeps.
+# ---------------------------------------------------------------------------
+offhours:
+  enabled: true
+  work_start: "08:00"            # work hours (local time); everything outside them counts as off-hours
+  work_end: "17:00"
+  work_days: [mon, tue, wed, thu, fri]   # other days (Saturday, Sunday) are off-hours all day
+  idle_minutes: 10               # a pause up to this long still counts as working
 
 # ---------------------------------------------------------------------------
 # Retention: how long work data is kept in data/commandcenter.db. Enforced at start and once a day.
 # Work data in the database (alert text, mail sent log, follow-up snoozes/watches/mutes, urgent people,
 # Toolkit change log row data, ...) is encrypted with Windows DPAPI for this Windows user.
 # Deleted rows are zeroed (secure_delete) and the file is compacted (VACUUM) after deletes.
-# Meeting notes and Top 3 are encrypted and pruned by the daily module itself (Top 3: 120 days).
+# Meeting notes are encrypted by the daily module and kept until you delete them.
 # ---------------------------------------------------------------------------
 retention:
   alerts_days: 30                # alerts feed
@@ -269,6 +292,8 @@ retention:
   toolkit_changes_days: 365      # Toolkit SQL change log (append-only; only retention may delete from it)
   seen_days: 30                  # "already alerted" markers
   dismissed_followups_days: 60   # dismissed follow-ups stay hidden this long
+  offhours_days: 400             # off-hours work log (start/end times per day)
+  reminders_done_days: 30        # personal reminders: which days each was done / fired (times only, no text)
   vacuum_days: 7                 # compact the database at least this often
 
 # ---------------------------------------------------------------------------
@@ -280,3 +305,11 @@ retention:
 privacy:
   lock_on_windows_lock: true     # also lock the vault when Windows locks (Win+L)
   auto_lock_minutes: 0           # lock the vault this many minutes after unlocking (0 = off)
+
+# ---------------------------------------------------------------------------
+# Personal tab: personal reminders pop up at their time and stay until you click Done. Their text is in the
+# personal vault; a times-only copy (DPAPI) lets them pop up while the vault is locked (then without text).
+# The Windows notification only ever says "Personal reminder".
+# ---------------------------------------------------------------------------
+personal:
+  snooze_minutes: 15             # what one click on Snooze gives (the pop-up also offers 5 / 30 / 60)

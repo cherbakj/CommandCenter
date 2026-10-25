@@ -138,9 +138,14 @@ def inventory() -> list[dict]:
 
     teams_on = _try(teams.is_set_up, False)
     add("teams", "Teams", "Work",
-        "The missed-activity count, read by a background Edge profile you signed in to. Chats open in the Teams app.",
-        "That browser profile (its cookies) in the private data folder; the unread count.",
-        "Edge's own cookie encryption (DPAPI); private folder", "Until you sign out of that profile",
+        "Teams on the web, read-only by a background Edge profile you signed in to: the unread total, which chats are "
+        "unread and your @mentions, with sender, chat name, a short preview and time (from the chat list and Teams' "
+        "own cache in that page). Nothing is clicked, marked read or sent. Chats open in the Teams app.",
+        "That browser profile (its cookies and Teams' own cache) in the private data folder; the unread counts; "
+        "the chat / activity ids already alerted on. Names and previews stay in memory only (gone on restart); "
+        "Teams alerts carry them like other alerts.",
+        "Profile: Edge's own encryption (DPAPI), private folder; alerted ids: " + dpapi + "; counts: unencrypted metadata",
+        "Profile until you sign out of it; alerted ids while unread; alerts " + _days(r.get("alerts_days")),
         connected=teams_on, state="Signed in" if teams_on else "Not set up")
 
     try:
@@ -176,8 +181,10 @@ def inventory() -> list[dict]:
 
     ac = _try(asana.connected, False)
     add("asana", "Asana", "Work", "Your Asana tasks, read with your personal access token.",
-        "The token in Windows Credential Manager. Tasks are read live, not stored.",
-        "Credential Manager (DPAPI)", "Until disconnected", connected=ac,
+        "The token in Windows Credential Manager. Tasks are read live, not stored; the High/Low priority you set on "
+        "a task is kept by its task id only (kv tasks:priority, encrypted). Outlook task priority is Outlook's own.",
+        "Credential Manager (DPAPI); priorities DPAPI", "Token until disconnected; a priority until its task is closed",
+        connected=ac,
         state="Connected" if ac else "Not connected", actions=["disconnect"] if ac else [])
 
     running = None
@@ -199,7 +206,8 @@ def inventory() -> list[dict]:
     except ImportError:
         vs = None
     add("vscode", "VS Code", "Work", "Your project folders, through a VS Code server on 127.0.0.1 only.",
-        "VS Code settings, extensions and state in data\\vscode.", "None (private data folder, owner-only ACL)",
+        "VS Code settings, extensions and state in data\\vscode, including copies of desktop VS Code's extensions and "
+        "settings (settings that look like passwords, tokens or keys are not copied).", "None (private data folder, owner-only ACL)",
         "Until deleted", connected=vs == "running", state=str(vs or "stopped").capitalize())
 
     mons = _try(web.monitors, []) or []
@@ -240,19 +248,32 @@ def inventory() -> list[dict]:
         f"Alerts: {dpapi}; log: private data folder", f"Alerts {_days(r.get('alerts_days'))}; log rotates at 5 MB",
         connected=None, state=f"{n_alerts} stored" if n_alerts is not None else "")
 
-    top3, notes = _table_count("daily_top3"), _table_count("meeting_notes")
-    add("daily", "Top 3 and meeting notes", "Work", "What you type into Today's Top 3 and meeting notes.",
-        f"{top3 or 0} day(s) of Top 3, {notes or 0} meeting note(s) in SQLite.", "Windows DPAPI (this Windows account)",
-        "Top 3: 120 days; meeting notes until deleted", connected=None,
-        state=f"{top3 or 0} day(s), {notes or 0} note(s) · visible in Privacy mode (work data)")
+    notes = _table_count("meeting_notes")
+    add("daily", "Meeting notes", "Work", "What you type into meeting notes and their action items.",
+        f"{notes or 0} meeting note(s) in SQLite.", "Windows DPAPI (this Windows account)",
+        "Until deleted", connected=None, state=f"{notes or 0} note(s) · visible in Privacy mode (work data)")
+
+    try:
+        from . import offhours
+        oh = _try(offhours.settings, None)
+    except ImportError:
+        oh = None
+    if oh is not None:
+        oh_days = _table_count("offhours_log")
+        add("offhours", "Off-hours work log", "Work",
+            "Only whether this PC had keyboard or mouse input while Windows was unlocked (checked once a minute), "
+            "never which app, window, file or key. Logged only while Command Center is running.",
+            "Start and end times of activity outside work hours, per day (offhours_log). Nothing from work hours.",
+            dpapi, _days(r.get("offhours_days")), connected=oh["enabled"],
+            state=(f"On · {oh_days or 0} day(s) logged" if oh["enabled"] else "Off (offhours.enabled)") + " · visible in Privacy mode (work data)")
 
     seen_n, vault_n = _table_count("seen"), _table_count("vault_records")
     add("metadata", "Unencrypted metadata", "Work",
         "Kept in clear so the app can sort, prune and look things up without decrypting everything.",
         "Dates, ids and counts only, no titles, names or text: alert time, source, priority and read flag; "
-        "meeting-note start / last-edit times and Top 3 days; 'already alerted' keys (Outlook item ids, Pulse "
+        "meeting-note start / last-edit times; the days that have off-hours activity; 'already alerted' keys (Outlook item ids, Pulse "
         "aging days) with their times; personal vault record ids and how many there are; operational settings "
-        "(status and error lines, watermarks, window size, weather places, timers).",
+        "(status and error lines, Teams unread counts, watermarks, window size, weather places, timers).",
         "None (private data folder, owner-only ACL)",
         f"Alerts {_days(r.get('alerts_days'))}; 'already alerted' keys {_days(r.get('seen_days'))}; the rest with its data",
         connected=None, state=f"{seen_n or 0} key(s), {vault_n or 0} vault record id(s)")
@@ -282,6 +303,12 @@ def inventory() -> list[dict]:
         state=(f"{len(cals)} calendar(s) · {vault_state}" if vs_["available"] else vault_state)
         + (f" · {oc_waiting} older calendar(s) waiting to move in" if oc_waiting else ""),
         calendars=cals)
+    try:
+        from . import reminders  # personal reminders (vault) + their times-only schedule copy (DPAPI)
+        for item in _try(lambda: reminders.inventory(r, dpapi, vs_, counts), []) or []:
+            add(**item)
+    except ImportError:
+        pass
     return items
 
 

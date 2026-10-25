@@ -1,5 +1,5 @@
-// Workday helpers on Today: Top 3 priorities (strip at the top of Today), the uncommitted-work indicator,
-// the "Yesterday" recap with a stand-up copy, and meeting notes with action items. Top 3 and notes are work data,
+// Workday helpers on Today: the uncommitted-work tile (in the stats strip), the "Yesterday" recap with a stand-up
+// copy, and meeting notes with action items (Yesterday / Notes buttons on the Agenda tab). Notes are work data,
 // DPAPI-encrypted on this PC (labelled "encrypted", not "private"), so they stay visible in Privacy mode.
 // Everything is drawn with CC.el / textContent (never innerHTML): task, mail and meeting text is untrusted.
 (() => {
@@ -22,6 +22,11 @@
   const plural = (n, word, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
   const dialog = () => document.querySelector("#dialog");
   const closeRow = (...extra) => el("div", { class: "row" }, ...extra, el("button", { value: "close" }, "Close"));
+  // A dialog that loads: its first view carries a marker, and the result replaces it only while that view is still
+  // the one showing (if Joe closed it or opened another dialog meanwhile, that one is left alone).
+  let loadSeq = 0;
+  const loading = () => String(++loadSeq);
+  const stillShowing = (mark) => dialog().open && !!dialog().querySelector(`[data-loading="${mark}"]`);
 
   function previousWorkday(d = new Date()) {
     const x = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1);
@@ -46,225 +51,18 @@
     }
   }
 
-  const state = { day: null, items: [null, null, null], carry: null, uncommitted: null, uncommittedAt: 0, noteKeys: new Set() };
-  let strip = null;
+  const state = { uncommitted: null, uncommittedAt: 0, noteKeys: new Set() };
+  let tools = null;
 
-  // ---- Top 3 -----------------------------------------------------------------------------------
-
-  function openLink(lnk) {
-    if (!lnk) return;
-    if (lnk.kind === "mail") return CC.showMail(lnk.id);
-    if (lnk.source === "asana") {
-      const t = (CC.todayData?.tasks?.items || []).find((x) => x.source === "asana" && x.id === lnk.id);
-      const url = t?.url || lnk.url;
-      return url ? CC.openExternal(url) : CC.showMessage("Top 3", "That Asana task isn't in your open tasks any more.");
-    }
-    return guarded(() => api("/api/outlook/open", { id: lnk.id }));
-  }
-
-  async function saveTop3(items) {
-    const r = await api("/api/daily/top3", { items });
-    applyTop3(r);
-  }
-
-  function applyTop3(r) {
-    state.day = r.day;
-    state.items = (r.items || []).slice(0, 3);
-    while (state.items.length < 3) state.items.push(null);
-    state.carry = r.carry || null;
-    render();
-  }
-
-  async function loadTop3() {
-    try { applyTop3(await api("/api/daily/top3")); } catch { /* server restarting: keep what's shown */ }
-  }
-
-  function toggle(i) {
-    const items = state.items.map((x) => (x ? { ...x } : null));
-    if (!items[i]) return;
-    items[i].done = !items[i].done;
-    guarded(() => saveTop3(items));
-  }
-
-  function slotNode(item, i) {
-    if (!item) {
-      return el("button", { type: "button", class: "t3-slot t3-empty", title: "Set this priority", onclick: () => top3Dialog(i) },
-        el("span", { class: "t3-n" }, i + 1), el("span", { class: "t3-text" }, "Set a priority"));
-    }
-    const textAttrs = { class: "t3-text", title: item.link ? `${item.text} (open the linked ${item.link.kind === "mail" ? "email" : "task"})` : item.text };
-    return el("div", { class: `t3-slot ${item.done ? "done" : ""}` },
-      el("button", { type: "button", class: `check t3-check ${item.done ? "on" : ""}`, "aria-pressed": String(!!item.done),
-        title: item.done ? "Mark not done" : "Mark done", "aria-label": `${item.done ? "Reopen" : "Done"}: ${item.text}`,
-        disabled: item.locked ? true : null, onclick: () => toggle(i) }, item.done ? "✓" : ""),
-      el("span", { class: "t3-n" }, i + 1),
-      item.link ? el("button", { type: "button", ...textAttrs, onclick: () => openLink(item.link) }, item.text)
-                : el("span", textAttrs, item.text),
-      item.link && el("span", { class: "t3-linked", "aria-hidden": "true", title: "Linked" }, item.link.kind === "mail" ? "✉" : "☐"),
-      item.from && el("span", { class: "t3-carried", title: `Carried over from ${dayLabel(item.from)}` }, "↻"),
-      el("button", { type: "button", class: "icon subtle t3-edit", title: "Edit Top 3", "aria-label": `Edit priority ${i + 1}`,
-        onclick: () => top3Dialog(i) }, "✎"));
-  }
-
-  // Carry over: everything when it fits; with more unfinished items than free slots Joe picks which ones,
-  // and is told what stays behind (on that day's list) instead of the extras quietly disappearing.
-  function carryOver() {
-    const c = state.carry;
-    if (!c || !c.items?.length) return;
-    const free = state.items.filter((x) => !x).length;
-    if (c.items.length <= free) {
-      guarded(async () => {
-        applyTop3(await api("/api/daily/top3/carry", { accept: true }));
-        toast(`${plural(c.items.length, "priority", "priorities")} carried over`);
-      });
-      return;
-    }
-    carryPickDialog(c, free);
-  }
-
-  function carryPickDialog(c, free) {
-    const err = el("p", { class: "err", role: "alert" });
-    const boxes = c.items.map((x, i) => {
-      const box = el("input", { type: "checkbox", id: `t3-pick-${i}` });
-      box.checked = i < free;
-      return box;
-    });
-    const go = el("button", { type: "button", class: "primary" });
-    const sync = () => {
-      const n = boxes.filter((b) => b.checked).length;
-      for (const b of boxes) b.disabled = !b.checked && n >= free;  // no more than the free slots
-      go.textContent = n ? `Carry ${n}` : "Pick one";
-      go.disabled = !n;
-    };
-    boxes.forEach((b) => b.addEventListener("change", sync));
-    go.addEventListener("click", () => guarded(async () => {
-      const pick = boxes.map((b, i) => (b.checked ? i : -1)).filter((i) => i >= 0);
-      if (!pick.length) return;
-      let r;
-      try { r = await api("/api/daily/top3/carry", { accept: true, pick }); } catch (e) { err.textContent = e.message; return; }
-      dialog().close();
-      applyTop3(r);
-      const left = c.items.length - pick.length;
-      toast(`${pick.length} carried, ${left} didn't fit (still on ${dayLabel(c.from)}'s list)`);
-    }));
-    sync();
-    CC.showDialog(el("h3", {}, "Carry over"),
-      el("p", { class: "muted" }, `${plural(c.items.length, "unfinished priority", "unfinished priorities")} from ${dayLabel(c.from)}, `
-        + `room for ${free} today. Pick which to carry; the rest stay on ${dayLabel(c.from)}'s list.`),
-      el("ul", { class: "list dialog-list t3-pick" }, c.items.map((x, i) => el("li", {},
-        el("label", { class: "t3-pick-label", for: `t3-pick-${i}` }, boxes[i], el("span", {}, x.text))))),
-      err,
-      el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Cancel"), go));
-    boxes[0].focus();
-  }
-
-  function carryRow() {
-    const c = state.carry;
-    if (!c || !c.items?.length) return null;
-    const free = state.items.filter((x) => !x).length;
-    const tight = free < c.items.length;
-    return el("div", { class: "t3-carry", role: "group", "aria-label": "Carry over unfinished priorities" },
-      el("span", { class: "t3-carry-label" }, `↻ ${plural(c.items.length, "unfinished priority", "unfinished priorities")} from ${dayLabel(c.from)}:`),
-      el("span", { class: "t3-carry-list" }, c.items.map((x) => x.text).join(" · ")),
-      tight && el("span", { class: "muted t3-carry-room" }, `room for ${free}`),
-      el("span", { class: "t3-carry-acts" },  // the two buttons stay together (and wrap together on a narrow pane)
-        el("button", { type: "button", class: "small alt", title: tight ? `Room for ${free} today: pick which to carry` : "",
-          onclick: carryOver }, tight ? "Carry over…" : "Carry over"),
-        el("button", { type: "button", class: "small subtle",
-          onclick: () => guarded(async () => applyTop3(await api("/api/daily/top3/carry", { accept: false }))) }, "Not today")));
-  }
-
-  function uncommittedChip() {
+  // ---- on Today ------------------------------------------------------------------------------------
+  // Projects with uncommitted / unpushed work: a stat tile (only while there are some, after daily.uncommitted_after).
+  CC.addStatTile?.(() => {
     const u = state.uncommitted;
     if (!u || !u.show || !u.projects?.length) return null;
-    const n = u.projects.length;
-    return el("button", { type: "button", class: "small t3-warn", title: u.projects.map((p) => p.name).join(", "),
-      onclick: uncommittedDialog }, `⚠ ${plural(n, "project")} with uncommitted work`);
-  }
-
-  function render() {
-    if (!strip) return;
-    const set = state.items.filter(Boolean);
-    const done = set.filter((x) => x.done).length;
-    strip.replaceChildren(
-      el("div", { class: "t3-row" },
-        el("div", { class: "t3-label" },
-          el("span", { class: "panel-label" }, "TOP 3"),
-          el("span", { class: "chip t3-count" }, set.length ? `${done}/${set.length} DONE` : "NOT SET")),
-        el("div", { class: "t3-slots" }, state.items.map(slotNode)),
-        el("div", { class: "t3-tools" },
-          uncommittedChip(),
-          el("button", { type: "button", class: "small subtle", title: "What you did on the last workday, ready for stand-up", onclick: () => recapDialog() }, "Yesterday"),
-          el("button", { type: "button", class: "small subtle", title: "Meeting notes and action items (encrypted on this PC)", onclick: notesListDialog }, "Notes"))),
-      carryRow() || "");
-  }
-
-  function linkChoices() {
-    const t = CC.todayData;
-    const out = [];
-    for (const task of t?.tasks?.items || []) {
-      out.push({ group: "Tasks", label: task.subject, link: { kind: "task", source: task.source === "asana" ? "asana" : "outlook", id: task.id, label: task.subject, url: task.url || undefined } });
-    }
-    const f = t?.followups && !t.followups.error ? t.followups : {};
-    const seen = new Set();
-    for (const m of [...(f.urgent_reply || []), ...(f.needs_reply || []), ...(f.flagged || []), ...(f.awaiting_reply || [])]) {
-      if (!m || seen.has(m.id)) continue;
-      seen.add(m.id);
-      out.push({ group: "Emails", label: `${m.subject}${m.sender_name ? ` (${m.sender_name})` : m.to ? ` (to ${m.to})` : ""}`, link: { kind: "mail", source: "outlook", id: m.id, label: m.subject } });
-    }
-    return out;
-  }
-
-  function top3Dialog(focus = 0) {
-    const choices = linkChoices();
-    const err = el("p", { class: "err", hidden: true });
-    const rows = [0, 1, 2].map((i) => {
-      const it = state.items[i] || {};
-      const text = el("input", { id: `t3-text-${i}`, maxlength: "200", value: it.text || "", placeholder: ["Most important thing today", "Second priority", "Third priority"][i] });
-      const sel = el("select", { id: `t3-link-${i}`, "aria-label": `Link for priority ${i + 1}` }, el("option", { value: "" }, "No link"));
-      const map = new Map();
-      if (it.link && !choices.some((c) => c.link.kind === it.link.kind && c.link.id === it.link.id)) {
-        map.set("current", it.link);
-        sel.append(el("option", { value: "current" }, `Linked: ${it.link.label || (it.link.kind === "mail" ? "email" : "task")}`));
-      }
-      for (const group of ["Tasks", "Emails"]) {
-        const opts = choices.filter((c) => c.group === group);
-        if (!opts.length) continue;
-        sel.append(el("optgroup", { label: group }, opts.map((c, j) => {
-          const key = `${group}:${j}`;
-          map.set(key, c.link);
-          return el("option", { value: key }, c.label.length > 90 ? `${c.label.slice(0, 88)}…` : c.label);
-        })));
-      }
-      if (it.link) {
-        const hit = [...map.entries()].find(([, l]) => l.kind === it.link.kind && l.id === it.link.id);
-        if (hit) sel.value = hit[0];
-      }
-      sel.addEventListener("change", () => { const l = map.get(sel.value); if (l && !text.value.trim()) text.value = l.label.slice(0, 200); });
-      const done = el("input", { type: "checkbox", id: `t3-done-${i}` });
-      done.checked = !!it.done;
-      return { i, it, text, sel, map, done };
-    });
-    const save = () => guarded(async () => {
-      err.hidden = true;
-      const items = rows.map((r) => r.text.value.trim() ? {
-        text: r.text.value.trim(), done: r.done.checked, link: r.map.get(r.sel.value) || null, from: r.it.text ? r.it.from || null : null,
-      } : null);
-      try { await saveTop3(items); } catch (e) { err.textContent = e.message; err.hidden = false; return; }
-      dialog().close();
-    });
-    CC.showDialog(el("h3", {}, "Top 3 for today"),
-      el("p", { class: "muted" }, "The three things that make today a win. Encrypted: saved only on this PC with your Windows account (work data, so it stays visible in Privacy mode)."),
-      rows.map((r) => el("div", { class: "t3-edit-row" },
-        el("label", { class: "field-label", for: `t3-text-${r.i}` }, `Priority ${r.i + 1}`),
-        r.text,
-        el("div", { class: "t3-edit-sub" }, r.sel, el("label", { class: "t3-done-label" }, r.done, "Done")))),
-      err,
-      el("div", { class: "row" },
-        el("button", { type: "button", class: "subtle", onclick: () => rows.forEach((r) => { r.text.value = ""; r.sel.value = ""; r.done.checked = false; }) }, "Clear all"),
-        el("button", { value: "cancel", class: "subtle" }, "Cancel"),
-        el("button", { type: "button", class: "primary", onclick: save }, "Save")));
-    rows[Math.max(0, Math.min(2, focus))].text.focus();
-  }
+    return CC.statTile(u.projects.length, "Uncommitted projects", "var(--amber)", {
+      title: `Uncommitted or unpushed: ${u.projects.map((p) => p.name).join(", ")}`, onclick: uncommittedDialog });
+  });
+  const render = () => CC.refreshStats?.();
 
   // ---- uncommitted work ---------------------------------------------------------------------------
 
@@ -280,15 +78,16 @@
     p.ahead ? `${plural(p.ahead, "commit")} not pushed` : ""].filter(Boolean).join(" · ");
 
   async function uncommittedDialog() {
-    CC.showDialog(el("h3", {}, "Uncommitted work"), el("p", { class: "muted" }, "Checking your projects…"));
+    const mark = loading();
+    CC.showDialog(el("h3", { "data-loading": mark }, "Uncommitted work"), el("p", { class: "muted" }, "Checking your projects…"));
     let r;
     try { r = await api("/api/daily/uncommitted?refresh=true"); } catch (e) {
-      CC.showDialog(el("h3", {}, "Uncommitted work"), el("p", { class: "err" }, e.message), closeRow());
+      if (stillShowing(mark)) CC.showDialog(el("h3", {}, "Uncommitted work"), el("p", { class: "err" }, e.message), closeRow());
       return;
     }
     state.uncommitted = r; state.uncommittedAt = Date.now(); render();
-    if (!dialog().open) return;
-    const openIn = (p) => { dialog().close(); CC.setActiveProject(p.path); CC.openTab("projects"); };
+    if (!stillShowing(mark)) return;
+    const openIn = (p) => { dialog().close(); CC.setActiveProject(p.path); CC.openTab("vscode"); };
     CC.showDialog(el("h3", {}, "Uncommitted work"),
       el("p", { class: "muted" }, "Projects with changes that aren't committed, or commits that aren't pushed to their upstream branch."),
       r.projects.length ? el("ul", { class: "list dialog-list" }, r.projects.map((p) => el("li", {},
@@ -317,11 +116,6 @@
     if (r.sent?.count) lines.push(`- Sent ${plural(r.sent.count, "email")}`);
     if (r.followups_cleared) lines.push(`- Cleared ${plural(r.followups_cleared, "follow-up")}`);
     if (lines.length === 1) lines.push("- Nothing recorded");
-    const top = state.items.filter(Boolean);
-    if (top.length) {
-      lines.push("", "Today");
-      for (const t of top) lines.push(`- ${t.text}${t.done ? " (done)" : ""}`);
-    }
     return lines.join("\n");
   }
 
@@ -343,15 +137,15 @@
 
   let recapSeq = 0;
   async function recapDialog(day, refresh = false) {
-    const seq = ++recapSeq;
-    CC.wideDialog(el("h3", {}, "Yesterday"), el("p", { class: "muted" }, "Gathering commits, meetings and mail…"));
+    const seq = ++recapSeq, mark = loading();
+    CC.wideDialog(el("h3", { "data-loading": mark }, "Yesterday"), el("p", { class: "muted" }, "Gathering commits, meetings and mail…"));
     let r;
     const query = [day && `day=${encodeURIComponent(day)}`, refresh && "refresh=true"].filter(Boolean).join("&");
     try { r = await api(`/api/daily/recap${query ? `?${query}` : ""}`); } catch (e) {
-      if (seq === recapSeq) CC.wideDialog(el("h3", {}, "Yesterday"), el("p", { class: "err" }, e.message), closeRow());
+      if (seq === recapSeq && stillShowing(mark)) CC.wideDialog(el("h3", {}, "Yesterday"), el("p", { class: "err" }, e.message), closeRow());
       return;
     }
-    if (seq !== recapSeq || !dialog().open) return;
+    if (seq !== recapSeq || !stillShowing(mark)) return;
     const shift = (n) => { const d = dayDate(r.day); d.setDate(d.getDate() + n); return isoDay(d); };
     const today = isoDay(new Date());
     const picker = el("input", { type: "date", value: r.day, max: today, "aria-label": "Recap day", class: "dl-date" });
@@ -609,22 +403,17 @@
     return el("button", { class: "small alt", onclick: () => notesDialog({ id: act.id, start: act.start, end: START_RE.test(act.end || "") ? act.end : null }) }, "Capture notes");
   });
   CC.registerAlertAction("uncommitted", () => [
-    el("button", { class: "small alt", onclick: () => CC.openTab("projects") }, "Open Claude"),
+    el("button", { class: "small alt", onclick: () => CC.openTab("vscode") }, "Open Claude"),
     el("button", { class: "small", onclick: uncommittedDialog }, "Details"),
   ]);
 
   CC.addPaletteSource(() => {
     const out = [
-      { group: "Commands", label: "Set Top 3 for today", hint: "today's priorities", run: () => top3Dialog(Math.max(0, state.items.findIndex((x) => !x))) },
       { group: "Commands", label: "Yesterday recap", hint: "commits, meetings, mail, closed work", run: () => recapDialog() },
       { group: "Commands", label: "Copy stand-up for yesterday", hint: "plain-text bullets", run: copyStandup },
       { group: "Commands", label: "Meeting notes", hint: "notes and action items, encrypted on this PC", run: notesListDialog },
       { group: "Commands", label: "Uncommitted work", hint: "projects not committed or pushed", run: uncommittedDialog },
     ];
-    state.items.forEach((t, i) => {
-      if (t && !t.locked) out.push({ group: "Top 3", label: `${t.done ? "Reopen" : "Done"}: ${t.text}`, hint: `priority ${i + 1}`, run: () => toggle(i) });
-    });
-    if (state.carry) out.push({ group: "Top 3", label: "Carry over unfinished priorities", hint: dayLabel(state.carry.from), run: carryOver });
     const agenda = Array.isArray(CC.todayData?.agenda) ? CC.todayData.agenda : [];
     for (const m of agenda) {
       if (!m.all_day && START_RE.test(m.start || "")) out.push({ group: "Agenda", label: `Notes: ${m.subject}`, hint: clock(m.start), run: () => notesDialog(m) });
@@ -633,19 +422,19 @@
   });
 
   function mount() {
-    const host = document.querySelector("#tab-today .a-strip");
-    if (!host || document.querySelector("#daily-strip")) return;
-    strip = el("div", { class: "panel a-daily", id: "daily-strip", role: "region", "aria-label": "Top 3 priorities for today" });
-    host.append(strip);
-    render();
-    loadTop3();
+    const host = document.querySelector("#agenda-tools-slot");
+    if (!host || tools) return;
+    tools = [
+      el("button", { type: "button", class: "small subtle", title: "What you did on the last workday, ready for stand-up", onclick: () => recapDialog() }, "Yesterday"),
+      el("button", { type: "button", class: "small subtle", title: "Meeting notes and action items (encrypted on this PC)", onclick: notesListDialog }, "Notes"),
+    ];
+    host.append(...tools);
     loadNoteKeys();
     loadUncommitted();
   }
 
   document.addEventListener("cc:today", () => {
-    if (!strip) mount();
-    loadTop3();
+    if (!tools) mount();
     markNoteButtons();
     if (Date.now() - state.uncommittedAt > 5 * 60000) loadUncommitted();
   });

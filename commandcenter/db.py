@@ -5,14 +5,14 @@ and planner.py), so the database file on its own shows no subjects, names, recip
   * alerts: title, body and action (ids, ts, source, priority and the read flag stay clear for sorting).
   * kv: every value except the operational keys in CLEAR_KV / CLEAR_KV_PREFIXES (status, watermarks, weather,
     timers). So the mail sent log, snoozes, reply watches, dismissed/muted follow-ups, urgent people, the
-    profile (name, initials and appearance), the hotbar, the calendar focus block, website state, Asana account,
+    profile (name, initials and appearance), task priorities, the calendar focus block, website state, Asana account,
     Toolkit/Pulse settings, and any key a new module adds are sealed by default.
   * toolkit_changes (toolkit.py): pk, before_json, after_json and error.
 A sealed value is text: SEAL_PREFIX + base64(DPAPI blob). Readers accept sealed and legacy plaintext values,
 and seal_existing() (run at start and daily, see maintenance()) encrypts any plaintext left by older versions.
 
-Retention (config `retention:`; see retention_settings): alerts, the mail sent log, `seen` keys and the Toolkit
-change log are pruned at start and daily. The connection runs with secure_delete=ON and an in-memory temp
+Retention (config `retention:`; see retention_settings): alerts, the mail sent log, `seen` keys, the Toolkit
+change log and the off-hours log (offhours.py) are pruned at start and daily. The connection runs with secure_delete=ON and an in-memory temp
 store, and maintenance() VACUUMs after it seals or deletes rows (and at least every `vacuum_days`), so deleted
 plaintext isn't left in free pages or temp files. Sealing, VACUUM and the vault's moves of old copies run inside
 scrubbed_journal(): the rollback journal (which holds the original, plaintext pages) is kept in place and
@@ -42,7 +42,7 @@ _SEAL_LABEL = "CommandCenter"
 _CRYPTPROTECT_UI_FORBIDDEN = 0x1
 # Values that stay clear: purely operational state with no work data in it (and read on hot paths).
 CLEAR_KV = {"outlook:status", "outlook:watermark", "focus:until", "focus:skip", "urgent:checked",
-            "daily:carry_handled", "window:geometry", "capture:hotkey_alerted", "browser:ua", "pulse:status",
+            "window:geometry", "capture:hotkey_alerted", "browser:ua", "pulse:status",
             "teams:state", "weather:selected"}
 # (pulse:state, the last ticket ids / numbers / statuses, and profile, which holds Joe's name, are sealed like any
 # other key; seal_existing() encrypts a plaintext copy left by an older version, and kv_get reads either.)
@@ -51,7 +51,8 @@ _EMPTY_JSON = {"null", "[]", "{}", '""'}  # nothing to hide; also keeps an older
 ALERT_SEALED = ("title", "body", "action")
 
 RETENTION_DEFAULTS = {"alerts_days": 30, "mail_sent_log_days": 90, "toolkit_changes_days": 365, "seen_days": 30,
-                      "dismissed_followups_days": 60, "vacuum_days": 7}
+                      "dismissed_followups_days": 60, "offhours_days": 400, "reminders_done_days": 30,
+                      "vacuum_days": 7}
 
 
 class SealError(Exception):

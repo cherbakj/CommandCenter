@@ -4,7 +4,6 @@ import hashlib
 import importlib
 import logging
 import os
-import re
 import secrets
 import time
 import traceback
@@ -28,7 +27,7 @@ def _load_feature_modules():
     """Optional feature modules (each in its own file) that add API routes and background jobs."""
     found = []
     for name in ("security", "toolkit", "pulse", "terminal", "vscode", "planner", "profile", "feeds", "daily", "vault", "privacy",
-                 "spam"):
+                 "spam", "offhours", "reminders"):
         try:
             found.append(importlib.import_module(f".{name}", __package__))
         except ModuleNotFoundError as e:
@@ -73,8 +72,8 @@ MAINTENANCE_SECONDS = 24 * 3600
 def maintenance() -> dict:
     """Encrypts plaintext left by older versions, enforces retention (config `retention:`), and VACUUMs when
     rows were sealed or deleted (or every retention.vacuum_days). Each step is its own verified transaction, so
-    a failed step changes nothing and doesn't stop the others. Counts only are logged. Meeting notes and Top 3
-    are encrypted and pruned by daily.py itself (Top 3: daily.TOP3_KEEP_DAYS)."""
+    a failed step changes nothing and doesn't stop the others. Counts only are logged. Meeting notes are
+    encrypted by daily.py itself and kept until deleted."""
     r = db.retention_settings()
     sealed, deleted, failed = {}, {}, []
 
@@ -91,6 +90,10 @@ def maintenance() -> dict:
         from . import toolkit
     except ModuleNotFoundError:
         toolkit = None
+    try:
+        from . import offhours
+    except ModuleNotFoundError:
+        offhours = None
     vacuumed = False
     # The rollback journal of these steps holds the old plaintext pages: it is overwritten afterwards, not just
     # deleted (db.scrubbed_journal).
@@ -101,6 +104,8 @@ def maintenance() -> dict:
         if toolkit:
             step("toolkit_changes", toolkit.seal_log, sealed)
             step("toolkit_changes", lambda: toolkit.prune_log(r["toolkit_changes_days"]), deleted)
+        if offhours:
+            step("offhours", lambda: offhours.prune(r["offhours_days"]), deleted)
         changed = any(sealed.values()) or any(deleted.values())
         try:
             vacuumed = db.vacuum(force=changed, every_days=r["vacuum_days"])
@@ -282,14 +287,37 @@ async def get_today(refresh: bool = False):
 
 @app.post("/api/tasks")
 async def create_task(source: str = Body(...), subject: str = Body(...), due: str | None = Body(None),
-                      notes: str = Body("")):
+                      notes: str = Body(""), priority: str = Body("normal")):
     if not subject.strip():
         raise HTTPException(400, "Task needs a title")
+    if priority not in today.PRIORITIES:
+        raise HTTPException(400, "Priority is high, normal or low")
     if source == "asana":
         task_id = await asyncio.to_thread(asana.create_task, subject.strip(), due or None, notes)
+        if priority != "normal":
+            await asyncio.to_thread(today.set_local_priority, "asana", task_id, priority)
     else:
-        task_id = await outlook.call(outlook.create_task, subject.strip(), due or None, notes)
+        task_id = await outlook.call(outlook.create_task, subject.strip(), due or None, notes, priority)
     return {"ok": True, "id": task_id}
+
+
+@app.post("/api/tasks/priority")
+async def task_priority(source: str = Body(...), id: str = Body(...), priority: str = Body(...)):
+    """High / Normal / Low. Outlook tasks: Outlook's own Importance; Asana: kept locally (today.set_local_priority)."""
+    if priority not in today.PRIORITIES:
+        raise HTTPException(400, "Priority is high, normal or low")
+    if source == "asana":
+        if not (isinstance(id, str) and id.isascii() and id.isdigit() and len(id) <= 30):
+            raise HTTPException(400, "That isn't an Asana task id")
+        await asyncio.to_thread(today.set_local_priority, "asana", id, priority)
+    elif source == "outlook":
+        try:
+            await outlook.call(outlook.set_task_priority, id, priority)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    else:
+        raise HTTPException(400, "Unknown task source")
+    return {"ok": True, "priority": priority}
 
 
 @app.post("/api/tasks/complete")
@@ -298,6 +326,7 @@ async def complete_task(source: str = Body(...), id: str = Body(...)):
         await asyncio.to_thread(asana.complete, id)
     else:
         await outlook.call(outlook.complete_item, id)
+    today._followup_cache.clear()  # a completed flag leaves the Flagged follow-ups at once
     return {"ok": True}
 
 
@@ -361,7 +390,9 @@ async def teams_info():
         activity = await outlook.call(outlook.teams_activity)
     except Exception as e:
         activity = {"error": str(e)}
-    return {"set_up": teams.is_set_up(), "state": db.kv_get("teams:state"), "url": teams.url(), "activity": activity}
+    # recent: unread / recent DMs and @mentions from the background read (names and previews, memory only)
+    return {"set_up": teams.is_set_up(), "state": db.kv_get("teams:state"), "url": teams.url(), "activity": activity,
+            **teams.details()}
 
 
 @app.post("/api/teams/login")
@@ -457,6 +488,7 @@ async def mail_read(id: str = Body(...), read: bool = Body(True)):
 @app.post("/api/mail/flag")
 async def mail_flag(id: str = Body(...), flagged: bool = Body(True)):
     await outlook.call(outlook.set_flag, id, flagged)
+    today._followup_cache.clear()  # the Flagged follow-ups change at once
     return {"ok": True}
 
 
@@ -528,89 +560,6 @@ async def order_lookup(number: str):
 async def order_status():
     return {"problem": await asyncio.to_thread(orders.ready),
             "pattern": orders.settings().get("pattern", orders.DEFAULT_PATTERN)}
-
-
-# ---- launch bar ----------------------------------------------------------------
-
-DEFAULT_LAUNCHER = [{"name": "Pulse", "url": "https://pulse.sonance.com"}, {"name": "Asana", "url": "https://app.asana.com"}]
-# Hotbar targets are opened with os.startfile (ShellExecute), which runs programs and scripts as readily as
-# it opens documents. Only web links, Teams links, folders and these document types are allowed; macro-enabled
-# Office types (.docm, .xlsm, .pptm) and anything executable (.exe, .bat, .ps1, .lnk, .url, .js, .hta, .msi...)
-# are not. Checked when the hotbar is saved and again every time a slot is opened.
-SAFE_DOC_EXT = {".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".txt", ".png", ".jpg", ".jpeg", ".md"}
-# Network paths only to Sonance hosts: a plain NetBIOS name (no dots) or a name ending in .sonance.com.
-UNC_HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,14}|(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+sonance\.com",
-                      re.IGNORECASE)
-LAUNCH_HELP = ("use a web address (https://...), a Teams link, a folder, or a document "
-               f"({' '.join(sorted(SAFE_DOC_EXT))}) on this PC or a Sonance server (\\\\server\\share\\...)")
-
-
-def launch_problem(url, opening: bool = False) -> str | None:
-    """None if the hotbar may open url, otherwise the reason it may not. opening=True also checks the file system."""
-    if not isinstance(url, str) or not url or len(url) > 2000 or any(ord(c) < 32 or c == '"' for c in url):
-        return LAUNCH_HELP
-    low = url.lower()
-    if low.startswith(("http://", "https://")):
-        parts = urllib.parse.urlsplit(url)
-        return None if parts.netloc and " " not in url else LAUNCH_HELP
-    if low.startswith("msteams:"):
-        return None if " " not in url else LAUNCH_HELP
-    if url.startswith("\\\\"):
-        parts = url[2:].rstrip("\\").split("\\")
-        if len(parts) < 2 or not parts[1] or not UNC_HOST.fullmatch(parts[0]):
-            return "network paths must be on a Sonance server (\\\\name\\share or \\\\name.sonance.com\\share)"
-        rest = parts[1:]
-    elif re.match(r"[A-Za-z]:\\", url):
-        rest = url[3:].rstrip("\\").split("\\") if len(url.rstrip("\\")) > 2 else []
-    else:
-        return LAUNCH_HELP
-    if any(c in url[2:] for c in '<>|*?:/') or any(p in ("", ".", "..") or p.endswith((".", " ")) or ".{" in p
-                                                  for p in rest):
-        return "that path isn't allowed"  # streams (:), wildcards, '..', trailing dots/spaces, shell-namespace folders
-    ext = os.path.splitext(rest[-1])[1].lower() if rest else ""
-    is_dir = None
-    if opening or not url.startswith("\\\\"):  # saving a network path doesn't contact the server
-        is_dir = os.path.isdir(url)
-    if is_dir:
-        return None
-    if ext and ext not in SAFE_DOC_EXT:
-        return f"{ext} files can't be opened from the hotbar (only folders and {' '.join(sorted(SAFE_DOC_EXT))})"
-    if opening and not (ext and os.path.isfile(url)):
-        return "that folder or document doesn't exist" if not os.path.exists(url) else "only folders and documents can be opened"
-    return None
-
-
-@app.get("/api/launcher")
-async def get_launcher():
-    return {"items": db.kv_get("launcher", DEFAULT_LAUNCHER)}
-
-
-@app.post("/api/launcher")
-async def save_launcher(items: list = Body(..., embed=True)):
-    clean = []
-    for i in items[:24]:
-        if not isinstance(i, dict):
-            raise HTTPException(400, "Each hotbar slot needs a name and a target")
-        name, url = str(i.get("name", "")).strip()[:40], str(i.get("url", "")).strip()
-        problem = launch_problem(url) if name else "give it a name"
-        if problem:
-            raise HTTPException(400, f"{name or 'Link'}: {problem}")
-        clean.append({"name": name, "url": url})
-    db.kv_set("launcher", clean)
-    return {"items": clean}
-
-
-@app.post("/api/launcher/open")
-async def open_launcher(index: int = Body(..., embed=True)):
-    items = db.kv_get("launcher", DEFAULT_LAUNCHER)
-    if not 0 <= index < len(items):
-        raise HTTPException(404, "No such launch button")
-    url = items[index].get("url") if isinstance(items[index], dict) else None
-    problem = await asyncio.to_thread(launch_problem, url, True)
-    if problem:
-        raise HTTPException(400, f"{items[index].get('name', 'That slot') if isinstance(items[index], dict) else 'That slot'}: {problem}")
-    await asyncio.to_thread(os.startfile, url)
-    return {"ok": True}
 
 
 # ---- websites ----------------------------------------------------------------

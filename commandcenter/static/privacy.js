@@ -329,7 +329,7 @@
     }
     const p = vaultDialog(
       el("h3", { id: "pv-title", class: "pv-danger" }, "Delete all personal data"),
-      el("p", {}, "This permanently deletes every personal calendar entry, every overlay calendar link, the vault and its passphrase check, ",
+      el("p", {}, "This permanently deletes every personal calendar entry, every personal reminder (and its schedule), every overlay calendar link, the vault and its passphrase check, ",
         "plus any older personal copies (DPAPI / Credential Manager). Work data isn't touched. It can't be undone."),
       el("p", { class: "muted" }, "Use this if you forgot your passphrase: nothing (including this app) can decrypt the vault without it."),
       el("label", { class: "field-label", for: "pv-reset" }, `Type ${RESET_PHRASE} to confirm`), typed, err,

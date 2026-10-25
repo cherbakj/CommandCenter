@@ -1,0 +1,39 @@
+/* Teams tab: unread counts, the nav badge and the Recent DMs / mentions list (app.js "teams" section). */
+.badge.badge-teams[hidden] { display: none; }  /* .badge sets display, which beats the hidden attribute */
+.badge.badge-teams { background: #b3a6ff; color: #160c3a; box-shadow: 0 0 .6rem rgb(179 166 255 / .55); }
+
+.teams-counts { display: flex; gap: .7rem; margin: .55rem 0 .45rem; flex-wrap: wrap; }
+.teams-count {
+  --c: var(--accent-2);
+  position: relative; flex: 1 1 7.5rem; min-width: 0; padding: .55rem .85rem .6rem; overflow: hidden;
+  border: 1px solid var(--line); border-radius: var(--r-card); background: rgb(255 255 255 / .035);
+}
+.teams-count::after {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; pointer-events: none;
+  background: linear-gradient(180deg, var(--c), color-mix(in srgb, var(--c) 25%, transparent));
+}
+.teams-count.hot { --c: var(--hot); border-color: color-mix(in srgb, var(--hot) 45%, transparent); }
+.teams-count .n {
+  font: 800 2.4rem/1 var(--font-display); color: var(--c); font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 .9rem color-mix(in srgb, var(--c) 45%, transparent);
+}
+.teams-count .l { font: 600 .72rem var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: .35rem; }
+#teams-status .muted.small, #teams-recent-note { font-size: .78rem; }
+
+/* Recent list: the follow-up row layout (fuRow), sized by its own width. */
+.teams-recent { margin-top: var(--gap); }
+#teams-recent-list { container: teamsrecent / inline-size; max-height: 60vh; overflow-y: auto; }
+#teams-recent-list .src { min-width: 4.2rem; text-align: center; }
+.src.tk-mention { color: var(--hot); border-color: rgb(var(--hot-rgb) / .45); }
+.src.tk-group, .src.tk-meeting { color: #8fc7ff; }
+.fu-subj .tag.teams-where { color: var(--muted); border-color: var(--line); font-weight: 600; max-width: 14rem; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.fu-subj .tag.teams-n { color: var(--hot); border-color: rgb(var(--hot-rgb) / .5); font-variant-numeric: tabular-nums; }
+.list li.fu-row.teams-row:not(.unread) .fu-subj { color: var(--muted); }
+@container teamsrecent (max-width: 40rem) {
+  .list li.fu-row.teams-row {
+    grid-template-columns: auto minmax(0, 1fr) auto auto; grid-template-areas: "src who age acts" "subj subj subj subj";
+    row-gap: .1rem; column-gap: .5rem; padding-block: .3rem;
+  }
+  .teams-row .fu-src { grid-area: src; } .teams-row .fu-who { grid-area: who; } .teams-row .fu-subj { grid-area: subj; }
+  .teams-row .fu-age { grid-area: age; } .teams-row .fu-acts { grid-area: acts; }
+}

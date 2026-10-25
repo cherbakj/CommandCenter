@@ -15,6 +15,24 @@ How it runs
 - The server starts only when asked (POST /api/vscode/start), listens on 127.0.0.1 on a random free port,
   and stops on request, when Command Center shuts down, or (Job object) whenever Command Center dies.
 
+Mirror of desktop VS Code (one way, before every start; "Sync from desktop VS Code" restarts to re-run it)
+- Extensions: every extension desktop VS Code lists in ~/.vscode/extensions/extensions.json is copied (same
+  version, same PC so the win32-x64 builds match) into data/vscode/server/extensions and registered in its
+  extensions.json. UI-only extensions (they can't run in the server's extension host) are skipped. Extensions
+  installed some other way are never removed; ones we copied are removed when desktop no longer has them.
+- Settings: desktop settings.json (minus Settings Sync keys) goes into the server's Machine settings, which the
+  page applies at load for every scope except application ones. The helper extension below applies those few.
+- Keybindings and snippets: contributed by a small helper extension Command Center writes itself
+  (commandcenter.cc-helper, no network, reads only files in data/). It also shows the Claude Code panel when
+  the window starts and when the tab's Claude button is pressed.
+- Desktop files are only read, never changed. Setting values are never logged (they can hold connection
+  strings); only counts are.
+- Integrity: copies come only from real folders (no links) directly inside ~/.vscode/extensions whose
+  package.json matches the id and version desktop VS Code recorded when it installed them from the Marketplace
+  (it checks their signatures then). The Authenticode check below covers the server build only; extension
+  binaries (C# .NET DLLs, debugpy...) aren't re-checked, so they're trusted exactly as much as desktop VS Code
+  trusts them.
+
 Security
 - A fresh random connection token (secrets.token_urlsafe(32)) per launch, held only in memory. It is handed
   to the server through a one-shot named pipe (current user only, local only, and only the server process
@@ -62,6 +80,9 @@ PLATFORM = "server-win32-x64-web"
 PIPE_REJECT_REMOTE_CLIENTS = 0x8
 FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
 DEFAULT_EXTENSIONS = ["anthropic.claude-code"]
+HELPER_ID = "commandcenter.cc-helper"
+HELPER_DIR = "commandcenter.cc-helper-1.0.0"
+EXT_ID = re.compile(r"[A-Za-z0-9][\w-]*\.[A-Za-z0-9][\w-]*")
 
 
 def settings() -> dict:
@@ -99,6 +120,7 @@ class _State:
         self.worker: threading.Thread | None = None
         self.stopping = False
         self.extensions: list[str] = []
+        self.mirror: dict = {}        # what the last desktop mirror did (counts and skipped ids, no values)
 
 
 S = _State()
@@ -409,7 +431,7 @@ def _run_cli(build: Path, *args, timeout=300) -> str:
 
 
 def _desktop_extension_dir(ext_id: str) -> Path | None:
-    root = Path.home() / ".vscode" / "extensions"
+    root = _desktop_extensions_root()
     found = [p for p in root.glob(f"{ext_id}-*") if (p / "package.json").exists() and (p / ".vsixmanifest").exists()]
     key = lambda p: [int(x) if x.isdigit() else 0 for x in re.findall(r"\d+|\D+", p.name)]
     return sorted(found, key=key)[-1] if found else None
@@ -436,9 +458,10 @@ def _vsix_from_desktop(ext_dir: Path) -> Path:
 
 
 def _ensure_extensions(build: Path):
+    """config vscode.extensions (default: Claude Code) when the desktop mirror didn't bring them in."""
     wanted = settings().get("extensions", DEFAULT_EXTENSIONS) or []
     for ext_id in wanted:
-        if not re.fullmatch(r"[A-Za-z0-9][\w-]*\.[A-Za-z0-9][\w-]*", str(ext_id)) or _has_extension(ext_id):
+        if not EXT_ID.fullmatch(str(ext_id)) or _has_extension(ext_id):
             continue
         _set("installing", f"Installing {ext_id} into web VS Code")
         try:
@@ -457,6 +480,503 @@ def _ensure_extensions(build: Path):
             finally:
                 vsix.unlink(missing_ok=True)
     S.extensions = _installed_extensions()
+
+
+# ---- mirror of desktop VS Code (see the module docstring) -----------------------------------------
+
+SKIP_SETTINGS = re.compile(r"(sync|settingsSync)\.")   # Settings Sync's own keys and state stay on desktop
+# Settings (or fields inside a setting's value) that may hold a credential stay on desktop: the copies are plain files
+# under data/vscode and in the page's own storage, outside Credential Manager.
+SECRET_SETTING = re.compile(r"password|passwd|token|secret|api_?key|authorization|credential|environmentvariables|cookie",
+                            re.I)
+
+
+def _without_secrets(value):
+    if isinstance(value, dict):
+        return {k: _without_secrets(v) for k, v in value.items() if not SECRET_SETTING.search(str(k))}
+    if isinstance(value, list):
+        return [_without_secrets(v) for v in value]
+    return value
+SNIPPET_FILE = re.compile(r"[\w.-]{1,80}\.(json|code-snippets)", re.I)
+
+
+def _desktop_extensions_root() -> Path:
+    return Path.home() / ".vscode" / "extensions"
+
+
+def _desktop_user_dir() -> Path:
+    return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "Code" / "User"
+
+
+def _mirror_state_file() -> Path:
+    return server_data_dir() / "cc-mirror.json"
+
+
+def _machine_settings_file() -> Path:
+    return server_data_dir() / "data" / "Machine" / "settings.json"
+
+
+def _jsonc(text: str):
+    """Parses VS Code's JSON with comments and trailing commas (settings.json, keybindings.json)."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            if c in "}]":  # drop a trailing comma (strings are whole chunks, so this is never inside one)
+                k = len(out) - 1
+                while k >= 0 and out[k].isspace():
+                    k -= 1
+                if k >= 0 and out[k] == ",":
+                    del out[k]
+            out.append(c)
+            i += 1
+    return json.loads("".join(out))
+
+
+def _read_jsonc(path: Path):
+    """The file's value; None if it's missing or empty. Raises ValueError (never quoting the file) if unreadable."""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise ValueError(f"{path.name} couldn't be read ({e.strerror})") from None
+    if not text.strip():
+        return None
+    try:
+        return _jsonc(text)
+    except ValueError:
+        raise ValueError(f"{path.name} isn't valid JSON") from None
+
+
+def _write_if_changed(path: Path, text: str) -> bool:
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return False
+    except OSError:
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".cc-tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+    return True
+
+
+def _version_key(v) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", str(v or "").split("-")[0])[:4])
+
+
+def _is_link(p: Path) -> bool:
+    return p.is_symlink() or p.is_junction()
+
+
+def _location(folder: Path) -> dict:
+    """A file URI the way VS Code stores it in extensions.json."""
+    p = str(folder)
+    drive, rest = p[0].lower(), p[2:].replace("\\", "/")
+    return {"$mid": 1, "fsPath": f"{drive}:{p[2:]}", "_sep": 1,
+            "external": "file:///" + urllib.parse.quote(f"{drive}:{rest}", safe="/"),
+            "path": f"/{drive}:{rest}", "scheme": "file"}
+
+
+def _default_dark_theme(build: Path) -> str:
+    """Desktop VS Code's default theme, used when desktop settings don't name one (the web page defaults to light)."""
+    try:
+        themes = json.loads((build / "extensions" / "theme-defaults" / "package.json").read_text(encoding="utf-8"))
+        ids = {t.get("id") or t.get("label") for t in themes["contributes"]["themes"]}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        ids = set()
+    return next((t for t in ("Dark 2026", "Dark Modern") if t in ids), "Default Dark Modern")
+
+
+def _mirror_settings(build: Path, state: dict, report: dict):
+    """Desktop settings.json -> the server's Machine settings. Keys mirrored last time but gone from desktop are
+    removed; keys only set in web VS Code (Settings > Remote) are kept."""
+    desktop = _read_jsonc(_desktop_user_dir() / "settings.json") or {}
+    if not isinstance(desktop, dict):
+        raise ValueError("desktop settings.json isn't an object")
+    wanted = {k: _without_secrets(v) for k, v in desktop.items()
+              if isinstance(k, str) and not SKIP_SETTINGS.match(k) and not SECRET_SETTING.search(k)}
+    wanted.setdefault("workbench.colorTheme", _default_dark_theme(build))
+    f = _machine_settings_file()
+    current = _read_jsonc(f) or {}
+    if not isinstance(current, dict):
+        raise ValueError("the web server's Machine settings.json isn't an object")
+    merged = {k: v for k, v in current.items() if k in wanted or k not in set(state.get("settings") or [])}
+    merged.update(wanted)
+    _write_if_changed(f, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
+    state["settings"] = sorted(wanted)
+    report["settings"] = len(wanted)
+
+
+def _desktop_extensions(build: Path) -> tuple[list[dict], list[dict], set[str] | None]:
+    """(copyable, skipped, every id) of the extensions desktop VS Code lists as installed. The ids are None when
+    desktop's list is missing or empty (e.g. read while VS Code rewrites it), so no copy is removed because of it."""
+    root = _desktop_extensions_root()
+    entries = _read_jsonc(root / "extensions.json") or []
+    try:
+        product = json.loads((build / "product.json").read_text(encoding="utf-8"))
+        product_kinds = {str(k).lower(): v for k, v in (product.get("extensionKind") or {}).items()}
+    except (OSError, ValueError, AttributeError):
+        product_kinds = {}
+    usable, skipped, ids = [], [], set()
+    for e in entries if isinstance(entries, list) else []:
+        if not isinstance(e, dict):
+            continue
+        ext_id = str((e.get("identifier") or {}).get("id") or "")
+        version, rel = str(e.get("version") or ""), str(e.get("relativeLocation") or "")
+        if not EXT_ID.fullmatch(ext_id) or ext_id.lower() == HELPER_ID:
+            continue
+        ids.add(ext_id.lower())
+
+        def skip(reason):
+            skipped.append({"id": ext_id, "reason": reason})
+
+        src = root / rel
+        if not re.fullmatch(r"[\w][\w.+-]*", rel) or src.parent != root or not src.is_dir() or _is_link(src):
+            skip("its folder is missing, or isn't a plain folder in ~/.vscode/extensions")
+            continue
+        if (e.get("metadata") or {}).get("source") != "gallery":
+            skip("not installed from the Marketplace (e.g. a .vsix file): install it in web VS Code yourself if wanted")
+            continue
+        try:
+            pkg = json.loads((src / "package.json").read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            skip("its package.json can't be read")
+            continue
+        if f"{pkg.get('publisher')}.{pkg.get('name')}".lower() != ext_id.lower() or str(pkg.get("version")) != version:
+            skip("its package.json doesn't match what desktop VS Code installed")
+            continue
+        kind = product_kinds.get(ext_id.lower(), pkg.get("extensionKind"))
+        kinds = [kind] if isinstance(kind, str) else list(kind or [])
+        if kinds and "workspace" not in kinds:
+            skip("UI-only extension: it runs in desktop VS Code's own window, not on a VS Code server")
+            continue
+        usable.append({"id": ext_id, "version": version, "rel": rel, "src": src, "entry": e})
+    return usable, skipped, ids or None
+
+
+def _copy_extension(src: Path, dest: Path):
+    def links(folder, names):  # never follow a link out of the extension's folder
+        return [n for n in names if _is_link(Path(folder) / n)]
+    shutil.copytree(src, dest, ignore=links)
+
+
+def _mark_obsolete(names: set[str], obsolete: set[str]):
+    """Updates the server's .obsolete list (folders it deletes when it starts)."""
+    f = server_data_dir() / "extensions" / ".obsolete"
+    try:
+        current = json.loads(f.read_text(encoding="utf-8"))
+        current = current if isinstance(current, dict) else {}
+    except (OSError, ValueError):
+        current = {}
+    new = {k: v for k, v in current.items() if k not in names} | {n: True for n in obsolete}
+    if new != current:
+        _write_if_changed(f, json.dumps(new))
+
+
+def _ext_folder(ext_dir: Path, rel) -> Path | None:
+    """A folder directly inside ext_dir named by a relativeLocation from the server's extensions.json (which web VS
+    Code and its extensions can write), or None: an absolute path or one with .. never reaches rmtree."""
+    rel = str(rel or "")
+    if not re.fullmatch(r"[\w][\w.+-]*", rel):
+        return None
+    folder = ext_dir / rel
+    return folder if folder.resolve().parent == ext_dir.resolve() else None
+
+
+def _remove_extension_folder(folder: Path | None, obsolete: set[str]):
+    if folder is None or _is_link(folder):
+        return
+    shutil.rmtree(folder, ignore_errors=True)
+    if folder.exists():  # something held a file open: the server removes it at its next start
+        obsolete.add(folder.name)
+
+
+def _mirror_extensions(build: Path, state: dict, report: dict) -> list[dict]:
+    """Copies desktop extensions that web VS Code lacks (or has older), registers them, and drops copies of
+    extensions desktop VS Code no longer has. Returns the server's extensions.json entries (not yet saved)."""
+    ext_dir = server_data_dir() / "extensions"
+    ext_dir.mkdir(parents=True, exist_ok=True)
+    manifest = _read_jsonc(ext_dir / "extensions.json") or []  # unreadable: raises, and nothing is changed
+    if not isinstance(manifest, list):
+        raise ValueError("the web server's extensions.json isn't a list")
+    manifest = [m for m in manifest if isinstance(m, dict) and isinstance(m.get("identifier"), dict)]
+    by_id = {str(m["identifier"].get("id", "")).lower(): m for m in manifest}
+    usable, skipped, desktop_ids = _desktop_extensions(build)
+    ours = {k.lower(): v for k, v in (state.get("extensions") or {}).items()}   # id -> folder we copied
+    keep = {str(x).lower() for x in DEFAULT_EXTENSIONS + list(settings().get("extensions") or [])}
+    restored, obsolete = set(), set()
+
+    todo = []
+    for x in usable:
+        cur = by_id.get(x["id"].lower())
+        have = cur and _ext_folder(ext_dir, cur.get("relativeLocation"))
+        if have and have.is_dir() and _version_key(cur.get("version")) >= _version_key(x["version"]):
+            continue  # already there (the same version, or one web VS Code updated itself)
+        todo.append((x, cur))
+    for i, (x, cur) in enumerate(todo, 1):
+        if S.stopping:
+            raise RuntimeError("Cancelled")
+        _set("installing", f"Copying {x['id']} {x['version']} from desktop VS Code ({i} of {len(todo)})")
+        dest = ext_dir / x["rel"]
+        if dest.exists():  # a copy that didn't finish (it was never registered)
+            shutil.rmtree(dest)
+        try:
+            _copy_extension(x["src"], dest)
+        except (OSError, shutil.Error) as e:
+            shutil.rmtree(dest, ignore_errors=True)
+            skipped.append({"id": x["id"], "reason": f"copying it failed ({type(e).__name__})"})
+            continue
+        if cur:  # replaces an older version
+            manifest.remove(cur)
+            old = str(cur.get("relativeLocation", ""))
+            if old and old != x["rel"]:
+                _remove_extension_folder(_ext_folder(ext_dir, old), obsolete)
+        entry = json.loads(json.dumps(x["entry"]))
+        entry["location"], entry["relativeLocation"] = _location(dest), x["rel"]
+        entry["metadata"] = {**(entry.get("metadata") or {}), "installedTimestamp": int(time.time() * 1000)}
+        manifest.append(entry)
+        by_id[x["id"].lower()] = entry
+        ours[x["id"].lower()] = x["rel"]
+        restored.add(x["rel"])
+        report["copied"] += 1
+
+    for ext_id in list(ours) if desktop_ids is not None else []:  # copies of extensions removed from desktop VS Code
+        if ext_id in desktop_ids or ext_id in keep:
+            continue
+        cur = by_id.pop(ext_id, None)
+        if cur:
+            manifest.remove(cur)
+            if cur.get("relativeLocation"):
+                _remove_extension_folder(_ext_folder(ext_dir, cur["relativeLocation"]), obsolete)
+        del ours[ext_id]
+        report["removed"] += 1
+
+    _mark_obsolete(restored, obsolete)
+    state["extensions"] = ours
+    report["extensions"] = len(usable)
+    report["skipped"] = skipped
+    return manifest
+
+
+HELPER_JS = r"""// Command Center's helper for its embedded VS Code. Written by Command Center (commandcenter/vscode.py) at every
+// start. It reads only files Command Center wrote under data/vscode and takes no other input.
+// - Shows the Claude Code panel (secondary side bar) when the window starts, and again once a folder is trusted.
+// - Shows it again when Command Center's "Claude panel" button touches open-claude.signal next to this file.
+// - Applies mirrored desktop settings the server's Machine settings can't carry (application scope ones).
+"use strict";
+const vscode = require("vscode");
+const fs = require("fs");
+const path = require("path");
+
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, "utf8").replace(/^﻿/, "")); } catch { return null; }
+}
+
+function equal(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object" || Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  return ka.length === kb.length && ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && equal(a[k], b[k]));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Claude Code is off in Restricted Mode; trusting the folder runs this again. Right after that (or at start) the
+// extension and its view may not be registered yet, so this keeps trying for a while.
+let showing = null;
+function showClaude() {
+  if (!vscode.workspace.isTrusted) return Promise.resolve();
+  showing = showing || (async () => {
+    try {
+      for (let i = 0; i < 40; i++) {
+        const ext = vscode.extensions.getExtension("anthropic.claude-code");
+        if (ext) {
+          try { await ext.activate(); } catch { return; }
+          for (const view of ["claudeVSCodeSidebarSecondary.focus", "claudeVSCodeSidebar.focus"]) {
+            try { await vscode.commands.executeCommand(view); return; } catch { /* that view isn't registered (yet) */ }
+          }
+        }
+        await sleep(750);
+      }
+    } finally { showing = null; }
+  })();
+  return showing;
+}
+
+async function applyUserSettings(context) {
+  const info = readJson(path.join(context.extensionPath, "mirror.json")) || {};
+  const machine = (typeof info.settingsFile === "string" && readJson(info.settingsFile)) || {};
+  const keys = (Array.isArray(info.keys) ? info.keys : []).filter((k) => typeof k === "string" && !k.startsWith("["));
+  const cfg = vscode.workspace.getConfiguration();
+  const applied = new Set(context.globalState.get("cc.appliedSettings", []));
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(machine, key)) continue;
+    const seen = cfg.inspect(key);
+    log.debug(`${key}: ${seen ? "global " + (seen.globalValue === undefined ? "unset" : equal(seen.globalValue, machine[key]) ? "same" : "different") : "no inspect"}`);
+    if (!seen || equal(seen.globalValue, machine[key])) continue;  // the Machine settings carry it already
+    try {
+      // An application-scope setting has no effect in the server's Machine settings. While it is there, VS Code
+      // also writes "Global" values back into that file, so take it out first; the value then lands in the
+      // page's own user settings. (Command Center puts it back in the Machine file at the next start: harmless.)
+      await cfg.update(key, undefined, vscode.ConfigurationTarget.Global);
+      await vscode.workspace.getConfiguration().update(key, machine[key], vscode.ConfigurationTarget.Global);
+      applied.add(key);
+      log.info(`Applied ${key} to user settings`);  // names only: values can hold connection strings
+    } catch (e) { log.info(`Couldn't apply ${key}: ${String((e && e.message) || e).slice(0, 200)}`); }  // VS Code's messages name the key, not the value
+  }
+  for (const key of [...applied]) {  // removed from desktop VS Code
+    if (keys.includes(key)) continue;
+    try { await cfg.update(key, undefined, vscode.ConfigurationTarget.Global); } catch { /* gone */ }
+    applied.delete(key);
+    log.info(`Removed ${key} from user settings`);
+  }
+  await context.globalState.update("cc.appliedSettings", [...applied]);
+}
+
+function watchSignal(context) {
+  const file = path.join(context.extensionPath, "open-claude.signal");
+  const stamp = () => { try { return fs.statSync(file).mtimeMs; } catch { return 0; } };
+  let last = stamp();
+  const timer = setInterval(() => {
+    const now = stamp();
+    if (now && now !== last) { last = now; showClaude(); }
+  }, 700);
+  context.subscriptions.push({ dispose: () => clearInterval(timer) });
+}
+
+let log = { info() {}, debug() {} };
+
+exports.activate = async (context) => {
+  log = vscode.window.createOutputChannel("Command Center", { log: true });
+  context.subscriptions.push(log);
+  watchSignal(context);
+  context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => showClaude()));
+  try { await applyUserSettings(context); } catch { /* keep going: the panel matters more */ }
+  if (vscode.workspace.getConfiguration("commandCenter").get("showClaudeOnStart", true)) await showClaude();
+};
+exports.deactivate = () => {};
+"""
+
+
+def _helper_files(state: dict, report: dict) -> dict[str, str]:
+    """The helper extension's files: desktop keybindings and snippets as contributions, plus the panel logic."""
+    user = _desktop_user_dir()
+    keybindings, removals = [], 0
+    try:
+        raw = _read_jsonc(user / "keybindings.json") or []
+    except ValueError as e:
+        raw = []
+        report["errors"].append(str(e))
+    for k in raw if isinstance(raw, list) else []:
+        if not isinstance(k, dict) or not isinstance(k.get("key"), str) or not isinstance(k.get("command"), str):
+            continue
+        if k["command"].startswith("-"):  # removing a default binding can't be expressed by an extension
+            removals += 1
+            continue
+        keybindings.append({f: k[f] for f in ("key", "command", "when", "args", "mac", "linux", "win") if f in k})
+    files, snippets = {}, []
+    folder = user / "snippets"
+    for f in sorted(folder.iterdir()) if folder.is_dir() else []:
+        if not SNIPPET_FILE.fullmatch(f.name) or not f.is_file() or _is_link(f):
+            continue
+        try:
+            files[f"snippets/{f.name}"] = f.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            continue
+        item = {"path": f"./snippets/{f.name}"}
+        if f.suffix.lower() == ".json":
+            item["language"] = f.stem  # <language>.json; .code-snippets files name their languages inside
+        snippets.append(item)
+    pkg = {
+        "name": "cc-helper", "publisher": "commandcenter", "displayName": "Command Center helper", "version": "1.0.0",
+        "description": "Written by Command Center: your desktop VS Code keybindings and snippets, and the Claude Code panel at start.",
+        "engines": {"vscode": "^1.90.0"}, "main": "./extension.js", "extensionKind": ["workspace"],
+        "activationEvents": ["onStartupFinished"],
+        "capabilities": {"untrustedWorkspaces": {"supported": True}, "virtualWorkspaces": True},
+        "contributes": {
+            "configuration": {"title": "Command Center", "properties": {"commandCenter.showClaudeOnStart": {
+                "type": "boolean", "default": True, "description": "Show the Claude Code panel when the window opens."}}},
+            "keybindings": keybindings, "snippets": snippets,
+        },
+    }
+    files["package.json"] = json.dumps(pkg, indent=2, ensure_ascii=False) + "\n"
+    files["extension.js"] = HELPER_JS
+    # Setting names only; the helper reads the values from the Machine settings file.
+    files["mirror.json"] = json.dumps({"settingsFile": str(_machine_settings_file()), "keys": state.get("settings") or []}, indent=2) + "\n"
+    report["keybindings"], report["keybinding_removals"], report["snippets"] = len(keybindings), removals, len(snippets)
+    return files
+
+
+def _write_helper(manifest: list[dict], state: dict, report: dict) -> bool:
+    """Writes the helper extension and its extensions.json entry. True if anything changed."""
+    folder = server_data_dir() / "extensions" / HELPER_DIR
+    files = _helper_files(state, report)
+    changed = False
+    for name, text in files.items():
+        changed |= _write_if_changed(folder / name, text)
+    for old in (folder / "snippets").glob("*") if (folder / "snippets").is_dir() else []:
+        if f"snippets/{old.name}" not in files:
+            old.unlink(missing_ok=True)
+            changed = True
+    entry = next((m for m in manifest if str(m["identifier"].get("id", "")).lower() == HELPER_ID), None)
+    if entry is None or entry.get("relativeLocation") != HELPER_DIR or changed:
+        # A new timestamp also changes extensions.json, which is what makes the server re-read the extension.
+        if entry is not None:
+            manifest.remove(entry)
+        manifest.append({"identifier": {"id": HELPER_ID}, "version": "1.0.0", "location": _location(folder),
+                         "relativeLocation": HELPER_DIR,
+                         "metadata": {"installedTimestamp": int(time.time() * 1000), "source": "vsix", "pinned": True}})
+        changed = True
+    return changed
+
+
+def _mirror_desktop(build: Path):
+    """Brings desktop VS Code's extensions, settings, keybindings and snippets in (one way). Never raises: the
+    server starts with whatever it already has if something here fails."""
+    report = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "copied": 0, "removed": 0, "extensions": 0, "skipped": [],
+              "settings": 0, "keybindings": 0, "keybinding_removals": 0, "snippets": 0, "errors": []}
+    try:
+        state = json.loads(_mirror_state_file().read_text(encoding="utf-8"))
+        state = state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        state = {}
+    _set("installing", "Syncing settings from desktop VS Code")
+    try:
+        _mirror_settings(build, state, report)
+    except ValueError as e:
+        report["errors"].append(f"Settings not synced: {e}")
+    try:
+        manifest = _mirror_extensions(build, state, report)
+        if _write_helper(manifest, state, report) or report["copied"] or report["removed"]:
+            _write_if_changed(server_data_dir() / "extensions" / "extensions.json", json.dumps(manifest))
+    except ValueError as e:
+        report["errors"].append(f"Extensions not synced: {e}")
+    except RuntimeError:
+        raise  # cancelled with Stop
+    except OSError as e:
+        report["errors"].append(f"Extensions not synced: {type(e).__name__} {e.strerror or ''}".strip())
+    _write_if_changed(_mirror_state_file(), json.dumps(state, indent=2) + "\n")
+    S.mirror = report
+    _note(f"Synced from desktop VS Code: {report['extensions']} extensions ({report['copied']} copied, {report['removed']} removed), "
+          f"{report['settings']} settings, {report['keybindings']} keybindings, {report['snippets']} snippet files")
+    for s in report["skipped"]:
+        _note(f"Not synced: {s['id']} ({s['reason']})")
+    for e in report["errors"]:
+        _note(e)
 
 
 # ---- token pipe + process ---------------------------------------------------------
@@ -599,7 +1119,10 @@ def _start_worker():
         build = _ensure_build()
         _set("installing", "Checking the Microsoft signatures of the VS Code server's programs")
         verify_build_signatures(build)  # also for a build that was already on disk (cached per file)
-        _seed_machine_settings()
+        if settings().get("mirror_desktop", True):
+            _mirror_desktop(build)
+        else:
+            _seed_machine_settings()
         _ensure_extensions(build)
         if S.stopping:
             return
@@ -672,6 +1195,35 @@ def stop():
         _set("stopped", "")
 
 
+def sync():
+    """Sync from desktop VS Code: the mirror runs before every start, so this (re)starts the server."""
+    stop()
+    worker = S.worker
+    if worker and worker.is_alive():
+        worker.join(30)  # a start that was still copying stops at the next extension
+        if worker.is_alive():  # still finishing one large extension: start as soon as it has stopped
+            def later():
+                worker.join()
+                try:
+                    start()
+                except HTTPException as e:
+                    _set("error", str(e.detail))
+            threading.Thread(target=later, daemon=True, name="vscode-sync-restart").start()
+            return
+    start()
+
+
+def show_claude():
+    """Asks the helper extension in the open VS Code page to show the Claude Code panel (it polls this file)."""
+    with S.lock:
+        if S.status != "ready":
+            raise HTTPException(409, "VS Code web isn't running. Start it first.")
+    folder = server_data_dir() / "extensions" / HELPER_DIR
+    if not (folder / "extension.js").is_file():
+        raise HTTPException(409, "The Command Center helper isn't in web VS Code yet. Press Sync from desktop on the VS Code tab.")
+    (folder / "open-claude.signal").write_text(str(time.time_ns()), encoding="ascii")
+
+
 def status() -> dict:
     with S.lock:
         return {
@@ -680,6 +1232,7 @@ def status() -> dict:
             "extensions": S.extensions or _installed_extensions(),
             "log": [_scrub(l) for l in list(S.lines)[-25:]],
             "desktop_vscode": bool(_desktop_install()),
+            "mirror": S.mirror or None,
         }
 
 
@@ -727,6 +1280,18 @@ async def post_start():
 async def post_stop():
     await asyncio.to_thread(stop)
     return status()
+
+
+@router.post("/api/vscode/sync")
+async def post_sync():
+    await asyncio.to_thread(sync)
+    return status()
+
+
+@router.post("/api/vscode/claude")
+async def post_claude():
+    await asyncio.to_thread(show_claude)
+    return {"ok": True}
 
 
 @router.get("/api/vscode/url")

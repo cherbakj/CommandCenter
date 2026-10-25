@@ -21,6 +21,7 @@ of the above pass.
 CC_DEV_NO_AUTH=1 skips only the cookie (3), and only in `serve` mode (configure("serve")).
 GET routes must never change anything: only non-GET requests get the CSRF header check.
 """
+import asyncio
 import ctypes
 import ctypes.wintypes as wt
 import hmac
@@ -428,6 +429,87 @@ async def window_hide():
         return _no_shell()
     shell.hide()
     return {"ok": True}
+
+
+# Native windows over dashboard tabs (overlay.py): the Pulse site view (desktop.PulseView) and the docked SSMS
+# (ssmsdock.SsmsDock). The page reports where a tab's stage is and what is on top of it; each view has its own state
+# and buttons. Nothing here returns page content beyond the host, path and title of what the Pulse view shows.
+def _overlay(name: str):
+    return (getattr(shell, "overlays", None) or {}).get(name) if shell else None
+
+
+def _pulse_view():
+    return _overlay("pulse")
+
+
+async def _small_json(request: Request, limit: int = 8192):
+    raw = await request.body()
+    if len(raw) > limit:
+        raise ValueError("request too large")
+    try:
+        return json.loads(raw or b"{}")
+    except ValueError:
+        raise ValueError("expected JSON") from None
+
+
+@router.post("/api/window/{name}/bounds", include_in_schema=False)
+async def overlay_bounds(name: str, request: Request):
+    view = _overlay(name)
+    if not view:
+        return _no_shell()
+    from .overlay import parse_bounds
+    try:
+        view.update(parse_bounds(await _small_json(request), view.SITES))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True}
+
+
+@router.get("/api/window/pulse", include_in_schema=False)
+async def pulse_view_state():
+    view = _pulse_view()
+    return view.status() if view else {"available": False}
+
+
+@router.post("/api/window/pulse/action", include_in_schema=False)
+async def pulse_view_action(request: Request):
+    view = _pulse_view()
+    if not view:
+        return _no_shell()
+    try:
+        body = await _small_json(request)
+        if not isinstance(body, dict):
+            raise ValueError("expected an object")
+        url = body.get("url")
+        site = view.action(str(body.get("site") or ""), str(body.get("action") or ""),
+                           url if isinstance(url, str) and len(url) <= 2000 else None)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "site": site}
+
+
+@router.get("/api/window/ssms", include_in_schema=False)
+async def ssms_dock_state():
+    view = _overlay("ssms")
+    if not view:
+        from .ssmsdock import ssms_path
+        return {"available": False, "installed": ssms_path().is_file()}
+    return await asyncio.to_thread(view.status)
+
+
+@router.post("/api/window/ssms/action", include_in_schema=False)
+async def ssms_dock_action(request: Request):
+    """start | dock (pid: an SSMS of this user, the installed and signed one) | undock | redock."""
+    view = _overlay("ssms")
+    if not view:
+        return _no_shell()
+    try:
+        body = await _small_json(request)
+        if not isinstance(body, dict):
+            raise ValueError("expected an object")
+        return await asyncio.to_thread(view.action, str(body.get("action") or ""), body.get("pid"))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 @router.post("/api/session/lock", include_in_schema=False)

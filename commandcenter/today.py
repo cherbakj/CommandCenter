@@ -56,6 +56,55 @@ def unmute(sender):
     db.kv_set("followups:muted", [m for m in muted() if m != sender.strip().lower()])
 
 
+# ---- task priority ---------------------------------------------------------------
+# Outlook / To Do tasks keep their priority in Outlook's own Importance (outlook.set_task_priority), so Outlook
+# and To Do on the phone show it too. Sources without a priority of their own (Asana) keep it here: kv
+# tasks:priority {"asana:<gid>": "high" | "low"} (Normal = no entry), sealed like other work data and pruned
+# when the task is no longer open.
+PRIORITIES = ("high", "normal", "low")
+PRIORITY_RANK = {"high": 0, "normal": 1, "low": 2}
+
+
+def local_priorities() -> dict:
+    p = db.kv_get("tasks:priority", {})
+    return p if isinstance(p, dict) else {}
+
+
+def set_local_priority(source, task_id, priority):
+    if priority not in PRIORITIES:
+        raise ValueError("Priority is high, normal or low")
+    with db._lock:
+        p = local_priorities()
+        key = f"{source}:{task_id}"
+        if priority == "normal":
+            p.pop(key, None)
+        else:
+            p[key] = priority
+        db.kv_set("tasks:priority", p)
+
+
+def _apply_priorities(tasks, listed_sources):
+    """Adds `priority` to every task (Outlook's comes with the task) and forgets local priorities of tasks that
+    are gone from a source that was listed completely this time."""
+    with db._lock:
+        stored = local_priorities()
+        for t in tasks:
+            if t["source"] == "outlook":
+                t.setdefault("priority", "normal")
+            else:
+                t["priority"] = stored.get(f"{t['source']}:{t['id']}", "normal")
+        keep = {k: v for k, v in stored.items()
+                if k.split(":", 1)[0] not in listed_sources or any(f"{t['source']}:{t['id']}" == k for t in tasks)}
+        if len(keep) != len(stored):
+            db.kv_set("tasks:priority", keep)
+
+
+def sort_tasks(tasks) -> list:
+    """High first, then Normal, then Low; within each by due date (no date last), then title."""
+    return sorted(tasks, key=lambda t: (PRIORITY_RANK.get(t.get("priority"), 1), t["due"] is None, t["due"] or "",
+                                        t["subject"].lower()))
+
+
 # ---- snooze and no-reply reminders -------------------------------------------
 
 def snoozes() -> dict:
@@ -173,12 +222,14 @@ async def _followups(todo, refresh=False) -> dict:
     out = {k: [i for i in v if _keep(i, cfg, hidden_ids, mutes) and (k == "awaiting_reply" or not spam_hidden(i, blocked))]
            for k, v in raw.items()}
 
-    # Flagged mail: skip automated senders and old flags; overdue first, then newest.
+    # Flagged mail: skip flags set before flagged_since, automated senders and old flags; overdue first, then newest.
     cutoff = (datetime.now() - timedelta(days=cfg.get("flagged_days", 30))).isoformat()
-    automated = older = 0
+    automated = older = before = 0
     flagged = []
     for f in todo.get("flagged", []):
-        if AUTOMATED.search(f["sender_name"]):
+        if flagged_before_cutoff(f):
+            before += 1
+        elif AUTOMATED.search(f["sender_name"]):
             automated += 1
         elif (f["received"] or "") < cutoff and not (f["due"] and f["due"] >= date.today().isoformat()):
             older += 1
@@ -187,8 +238,19 @@ async def _followups(todo, refresh=False) -> dict:
     flagged.sort(key=lambda f: f["received"] or "", reverse=True)
     out["flagged"] = flagged[:25]
     out["flagged_hidden"] = {"automated": automated, "older": older, "more": max(0, len(flagged) - 25),
-                             "total": len(todo.get("flagged", []))}
+                             "before": before, "since": flagged_since(), "total": len(todo.get("flagged", []))}
     return out
+
+
+def flagged_since() -> str:
+    """followups.flagged_since (YYYY-MM-DD): flags set before that day are Outlook's old backlog, ignored by CC."""
+    since = str(config.section("followups", {}).get("flagged_since") or "")
+    return since if re.fullmatch(r"\d{4}-\d{2}-\d{2}", since) else ""
+
+
+def flagged_before_cutoff(f: dict) -> bool:
+    since = flagged_since()  # when it was flagged; mail with no such date goes by when it arrived
+    return bool(since) and (f.get("flagged_at") or f.get("received") or "")[:10] < since
 
 
 async def _safe(coro):
@@ -209,15 +271,18 @@ async def build(refresh=False) -> dict:
 
     tasks = list(todo.get("tasks", [])) if "error" not in todo else []
     asana_state = {"connected": asana_on}
+    listed = set()
     if asana_task:
         asana_rows = await asana_task
         if isinstance(asana_rows, dict):
             asana_state["error"] = asana_rows["error"]
         else:
             tasks += asana_rows
+            if len(asana_rows) < asana.TASK_LIMIT:  # a full page may not be all of them: keep their priorities
+                listed.add("asana")
+    await asyncio.to_thread(_apply_priorities, tasks, listed)  # before snoozes: a snoozed task keeps its priority
     snoozed_now = {i for i, v in snoozes().items() if v["until"] > datetime.now().isoformat(timespec="seconds")}
-    tasks = [t for t in tasks if t["id"] not in snoozed_now]
-    tasks.sort(key=lambda t: (t["due"] is None, t["due"] or "", t["subject"].lower()))
+    tasks = sort_tasks(t for t in tasks if t["id"] not in snoozed_now)
 
     return {
         "now": datetime.now().isoformat(timespec="seconds"),
@@ -262,19 +327,7 @@ async def _briefing(now):
     agenda = data["agenda"] if isinstance(data["agenda"], list) else []
     first = next((m for m in agenda if m["start"] >= now.isoformat(timespec="minutes")), None)
     body = f"First up: {first['subject']} at {datetime.fromisoformat(first['start']):%I:%M %p}" if first else ""
-    top3 = await _daily_note("briefing_note")
-    alerts.raise_alert("Today", summary(data), " · ".join(p for p in (body, top3) if p), "normal", {"type": "today"},
-                       toast="morning briefing")
-
-
-async def _daily_note(name) -> str:
-    """Top 3 line for the briefing / wrap-up from daily.py (counts only; "" if that module isn't there)."""
-    try:
-        from . import daily
-        return await asyncio.to_thread(getattr(daily, name))
-    except Exception:
-        log.exception("Top 3 summary failed")
-        return ""
+    alerts.raise_alert("Today", summary(data), body, "normal", {"type": "today"}, toast="morning briefing")
 
 
 async def _wrapup(now):
@@ -288,9 +341,6 @@ async def _wrapup(now):
     first = tomorrow[0] if tomorrow else None
     parts = [f"{len(open_due)} task(s) still due", f"{len(f.get('needs_reply', []))} reply(ies) owed",
              f"{len(f.get('awaiting_reply', []))} waiting on others"]
-    top3 = await _daily_note("wrapup_note")
-    if top3:
-        parts.insert(0, top3)
     body = (f"{label}: {len(tomorrow)} meeting(s), first is {first['subject']} at "
             f"{datetime.fromisoformat(first['start']):%I:%M %p}" if first else f"{label}: no meetings")
     alerts.raise_alert("Wrap-up", " · ".join(parts), body, "normal", {"type": "today"}, toast="end-of-day wrap-up")

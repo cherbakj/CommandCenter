@@ -10,7 +10,6 @@
   padding: .7rem .8rem .8rem;
 }
 .vsc-head { margin-bottom: .55rem; gap: .6rem; }
-.vsc-select { width: auto; min-width: 16rem; max-width: 28rem; margin: 0; padding: .3rem .55rem; font-size: .85rem; }
 .vsc-where { font: 500 .8rem var(--font-mono); }
 .vsc-state { display: inline-flex; align-items: center; text-transform: uppercase; letter-spacing: .06em; }
 .vsc-state.bad { color: var(--red); border-color: rgb(var(--red-rgb) / .6); }
@@ -25,7 +24,8 @@
 .vsc-stage[hidden] { display: none; }
 .vsc-msg { max-width: 54rem; padding: 2rem; }
 .vsc-msg h3 { font: 700 1.1rem var(--font-ui); letter-spacing: .01em; color: var(--accent); margin: 0 0 .6rem; }
-.vsc-msg h3.vsc-err { color: var(--red); }
+.vsc-msg h3.vsc-err, .vsc-msg p.vsc-err { color: var(--red); }
+.vsc-msg p.vsc-skip { margin: .15rem 0; font-size: .85rem; }
 .vsc-msg p { margin: .4rem 0; }
 .vsc-bar { margin: .9rem 0 .3rem; }
 .vsc-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, rgb(var(--accent-rgb) / .75), var(--accent)); box-shadow: 0 0 .7rem rgb(var(--accent-rgb) / .5); transition: width .4s; }
@@ -41,3 +41,6 @@
 /* folder other accounts can modify (projects.writable_by_others) */
 .vsc-unsafe { color: var(--red); border: 1px solid rgb(var(--red-rgb) / .7); background: rgb(var(--red-rgb) / .1); border-radius: var(--r-pill);
   padding: .2rem .6rem; font-size: .8rem; font-weight: 600; }
+
+/* "Working on:" picks this tab's project, so its bar shows only while this tab is open (split and single layouts). */
+.pane-work:not(:has(#tab-vscode.active)) > .work-bar { display: none; }

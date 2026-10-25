@@ -266,7 +266,7 @@ def query(sql, params) -> list[dict]:
     s = settings()
     password = _password(s)
     if password is None:
-        raise ValueError("Pulse isn't connected yet. Set it up on the Pulse tab.")
+        raise ValueError("Pulse isn't connected yet. Set it up on the Pulse Feedback tab.")
     try:
         rows = _run(s, password, sql, params, check_privileges=not _privileges_checked)
     except Exception as e:
@@ -548,7 +548,7 @@ async def poll_once() -> dict:
     for a in found[:10]:  # a burst (e.g. a bulk import) is capped; the tab shows everything
         alerts.raise_alert("Pulse", a["title"], a["body"], a["priority"], a["action"], toast=a.get("toast"))
     if len(found) > 10:
-        alerts.raise_alert("Pulse", f"{len(found) - 10} more ticket updates", "Open the Pulse tab to see them.", "low",
+        alerts.raise_alert("Pulse", f"{len(found) - 10} more ticket updates", "Open the Pulse Feedback tab to see them.", "low",
                            {"type": "url", "url": ticket_url(None)}, toast="more ticket updates")
     db.kv_set("pulse:state", state)
     try:

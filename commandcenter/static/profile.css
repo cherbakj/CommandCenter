@@ -52,6 +52,7 @@ html { font-size: calc(clamp(14px, calc(8px + .25vw + .35vh), 19px) * var(--pf-s
 html.pf-compact { --gap: .6rem; }
 html.pf-compact .panel { padding: .65rem .8rem; }
 html.pf-compact .list li { padding: .4rem .6rem; }
+html.pf-compact .list li.fu-row { padding: .18rem .45rem .18rem .6rem; min-height: 2rem; }
 html.pf-compact .stat { padding: .5rem .7rem; }
 html.pf-compact nav button { padding-block: .34rem; }
 /* Frosted glass off: solid panels, no blur (also the lightest setting for the GPU). */
@@ -72,4 +73,4 @@ html.pf-no-glow button:hover, html.pf-no-glow button.primary, html.pf-no-glow bu
 html.pf-no-glow .logo-jc { box-shadow: var(--hi); }
 /* Animations off */
 html.pf-no-motion *, html.pf-no-motion *::before, html.pf-no-motion *::after { animation: none !important; transition: none !important; }
-html.pf-no-motion .stat:hover, html.pf-no-motion .hot-slot:hover, html.pf-no-motion .pf-preset:hover { transform: none; }
+html.pf-no-motion .stat:hover, html.pf-no-motion .pf-preset:hover { transform: none; }
