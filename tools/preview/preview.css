@@ -1,0 +1,36 @@
+/* Preview-only additions (build.py appends this after the app's own CSS). */
+
+/* The app paints its background on <html> and keeps <body> transparent over the aurora layers. Here the body
+   carries the background instead (it propagates to the canvas, under everything), so the page never shows the
+   host's own background. */
+html { background: transparent; }
+body { background: var(--bg); }
+
+.preview-chip {
+  flex: none; align-self: center; margin-left: .2rem; padding: .12rem .55rem;
+  font: 700 .6rem/1.5 var(--font-ui); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
+  color: var(--amber); border: 1px solid rgb(var(--amber-rgb) / .55); border-radius: var(--r-pill);
+  background: rgb(var(--amber-rgb) / .08); text-shadow: none;
+}
+
+.preview-note {
+  flex: none; display: flex; align-items: center; gap: .6rem; min-width: 0;
+  padding: .3rem 1rem .3rem 1.25rem; font: 500 .76rem/1.4 var(--font-ui); color: var(--muted);
+  background: rgb(var(--amber-rgb) / .07); border-bottom: 1px solid rgb(var(--amber-rgb) / .22);
+}
+.preview-note > span { flex: 1; min-width: 0; }
+.preview-note[hidden] { display: none; }
+.preview-note button { flex: none; }
+
+@media (max-width: 700px) {
+  .preview-chip { font-size: .56rem; padding: .1rem .45rem; }
+  .preview-note { padding: .3rem .75rem; font-size: .72rem; }
+}
+
+/* VS Code tab: say up front that the editor needs the desktop app. */
+#tab-vscode .vsc-msg::before {
+  content: "Preview: VS Code and Claude Code run only in the Command Center desktop app.";
+  display: block; margin-bottom: .8rem; padding: .45rem .7rem; border-radius: var(--r-card);
+  font: 600 .82rem/1.4 var(--font-ui); color: var(--amber);
+  border: 1px solid rgb(var(--amber-rgb) / .4); background: rgb(var(--amber-rgb) / .07);
+}
