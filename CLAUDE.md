@@ -4,6 +4,8 @@ Joe calls this app **CC**. What it is, how it's built, and its security model ar
 
 @PROJECT.md
 
+**Session hand-off:** `SESSIONS.md` (newest entry first) says what the last session did, what's in flight, what's waiting on a restart and what's waiting on Joe. Joe starts with the `start-session` skill and ends with `close-session`.
+
 ## Working rules
 - **The live app is Joe's.** It runs on 127.0.0.1:8765. Never restart, stop or reconfigure it, and never touch its embedded VS Code server. Restarting CC kills the embedded VS Code and any Claude chat running inside it, so Joe restarts only when told it's safe. When telling him, list what the restart will load.
 - **Don't leave the tree half-done for a restart.** If work is in progress (yours or an agent's), say so before Joe restarts. Commit finished, tested work on `main` (no remote). Don't commit half-finished work.
