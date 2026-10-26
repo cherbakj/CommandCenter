@@ -109,6 +109,7 @@ Appearance (colors, text size, density, effects: glow, frosted glass, background
   - **Missed:** reminders due while Command Center wasn't running or the PC slept or was locked show once, together in the same pop-up marked "missed" (due more than 2 min before they could fire). Ones over 12 h old never fire.
   - **Timing:** checked every 20 s (sooner when one is due) on the local wall clock: a DST change fires the skipped hour's reminders at 3:00 and the repeated hour's only once; clock jumps and resume from sleep are picked up at the next check; nothing fires twice for the same day.
   - **Locked vault / Privacy mode:** reminders still pop up, saying only "Personal reminder at 3:00 PM", with Unlock to see the text; Done and Snooze work without unlocking.
+- **Snip (`snip.py`, `snip.js`):** ✂ Snip in the header (icon only in a tight header, hidden under 480px) or Ctrl+K "Snip screen" / "Snip in 3 seconds" opens Windows' own snip overlay (`ms-screenclip:`, as Win+Shift+S; `POST /api/snip {delay}`, 0-10 s). Pick rectangle / free-form / window / full screen there; Windows copies the snip to the clipboard (and offers markup in Snipping Tool). Captures the native Pulse / Teams / SSMS views too. Command Center never sees or stores the image.
 - **Quick capture (`capture.js`, Ctrl+Alt+Space):** a global hotkey (`ui.capture_hotkey`) registered in `desktop.py`. Captures a task, or a personal note when the vault is unlocked; Task / Personal by click, Alt+1 / Alt+2 or the arrow keys on the choice (Tab just moves focus). It respects the app lock. In Privacy mode a saved Personal choice is never turned into a task: it says "Personal is off (Privacy mode)" and saves (Enter included) only after Task is picked.
 - **Pulse aging:** business days a ticket has waited on Joe, warn/overdue buckets (`pulse.aging_*`), a daily alert, and a Today tile (only while something is aging or overdue; it opens Pulse Feedback).
 - **Mail / Websites tabs:** as before.
@@ -172,12 +173,12 @@ Appearance (colors, text size, density, effects: glow, frosted glass, background
 - **Dev bypass:** `CC_DEV_NO_AUTH=1` works in `serve` mode only and logs a warning.
 
 ## Code layout
-- `commandcenter/app.py`: core routes. Auto-loads the feature modules security, toolkit, pulse, terminal, vscode, planner, profile, feeds, daily, vault, privacy, spam, offhours and reminders (each exposes `router` and optionally `background`).
+- `commandcenter/app.py`: core routes. Auto-loads the feature modules security, toolkit, pulse, terminal, vscode, planner, profile, feeds, daily, vault, privacy, spam, offhours, reminders and snip (each exposes `router` and optionally `background`).
 - `commandcenter/overlay.py` (native windows over tabs), `siteview.py` (the Pulse and Teams site views) and `ssmsdock.py` (the SQL tab's SSMS dock), used by `desktop.py`.
 - `commandcenter/connectors/`: outlook, web, sql, sqlcert, asana, weather, teams. `people.py` handles internal domains, urgent people and important senders.
 - `commandcenter/static/`:
   - Core UI: `app.js`, `style.css`, `index.html` (+ `teams.css` for the Teams tab; its code is the "teams" section of `app.js`).
-  - Feature modules: `vscode`, `toolkit`, `pulse` (+ `pulseview.js`), `teamsview.js` (Teams on the web; its CSS is in `teams.css`), `ssms` (SQL tab), `nativestage.js` (stage reports for native windows), `planner`, `daycal` (Today's calendar), `profile`, `splash`, `daily`, `triage`, `capture`, `privacy`, `spam`, `important` (important senders), `offhours`, `personal` (`.js`/`.css`).
+  - Feature modules: `vscode`, `toolkit`, `pulse` (+ `pulseview.js`), `teamsview.js` (Teams on the web; its CSS is in `teams.css`), `ssms` (SQL tab), `nativestage.js` (stage reports for native windows), `planner`, `daycal` (Today's calendar), `profile`, `splash`, `daily`, `triage`, `capture`, `privacy`, `spam`, `important` (important senders), `offhours`, `personal` (`.js`/`.css`), `snip` (`.js`).
   - Shared assets: `jc-logo.svg` and `icon.ico` (the JC monogram).
 - `data/` (git-ignored, private ACL): the SQLite DB, log, browser profiles, `vscode/`, and the ACL backup.
 

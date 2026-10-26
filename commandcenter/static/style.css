@@ -821,7 +821,7 @@ dialog:focus-visible { outline: none; }
 
 /* ---- header at smaller widths: one row from 1920px up, then the nav groups wrap to a second row ---- */
 /* Labels next to the search key and the status dots show while the header has room (app.js fitHeader). */
-body > header.hdr-tight .search-btn span, body > header.hdr-tight .status-name { display: none; }
+body > header.hdr-tight .search-btn span, body > header.hdr-tight .status-name, body > header.hdr-tight .snip-word { display: none; }
 body > header.hdr-tight .status > span { padding: .28rem .45rem; }
 body > header.hdr-tight .status .dot { margin-right: 0; }
 @media (max-width: 2799px) {
@@ -845,13 +845,14 @@ body > header.nav-wrap .navs { order: 3; flex-basis: 100%; }
   body > header { gap: .6rem; padding: .5rem .75rem; }
   .work-bar { flex-wrap: wrap; row-gap: .4rem; }
   .project-select { order: 5; flex: 1 1 100%; max-width: none; }
-  .logo-text { display: none; }
+  .logo-text, .snip-word { display: none; }
   main.ws-single .pane-body { padding: 1rem; }
   main.ws-single .work-bar { margin: .75rem 1rem 0; }
   .project-path { display: none; }
   .project-select { min-width: 0; }
   .hours { grid-template-columns: repeat(3, 1fr); }
 }
+@media (max-width: 480px) { #snip-btn { display: none; } }  /* Ctrl+K still has "Snip screen" */
 @media (max-width: 340px) { .search-btn span { display: none; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
