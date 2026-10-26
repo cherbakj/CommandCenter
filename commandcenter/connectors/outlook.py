@@ -202,6 +202,79 @@ def recent_mail(limit=50, unread_only=False) -> list[dict]:
     return out
 
 
+UNREAD_MAX = 100   # unread Inbox mail the Mail tab lists on top, newest first
+SEARCH_MAX = 60
+
+
+def _summaries(entry_ids, folder="Inbox") -> list[dict]:
+    """Mail-list rows for these EntryIDs (spam-blocked mail left out, important senders starred)."""
+    ns, blocked, important, out = _ns(), _blocked(), people.important_senders(), []
+    for entry_id in entry_ids:
+        try:
+            item = ns.GetItemFromID(entry_id)
+            if item.Class != OL_MAIL:
+                continue
+            if folder == "Inbox" and blocked and blocked.hit(_sender_smtp(item), lambda: item.Subject, item.SenderName):
+                continue
+            m = _summary(item)
+            if folder == "Sent":
+                m["to"] = item.To or ""  # the list shows who it went to
+        except pywintypes.com_error:
+            continue  # moved or deleted meanwhile
+        m["important"] = people.is_important(m["sender"], important)
+        m["folder"] = folder
+        out.append(m)
+    return out
+
+
+def _newest(rows, tag=None) -> list:
+    """(EntryID, time, MessageClass) table rows -> EntryIDs of the emails, newest first (tag: (when, EntryID, tag))."""
+    mail = [(when.timestamp() if when else 0, eid) for eid, when, cls in rows if (cls or "").startswith("IPM.Note")]
+    mail.sort(reverse=True)
+    return [(t, eid, tag) for t, eid in mail] if tag else [eid for _, eid in mail]
+
+
+def _search_where(q: str, body: bool) -> str:
+    v = q.replace("'", "''")
+    parts = [f'"urn:schemas:httpmail:{f}" LIKE \'%{v}%\'' for f in ("subject", "fromname", "fromemail", "displayto")]
+    if body:  # the message text, through Outlook's search index (word / phrase match)
+        parts.append(f'"urn:schemas:httpmail:textdescription" ci_phrasematch \'{v}\'')
+    return "@SQL=(" + " OR ".join(parts) + ")"
+
+
+def _search_rows(folder_id, date_field, q) -> list:
+    for body in (True, False):
+        try:
+            return list(_table_rows(folder_id, _search_where(q, body), ["EntryID", date_field, "MessageClass"], 5000))
+        except pywintypes.com_error:
+            continue  # a store without a search index refuses ci_phrasematch: subject and people only
+    return []
+
+
+def mail_view(limit=50, unread_only=False, query="") -> dict:
+    """The Mail tab. No query: every unread Inbox email (newest UNREAD_MAX) plus the newest `limit` (unread only:
+    just the unread). Query: the newest SEARCH_MAX emails in the Inbox and Sent Items whose subject, sender,
+    recipients or text match. unread_total counts the Inbox's unread emails."""
+    unread_rows = list(_table_rows(OL_FOLDER_INBOX, "[UnRead] = True", ["EntryID", "ReceivedTime", "MessageClass"], 5000))
+    unread_ids = _newest(unread_rows)
+    total = len(unread_ids)
+    if query:
+        hits = _newest(_search_rows(OL_FOLDER_INBOX, "ReceivedTime", query), "Inbox") \
+            + _newest(_search_rows(OL_FOLDER_SENT, "SentOn", query), "Sent")
+        hits.sort(reverse=True)  # newest first across both folders; opened only until SEARCH_MAX are shown
+        found = []
+        for _, eid, folder in hits[:SEARCH_MAX * 4]:  # (spam-blocked mail still in the Inbox is skipped)
+            found += _summaries([eid], folder)
+            if len(found) >= SEARCH_MAX:
+                break
+        return {"mail": found, "unread_total": total, "query": query}
+    mail = _summaries(unread_ids[:UNREAD_MAX])
+    if not unread_only:
+        seen = {m["id"] for m in mail}
+        mail += [m | {"folder": "Inbox"} for m in recent_mail(limit) if m["id"] not in seen]
+    return {"mail": mail, "unread_total": total, "query": ""}
+
+
 def get_message(entry_id) -> dict:
     item = _ns().GetItemFromID(entry_id)
     d = _summary(item)

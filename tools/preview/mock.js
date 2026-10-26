@@ -538,7 +538,13 @@
         teams: teamsState(), focus, ui: { accent: profile.accent, workday: ["08:00", "17:00"] }, desktop: false, config_path: "config.yaml" });
       case "/alerts": return json({ alerts: (q.get("unread_only") === "true" ? alerts.filter((a) => !a.read) : alerts).slice().sort((a, b) => b.ts.localeCompare(a.ts)), unread: unreadAlerts() });
       case "/today": return json(todayData(), 200, 120);
-      case "/mail": return json({ mail: inbox().filter((m) => q.get("unread_only") !== "true" || m.unread).map((m) => mailOut(m, [...MAILKEYS, "from_name", "to", "folder"])) });
+      case "/mail": {
+        const term = (q.get("q") || "").toLowerCase();
+        const all = inbox();
+        let list = term ? all.filter((m) => [m.subject, m.sender_name, m.sender, m.preview].some((v) => String(v || "").toLowerCase().includes(term)))
+          : all.filter((m) => q.get("unread_only") !== "true" || m.unread);
+        return json({ mail: list.map((m) => ({ folder: "Inbox", ...mailOut(m, [...MAILKEYS, "from_name", "to", "folder"]) })), unread_total: all.filter((m) => m.unread).length, query: q.get("q") || "" });
+      }
       case "/mail/item": { const m = findMail(q.get("id")); return m ? json({ ...m, important: isImportant(m), body: m.body || `(Sent item)\n\n${m.subject}`, to: m.to, cc: m.cc || "" }) : fail(404, "That message isn't in the preview's sample data."); }
       case "/meetings": { const hours = Number(q.get("hours") || 24), end = new Date(Date.now() + hours * 3600000);
         const list = [...agenda, ...futureMeetings(1)].filter((m) => new Date(m.end) > new Date() && new Date(m.start) < end).sort((a, b) => a.start.localeCompare(b.start));

@@ -556,66 +556,205 @@ function alertSource(a) {
   return ALERT_SOURCES[a.source] || "system";
 }
 
-// An email opened from elsewhere (View on a follow-up, the calendar…) that isn't in the recent list is
-// pinned at the top of it, so the list always shows what's open.
+// The Mail tab: every unread Inbox email on top ("Unread"), then the newest mail ("Earlier"); or a search of the
+// Inbox and Sent Items (subject, people, text). Rows are two lines: who and when, then the subject and a one-line
+// preview; the address shows on hover and in the reader. An email read here stays in the Unread section (shown
+// read) until the list is refreshed, so the list doesn't jump. On a narrow pane the list and the reader take turns.
+// An email opened from elsewhere (View on a follow-up, the calendar…) that isn't in the list is pinned at the top.
 let pinnedMail = null;
+const mailState = { query: "", filter: store.get("cc.mail.filter") === "unread" ? "unread" : "all", sticky: new Set(), seq: 0, data: null };
 
-loaders.mail = () => guarded(async () => {
-  const { mail } = await api(`/api/mail?unread_only=${$("#mail-unread").checked}`);
-  if (pinnedMail && pinnedMail.id === selectedMail && !mail.some((m) => m.id === pinnedMail.id)) mail.unshift(pinnedMail);
-  fill($("#mail-list"), mail.map((m) => el("li", {
-      class: `clickable ${m.unread ? "unread" : ""} ${m.id === selectedMail ? "selected" : ""}`,
-      "data-id": m.id,
+// Today: the time; this week: the weekday; this year: "Oct 21"; older: the date.
+function mailTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso), now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (now - d < 6 * 864e5 && d < now) return d.toLocaleDateString([], { weekday: "short" });
+  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return d.toLocaleDateString([], { year: "2-digit", month: "numeric", day: "numeric" });
+}
+
+function mailRow(m) {
+  const sent = m.folder === "Sent";
+  const who = sent ? `To: ${m.to || "(no recipients)"}` : m.sender_name || m.sender || "(unknown sender)";
+  return el("li", {
+      class: `mail-row clickable ${m.unread ? "unread" : ""} ${m.id === selectedMail ? "selected" : ""}`, "data-id": m.id, tabindex: "0",
+      "aria-label": `${m.unread ? "Unread. " : ""}${who}. ${m.subject}. ${when(m.received)}`,
       onclick: () => showMail(m.id),
+      onkeydown: (e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); showMail(m.id); } },
     },
-    el("div", { class: "grow" },
-      el("div", { class: "title" }, m.important ? importantStar() : "", m.high_importance ? "❗ " : "", m.flagged ? el("span", { class: "flag" }, "⚑ ") : "", m.subject),
-      el("div", { class: "src-line" }, srcTag("outlook", m.pinned ? "opened" : "Inbox"), m.pinned && el("span", { class: "tag" }, "Opened"), fromLine(m.sender_name, m.sender)),
-      el("div", { class: "muted" }, when(m.received), " · ", m.preview.slice(0, 120))),
-    mailActions(m, "row"),
-  )), "No mail");
-});
+    el("span", { class: "mr-dot", "aria-hidden": "true" }),
+    el("div", { class: "mr-main" },
+      el("div", { class: "mr-top" },
+        el("span", { class: "mr-from", title: sent ? m.to || "" : fromLine(m.sender_name, m.sender) }, m.important ? importantStar() : "", who),
+        !sent && m.sender && m.sender_name && el("span", { class: "mr-addr" }, m.sender),
+        el("span", { class: "mr-icons" },
+          sent && el("span", { class: "tag" }, "Sent"), m.pinned && el("span", { class: "tag" }, "Opened"),
+          m.high_importance && el("span", { class: "mr-imp", title: "High importance" }, "❗"),
+          m.flagged && el("span", { class: "flag", title: "Flagged" }, "⚑")),
+        el("time", { class: "mr-time", datetime: m.received || "", title: when(m.received) }, mailTime(m.received))),
+      el("div", { class: "mr-subj" }, m.subject),
+      m.preview && el("div", { class: "mr-prev" }, m.preview.slice(0, 220))),
+    el("div", { class: "mr-acts" }, mailActions(m, "row")));
+}
+
+const mailGroup = (label, n) => el("li", { class: "mail-group", role: "presentation" }, el("span", {}, label), n != null && el("span", { class: "chip" }, String(n)));
+
+function renderMail() {
+  const r = mailState.data;
+  if (!r) return;
+  let mail = r.mail.slice();
+  if (pinnedMail && pinnedMail.id === selectedMail && !mail.some((m) => m.id === pinnedMail.id)) mail.unshift(pinnedMail);
+  const unreadish = (m) => m.unread || mailState.sticky.has(m.id);
+  if (mailState.filter === "unread") mail = mail.filter((m) => unreadish(m) || m.pinned);
+  const byDate = (a, b) => String(b.received || "").localeCompare(String(a.received || ""));
+  const pinned = mail.filter((m) => m.pinned);
+  const unread = mail.filter((m) => !m.pinned && unreadish(m)).sort(byDate);
+  const rest = mail.filter((m) => !m.pinned && !unreadish(m)).sort(byDate);
+  const rows = [];
+  if (pinned.length) rows.push(mailGroup("Opened"), ...pinned.map(mailRow));
+  if (unread.length) rows.push(mailGroup("Unread", unread.filter((m) => m.unread).length), ...unread.map(mailRow));
+  if (rest.length) rows.push(mailGroup(r.query ? (unread.length ? "Other results" : "Results") : "Earlier"), ...rest.map(mailRow));
+  const empty = r.query ? `Nothing in the Inbox or Sent Items matches “${r.query}”.` : mailState.filter === "unread" ? "No unread mail. Inbox zero." : "No mail";
+  fill($("#mail-list"), rows, empty);
+  const count = $("#mail-unread-count");
+  count.hidden = !r.unread_total;
+  count.textContent = r.unread_total || "";
+  setMailStatus(r.query ? [`${r.mail.length}${r.mail.length >= 60 ? "+" : ""} result${r.mail.length === 1 ? "" : "s"} for “${r.query}” in the Inbox and Sent Items `,
+    el("button", { type: "button", class: "small subtle", onclick: () => setMailQuery("") }, "Clear")] : null);
+}
+
+function setMailStatus(parts, cls = "") {
+  const box = $("#mail-status");
+  box.hidden = !parts;
+  box.className = `mail-status ${cls}`;
+  box.replaceChildren(...[parts || []].flat().filter(Boolean));
+}
+
+loaders.mail = async () => {
+  const my = ++mailState.seq, q = mailState.query;
+  if (q) setMailStatus(`Searching for “${q}”…`);
+  try {
+    const r = await api(`/api/mail?unread_only=${mailState.filter === "unread" && !q}&q=${encodeURIComponent(q)}`);
+    if (my !== mailState.seq) return;  // a newer search or filter is on its way
+    mailState.data = r;
+    renderMail();
+  } catch (e) {
+    if (my !== mailState.seq) return;
+    setMailStatus(e.message, "err");
+  }
+};
+
+// Refresh, a new search or another filter starts the list over (emails read meanwhile leave the Unread section).
+function reloadMail() { mailState.sticky.clear(); return loaders.mail(); }
+function setMailQuery(q) {
+  mailState.query = q;
+  if ($("#mail-search").value !== q) $("#mail-search").value = q;
+  reloadMail();
+}
+function setMailFilter(f) {
+  mailState.filter = f;
+  store.set("cc.mail.filter", f === "unread" ? "unread" : null);
+  $("#mail-f-all").setAttribute("aria-pressed", String(f !== "unread"));
+  $("#mail-f-unread").setAttribute("aria-pressed", String(f === "unread"));
+  reloadMail();
+}
+
+function closeReader() {
+  const id = selectedMail;
+  selectedMail = null;
+  $("#tab-mail").classList.remove("reading");
+  $("#mail-view").className = "panel empty";
+  $("#mail-view").textContent = "Select a message";
+  document.querySelectorAll("#mail-list li.selected").forEach((li) => li.classList.remove("selected"));
+  if (id) document.querySelector(`#mail-list li[data-id="${CSS.escape(id)}"]`)?.focus();
+}
 
 async function showMail(id) {
   selectedMail = id;
+  $("#tab-mail").classList.add("reading");
   const view = $("#mail-view");
   view.className = "panel";
   view.replaceChildren(el("div", { class: "muted" }, "Loading…"));
+  document.querySelectorAll("#mail-list li.mail-row").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));
   await guarded(async () => {
     const m = await api(`/api/mail/item?id=${encodeURIComponent(id)}`);
     // Reading it closes its alerts too (server side, both ways); the badge follows.
     const seen = m.unread ? await api("/api/mail/read", { id, read: true }) : await api("/api/alerts/read-mail", { id });
-    if (m.unread) { m.unread = false; loaders.mail(); }
+    if (m.unread) {
+      m.unread = false;
+      mailState.sticky.add(id);  // stays in the Unread section until the list is refreshed
+      const row = mailState.data?.mail.find((x) => x.id === id);
+      if (row) { row.unread = false; renderMail(); }
+    }
     if (seen?.alerts_read) { refresh(); if ($("#tab-alerts").classList.contains("active")) loaders.alerts(); }
+    if (selectedMail !== id) return;  // another email was opened meanwhile
     const act = (path, body, msg) => guarded(async () => { await api(path, body); if (msg) showMessage("Done", msg); loaders.mail(); showMail(id); });
+    const more = () => [
+      el("button", { type: "button", onclick: () => newTaskDialog({ subject: m.subject, notes: `From ${m.sender_name} <${m.sender}>, ${when(m.received)}` }) }, "+ Task"),
+      el("button", { type: "button", onclick: () => snoozeDialog({ id, subject: m.subject, who: m.sender_name, kind: "mail" }) }, "Snooze"),
+      m.sender && el("button", { type: "button", onclick: () => openTeamsChat(m.sender, "") }, "Chat in Teams"),
+      el("button", { type: "button", onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook"),
+      ...mailActions(m, "reader"),
+    ].filter(Boolean);
     view.replaceChildren(
-      el("h2", {}, m.subject),
-      el("div", {}, m.important ? importantStar() : "", `${m.sender_name} <${m.sender}>`),
-      el("div", { class: "muted" }, `To: ${m.to}${m.cc ? "  ·  Cc: " + m.cc : ""}  ·  ${when(m.received)}`),
-      el("div", { class: "actions", style: "margin:10px 0" },
-        el("button", { class: "primary", onclick: () => replyDialog(m, false) }, "Reply"),
-        el("button", { onclick: () => replyDialog(m, true) }, "Reply all"),
-        el("button", { onclick: () => act("/api/mail/read", { id, read: m.unread }) }, m.unread ? "Mark read" : "Mark unread"),
-        el("button", { onclick: () => act("/api/mail/flag", { id, flagged: !m.flagged }) }, m.flagged ? "Clear flag" : "Flag"),
-        el("button", { onclick: () => newTaskDialog({ subject: m.subject, notes: `From ${m.sender_name} <${m.sender}>, ${when(m.received)}` }) }, "+ Task"),
-        el("button", { onclick: () => snoozeDialog({ id, subject: m.subject, who: m.sender_name, kind: "mail" }) }, "Snooze"),
-        m.sender && el("button", { class: "alt", onclick: () => openTeamsChat(m.sender, "") }, "Chat in Teams"),
-        el("button", { onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook"),
-        mailActions(m, "reader")),
+      el("div", { class: "mv-head" },
+        el("button", { type: "button", class: "small subtle mail-back", onclick: closeReader }, "← Back to list"),
+        el("h2", {}, m.subject),
+        el("div", { class: "mv-from" }, m.important ? importantStar() : "", el("b", {}, m.sender_name || m.sender),
+          m.sender && m.sender_name && el("span", { class: "muted" }, ` <${m.sender}>`),
+          el("span", { class: "mv-when muted" }, when(m.received))),
+        el("div", { class: "mv-to muted" }, `To: ${m.to}`, m.cc ? ` · Cc: ${m.cc}` : "")),
+      el("div", { class: "mv-actions" },
+        el("button", { type: "button", class: "small primary", onclick: () => replyDialog(m, false) }, "Reply"),
+        el("button", { type: "button", class: "small", onclick: () => replyDialog(m, true) }, "Reply all"),
+        el("button", { type: "button", class: "small", onclick: () => act("/api/mail/read", { id, read: m.unread }) }, m.unread ? "Mark read" : "Mark unread"),
+        el("button", { type: "button", class: "small", onclick: () => act("/api/mail/flag", { id, flagged: !m.flagged }) }, m.flagged ? "Clear flag" : "⚑ Flag"),
+        menuButton("More ▾", "More actions for this email", more, "small subtle", "left")),
       orderChips,
-      el("pre", {}, m.body),
+      el("pre", { class: "mv-body" }, m.body),
     );
     view.scrollTop = 0;
-    const listed = [...document.querySelectorAll("#mail-list li")].some((li) => li.dataset.id === id);
+    const listed = [...document.querySelectorAll("#mail-list li.mail-row")].some((li) => li.dataset.id === id);
     if (!listed || pinnedMail?.id === id) {
       pinnedMail = { id, subject: m.subject, sender_name: m.sender_name, sender: m.sender, received: m.received,
         preview: (m.body || "").replace(/\s+/g, " "), flagged: m.flagged, high_importance: m.high_importance, important: m.important, pinned: true };
-      if (!listed) await loaders.mail();
+      if (!listed) { if (mailState.data) renderMail(); else await loaders.mail(); }
     }
-    document.querySelectorAll("#mail-list li").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));
+    document.querySelectorAll("#mail-list li.mail-row").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));
     document.querySelector("#mail-list li.selected")?.scrollIntoView({ block: "nearest" });
     renderOrderChips(orderChips, `${m.subject}\n${m.body}`, id);
   });
+}
+
+// Search as you type (after a pause; Enter at once, Esc clears); All | Unread; Refresh; arrow keys move along the list.
+{
+  const input = $("#mail-search");
+  let timer = 0;
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length === 1) return;  // wait for a second character
+    timer = setTimeout(() => setMailQuery(q), 400);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); clearTimeout(timer); setMailQuery(input.value.trim().length >= 2 ? input.value.trim() : ""); }
+    else if (e.key === "Escape" && input.value) { e.preventDefault(); e.stopPropagation(); clearTimeout(timer); setMailQuery(""); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); document.querySelector("#mail-list li.mail-row")?.focus(); }
+  });
+  $("#mail-f-all").addEventListener("click", () => setMailFilter("all"));
+  $("#mail-f-unread").addEventListener("click", () => setMailFilter("unread"));
+  $("#mail-refresh").addEventListener("click", reloadMail);
+  $("#mail-list").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const rows = [...document.querySelectorAll("#mail-list li.mail-row")];
+    const i = rows.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))].focus();
+  });
+  $("#mail-f-all").setAttribute("aria-pressed", String(mailState.filter !== "unread"));
+  $("#mail-f-unread").setAttribute("aria-pressed", String(mailState.filter === "unread"));
 }
 
 // ---- order numbers ---------------------------------------------------------------
@@ -812,8 +951,6 @@ function reviewReply(m, replyAll, p, remindDays, typed = p.text) {
       recips.length ? sendBtn : el("button", { type: "button", class: "primary", onclick: openDraft }, "Open draft in Outlook")));
 }
 
-$("#mail-unread").addEventListener("change", loaders.mail);
-$("#mail-refresh").addEventListener("click", loaders.mail);
 
 // ---- calendar ----------------------------------------------------------------
 
@@ -2436,10 +2573,7 @@ window.CC = {
   // A message that left the Inbox (e.g. marked as spam): drop it from the reader and the pinned row.
   forgetMail(id) {
     if (pinnedMail?.id === id) pinnedMail = null;
-    if (selectedMail !== id) return;
-    selectedMail = null;
-    $("#mail-view").className = "panel empty";
-    $("#mail-view").textContent = "Select a message";
+    if (selectedMail === id) closeReader();
   },
 };
 $("#dialog").addEventListener("close", () => $("#dialog").classList.remove("wide"));

@@ -455,8 +455,12 @@ async def teams_check():
 # ---- outlook -----------------------------------------------------------------
 
 @app.get("/api/mail")
-async def mail(unread_only: bool = False, limit: int = 50):
-    return {"mail": await outlook.call(outlook.recent_mail, min(limit, 200), unread_only)}
+async def mail(unread_only: bool = False, limit: int = 50, q: str = ""):
+    """The Mail tab: all unread on top plus the newest mail, or (q) a search of the Inbox and Sent Items."""
+    q = " ".join(q.split())[:100]
+    if q and (len(q) < 2 or any(ord(c) < 32 for c in q)):
+        raise HTTPException(400, "Type at least 2 characters to search")
+    return await outlook.call(outlook.mail_view, min(max(limit, 1), 200), unread_only, q)
 
 
 @app.get("/api/mail/item")

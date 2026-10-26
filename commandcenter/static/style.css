@@ -671,18 +671,78 @@ button.fu-more { font-size: .9rem; line-height: 1; padding: .14rem .45rem; }
 /* ---- mail / sql / teams (sized by the pane, not the window) ---- */
 .split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }
 .split .list { max-height: 60vh; overflow-y: auto; }
-#mail-view { overflow: auto; overflow-wrap: anywhere; }
-@container pane (min-width: 50rem) {
-  #tab-mail.active { display: flex; flex-direction: column; height: 100%; min-height: 26rem; }
-  #tab-mail .split { flex: 1; min-height: 0; grid-template-columns: minmax(18rem, 2fr) minmax(0, 3fr); align-items: stretch; }
-  #tab-mail .split .list { max-height: none; height: 100%; }
-  #tab-mail #mail-view { min-height: 0; }
-  #mail-view pre { max-height: none; overflow: visible; }
+/* ---- Mail tab: search + All | Unread on top; the list (Unread, then Earlier) and the reader. Wide pane: side by
+   side. Narrow pane (the split COMMS side): the list, or the open email with a Back button. ---- */
+.mail-toolbar { gap: .5rem; flex-wrap: wrap; }
+.mail-search { flex: 1 1 16rem; max-width: 34rem; position: relative; }
+.mail-search::before { content: "⌕"; position: absolute; left: .7rem; top: 50%; transform: translateY(-52%); color: var(--muted); font-size: 1.05rem; pointer-events: none; }
+.mail-search input { width: 100%; padding-left: 2rem; }
+.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--r-pill); background: rgb(255 255 255 / .03); }
+.seg button { border-radius: var(--r-pill); border-color: transparent; background: transparent; display: inline-flex; align-items: center; gap: .35rem; }
+.seg button[aria-pressed="true"] { background: rgb(var(--accent-rgb) / .16); color: var(--text); }
+.seg .chip[hidden] { display: none; }
+.mail-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); min-height: 0; }
+.mail-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.mail-status { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font: .82rem var(--font-ui); color: var(--muted); padding: 0 .3rem .45rem; }
+.mail-status[hidden] { display: none; }
+.mail-status.err { color: var(--red); }
+#mail-list { overflow-y: auto; max-height: calc(100vh - var(--header-h) - 9rem); padding: .3rem; }
+#mail-list li.mail-group {
+  position: sticky; top: -.3rem; z-index: 1; display: flex; align-items: center; gap: .5rem;
+  padding: .6rem .7rem .35rem; border-radius: 0; background: var(--panel-solid);
+  font: 700 .66rem var(--font-display); letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
 }
-@container pane (min-width: 100rem) { #tab-mail .split { grid-template-columns: minmax(34rem, 1fr) minmax(0, 2.2fr); } }
-#mail-view { padding: 1.3rem 1.5rem; }
-#mail-view h2 { font: 700 1.35rem/1.3 var(--font-body); letter-spacing: -.01em; margin: 0 0 .5rem; color: #fff; }
-#mail-view pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font: 400 1rem/1.65 var(--font-body); max-height: 55vh; overflow-y: auto; border-top: 1px solid var(--line); padding-top: .9rem; color: var(--text); max-width: 80ch; }
+#mail-list li.mail-row { position: relative; display: grid; grid-template-columns: .5rem minmax(0, 1fr); gap: .6rem; align-items: start; padding: .55rem .7rem; }
+#mail-list li.mail-row.unread { background: var(--sep), linear-gradient(90deg, rgb(var(--accent-2-rgb) / .07), transparent 80%); }
+#mail-list li.mail-row.selected { box-shadow: inset 3px 0 0 var(--accent); background: rgb(var(--accent-rgb) / .1); }
+#mail-list li.mail-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.mr-dot { width: .5rem; height: .5rem; border-radius: 50%; margin-top: .42rem; }
+li.mail-row.unread .mr-dot { background: var(--accent-2); box-shadow: 0 0 .4rem rgb(var(--accent-2-rgb) / .7); }
+.mr-main { min-width: 0; }
+.mr-top { display: flex; align-items: baseline; gap: .5rem; min-width: 0; }
+.mr-from { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 .95rem var(--font-body); color: var(--text); }
+.mr-addr { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; color: var(--dim); }
+.mr-icons { display: inline-flex; align-items: center; gap: .3rem; flex: none; font-size: .8rem; }
+.mr-icons:empty { display: none; }
+.mr-time { margin-left: auto; flex: none; font: .78rem var(--font-ui); color: var(--muted); font-variant-numeric: tabular-nums; }
+.mr-subj { margin-top: .1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 .9rem/1.35 var(--font-body); color: var(--text); }
+.mr-prev { margin-top: .05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .82rem/1.35 var(--font-body); color: var(--muted); }
+li.mail-row.unread .mr-from, li.mail-row.unread .mr-subj { font-weight: 700; color: #fff; }
+li.mail-row.unread .mr-time { color: var(--accent-2); font-weight: 600; }
+/* Row actions (☆, Spam) float over the right edge on hover / focus, so the times stay in one column. */
+.mr-acts { position: absolute; right: .55rem; top: 50%; transform: translateY(-50%); display: flex; gap: .25rem; padding-left: 1.6rem;
+  background: linear-gradient(90deg, transparent, var(--panel-solid) 1.4rem); opacity: 0; pointer-events: none; transition: opacity .15s; }
+.mr-acts:empty { display: none; }
+#mail-list li.mail-row:hover .mr-acts, #mail-list li.mail-row:focus-within .mr-acts { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .mr-acts { position: static; transform: none; opacity: 1; pointer-events: auto; background: none; padding: .3rem 0 0; grid-column: 2; } }
+@container (max-width: 34rem) { .mr-addr { display: none; } }
+
+#mail-view { min-height: 0; overflow: auto; overflow-wrap: anywhere; padding: 1.2rem 1.5rem 1.5rem; }
+#mail-view.empty { display: grid; place-items: center; color: var(--muted); }
+.mail-back { display: none; margin-bottom: .6rem; }
+.mv-head h2 { font: 700 1.3rem/1.3 var(--font-body); letter-spacing: -.01em; margin: 0 0 .55rem; color: #fff; }
+.mv-from { display: flex; align-items: baseline; gap: .35rem; flex-wrap: wrap; font-size: .95rem; }
+.mv-when { margin-left: auto; font-size: .82rem; white-space: nowrap; }
+.mv-to { margin-top: .2rem; font-size: .82rem; }
+.mv-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin: .85rem 0 0; padding-bottom: .85rem; border-bottom: 1px solid var(--line); }
+#mail-view pre.mv-body { margin: .9rem 0 0; max-width: 78ch; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+  font: 400 1rem/1.65 var(--font-body); color: var(--text); background: none; border: 0; padding: 0; max-height: none; overflow: visible; }
+
+/* Narrow pane: the list, or the open email (Back returns to the list). */
+@container pane (max-width: 55.99rem) {
+  #tab-mail:not(.reading) #mail-view { display: none; }
+  #tab-mail.reading .mail-col { display: none; }
+  #tab-mail.reading .mail-back { display: inline-flex; }
+  #mail-view { max-height: calc(100vh - var(--header-h) - 8rem); }
+}
+/* Wide pane: list and reader side by side, both filling the height. */
+@container pane (min-width: 56rem) {
+  #tab-mail.active { display: flex; flex-direction: column; height: 100%; min-height: 26rem; }
+  .mail-split { flex: 1; grid-template-columns: minmax(22rem, 2fr) minmax(0, 3fr); align-items: stretch; }
+  #mail-list { flex: 1; max-height: none; }
+}
+@container pane (min-width: 100rem) { .mail-split { grid-template-columns: minmax(30rem, 1fr) minmax(0, 2fr); } }
+@container pane (max-width: 40rem) { .mail-word { display: none; } }
 .sql-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }
 @container pane (min-width: 46rem) { .sql-grid { grid-template-columns: minmax(16rem, 21rem) minmax(0, 1fr); } }
 #sql-tables { max-height: 19rem; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-card); padding: .2rem; }

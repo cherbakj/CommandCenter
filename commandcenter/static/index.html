@@ -133,13 +133,24 @@
 
     <!-- MAIL -->
     <section id="tab-mail" class="tab">
-      <div class="toolbar">
-        <label><input type="checkbox" id="mail-unread"> Unread only</label>
+      <!-- search, All | Unread, Refresh (spam.js adds Spam blocks); the list (unread on top) and the reader (app.js "mail") -->
+      <div class="toolbar mail-toolbar">
+        <div class="mail-search" role="search">
+          <input id="mail-search" type="search" placeholder="Search mail: subject, people, text" aria-label="Search mail (Inbox and Sent Items)"
+            autocomplete="off" spellcheck="false" maxlength="100">
+        </div>
+        <div class="seg" role="group" aria-label="Show">
+          <button id="mail-f-all" type="button" class="small" aria-pressed="true">All</button>
+          <button id="mail-f-unread" type="button" class="small" aria-pressed="false">Unread <span id="mail-unread-count" class="chip" hidden></span></button>
+        </div>
         <span class="spacer"></span>
-        <button id="mail-refresh">↻ Refresh</button>
+        <button id="mail-refresh" class="small" title="Refresh">↻<span class="mail-word"> Refresh</span></button>
       </div>
-      <div class="split">
-        <ul id="mail-list" class="list panel-list"></ul>
+      <div class="mail-split">
+        <div class="mail-col">
+          <div id="mail-status" class="mail-status" role="status" hidden></div>
+          <ul id="mail-list" class="list panel-list" aria-label="Messages"></ul>
+        </div>
         <article id="mail-view" class="panel empty">Select a message</article>
       </div>
     </section>
