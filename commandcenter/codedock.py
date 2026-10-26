@@ -32,6 +32,7 @@ import subprocess
 import sys
 import threading
 import time
+from ctypes import wintypes
 from pathlib import Path
 
 import win32con
@@ -49,6 +50,14 @@ WIN_CLASS = "Chrome_WidgetWin_1"
 KV_DOCK = "vscode:dock"   # windows to dock again after a restart (sealed kv: handle, pid, folder, active)
 LAUNCH_WAIT = 90          # seconds to wait for a newly opened folder's window
 MAX_INSET = 16
+
+# Clicks in a docked window (_watch_clicks): WM_PARENTNOTIFY's low word is the button message.
+WM_PARENTNOTIFY, WM_NCDESTROY = 0x0210, 0x0082
+BUTTON_DOWNS = {0x0201, 0x0204, 0x0207, 0x020B, 0x0246}  # left, right, middle, X button, pointer (touch / pen)
+SUBCLASS_ID = 0xCCD0
+LRESULT = ctypes.c_ssize_t
+SUBCLASSPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+                                  ctypes.c_size_t, ctypes.c_size_t)
 
 
 def code_exe() -> Path | None:
@@ -331,7 +340,44 @@ class CodeDock(NativeOverlay):
             self.panel.HandleDestroyed += lambda *_: self.release_all(
                 "Command Center window closing", minimize=getattr(self.app, "restarting", False), remember=True)
             self.panel.Resize += lambda *_: self._fit()
+            self._watch_clicks(int(self.panel.Handle.ToInt64()))
         return self.panel
+
+    def _watch_clicks(self, panel_hwnd: int):
+        """A click in a docked VS Code gives it the keyboard. As a child window VS Code (Chromium) is never the active
+        window, so it doesn't take the focus itself and keys kept going to the dashboard. The panel hears of every
+        button press in its children (WM_PARENTNOTIFY) through a window subclass."""
+        comctl = ctypes.WinDLL("comctl32")
+        try:
+            set_sub, def_proc, remove = comctl.SetWindowSubclass, comctl.DefSubclassProc, comctl.RemoveWindowSubclass
+        except AttributeError:  # comctl32 5.x exports them by ordinal only
+            set_sub, def_proc, remove = comctl[410], comctl[413], comctl[412]
+        def_proc.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+        def_proc.restype = LRESULT
+
+        def proc(hwnd, msg, wp, lp, uid, ref):
+            try:
+                if msg == WM_PARENTNOTIFY and (wp & 0xFFFF) in BUTTON_DOWNS:
+                    self._invoke(self._take_keyboard)
+                elif msg == WM_NCDESTROY:
+                    remove(wintypes.HWND(hwnd), self._click_proc, SUBCLASS_ID)
+            except Exception as e:
+                log.warning("VS Code dock: click hook failed (%s)", type(e).__name__)
+            return def_proc(hwnd, msg, wp, lp)
+        self._click_proc = SUBCLASSPROC(proc)  # kept alive as long as the panel
+        if not set_sub(wintypes.HWND(panel_hwnd), self._click_proc, SUBCLASS_ID, 0):
+            log.warning("VS Code dock: no click hook, so typing in a docked VS Code won't work (Undock it)")
+
+    def _take_keyboard(self):
+        with self._dock_lock:
+            hwnd = self.active
+        if not hwnd or self.panel is None or not self.panel.Visible or not win32gui.IsWindow(hwnd):
+            return
+        user32 = ctypes.windll.user32
+        focus = user32.GetFocus()  # this thread's input is shared with the docked VS Code, so its focus shows here
+        if focus and (focus == hwnd or user32.IsChild(wintypes.HWND(hwnd), wintypes.HWND(focus))):
+            return
+        user32.SetFocus(wintypes.HWND(hwnd))
 
     def _dock(self, hwnd: int, pid: int, folder: str, activate: bool):
         if self.app.quitting or not win32gui.IsWindow(hwnd) or win32process.GetWindowThreadProcessId(hwnd)[1] != pid:
