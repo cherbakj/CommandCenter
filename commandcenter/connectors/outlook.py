@@ -202,6 +202,16 @@ def recent_mail(limit=50, unread_only=False) -> list[dict]:
     return out
 
 
+def sent_mail(limit=50) -> list[dict]:
+    """The newest sent emails (Sent Items), with who they went to."""
+    out = []
+    for item in _iter_folder(OL_FOLDER_SENT, "[SentOn]", limit):
+        m = _summary(item)
+        m.update(to=item.To or "", folder="Sent", important=False)
+        out.append(m)
+    return out
+
+
 UNREAD_MAX = 100   # unread Inbox mail the Mail tab lists on top, newest first
 SEARCH_MAX = 60
 
@@ -251,10 +261,11 @@ def _search_rows(folder_id, date_field, q) -> list:
     return []
 
 
-def mail_view(limit=50, unread_only=False, query="") -> dict:
+def mail_view(limit=50, unread_only=False, query="", folder="inbox") -> dict:
     """The Mail tab. No query: every unread Inbox email (newest UNREAD_MAX) plus the newest `limit` (unread only:
-    just the unread). Query: the newest SEARCH_MAX emails in the Inbox and Sent Items whose subject, sender,
-    recipients or text match. unread_total counts the Inbox's unread emails."""
+    just the unread); folder "sent": the newest `limit` sent emails instead. Query (either folder): the newest
+    SEARCH_MAX emails in the Inbox and Sent Items whose subject, sender, recipients or text match. unread_total counts
+    the Inbox's unread emails."""
     unread_rows = list(_table_rows(OL_FOLDER_INBOX, "[UnRead] = True", ["EntryID", "ReceivedTime", "MessageClass"], 5000))
     unread_ids = _newest(unread_rows)
     total = len(unread_ids)
@@ -268,6 +279,8 @@ def mail_view(limit=50, unread_only=False, query="") -> dict:
             if len(found) >= SEARCH_MAX:
                 break
         return {"mail": found, "unread_total": total, "query": query}
+    if folder == "sent":
+        return {"mail": sent_mail(limit), "unread_total": total, "query": "", "folder": "sent"}
     mail = _summaries(unread_ids[:UNREAD_MAX])
     if not unread_only:
         seen = {m["id"] for m in mail}
@@ -279,6 +292,12 @@ def get_message(entry_id) -> dict:
     item = _ns().GetItemFromID(entry_id)
     d = _summary(item)
     d.update(to=item.To or "", cc=item.CC or "", body=item.Body or "", important=people.is_important(d["sender"]))
+    try:
+        ns = _ns()
+        if ns.CompareEntryIDs(item.Parent.EntryID, ns.GetDefaultFolder(OL_FOLDER_SENT).EntryID):
+            d.update(folder="Sent", important=False)  # the reader offers no Spam / Mark important on Joe's own mail
+    except pywintypes.com_error:
+        pass
     return d
 
 

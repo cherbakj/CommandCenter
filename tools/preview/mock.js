@@ -541,6 +541,10 @@
       case "/mail": {
         const term = (q.get("q") || "").toLowerCase();
         const all = inbox();
+        if (!term && q.get("folder") === "sent") {
+          return json({ mail: sentMail.map((m) => ({ ...m, sender_name: ME.name, sender: ME.email, unread: false, important: false, preview: m.preview || "" })),
+            unread_total: all.filter((m) => m.unread).length, query: "", folder: "sent" });
+        }
         let list = term ? all.filter((m) => [m.subject, m.sender_name, m.sender, m.preview].some((v) => String(v || "").toLowerCase().includes(term)))
           : all.filter((m) => q.get("unread_only") !== "true" || m.unread);
         return json({ mail: list.map((m) => ({ folder: "Inbox", ...mailOut(m, [...MAILKEYS, "from_name", "to", "folder"]) })), unread_total: all.filter((m) => m.unread).length, query: q.get("q") || "" });

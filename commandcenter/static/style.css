@@ -680,7 +680,7 @@ button.fu-more { font-size: .9rem; line-height: 1; padding: .14rem .45rem; }
 .seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--r-pill); background: rgb(255 255 255 / .03); }
 .seg button { border-radius: var(--r-pill); border-color: transparent; background: transparent; display: inline-flex; align-items: center; gap: .35rem; }
 .seg button[aria-pressed="true"] { background: rgb(var(--accent-rgb) / .16); color: var(--text); }
-.seg .chip[hidden] { display: none; }
+.seg .chip[hidden], .seg[hidden] { display: none; }
 .mail-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); min-height: 0; }
 .mail-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .mail-status { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font: .82rem var(--font-ui); color: var(--muted); padding: 0 .3rem .45rem; }

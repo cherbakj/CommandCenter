@@ -36,7 +36,7 @@
   // Only received email with a real sender address (not Teams' notification emails, not sent mail).
   function eligible(m) {
     const addr = addressOf(m);
-    if (!m || !m.id || m.from_name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr)) return false;
+    if (!m || !m.id || m.from_name || m.folder === "Sent" || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr)) return false;
     const host = addr.split("@").pop();
     return !["teams.microsoft.com", "teams.mail.microsoft"].some((d) => inDomain(host, d));  // Teams' notification emails
   }

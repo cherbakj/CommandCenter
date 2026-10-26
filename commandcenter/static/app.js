@@ -562,7 +562,9 @@ function alertSource(a) {
 // read) until the list is refreshed, so the list doesn't jump. On a narrow pane the list and the reader take turns.
 // An email opened from elsewhere (View on a follow-up, the calendar…) that isn't in the list is pinned at the top.
 let pinnedMail = null;
-const mailState = { query: "", filter: store.get("cc.mail.filter") === "unread" ? "unread" : "all", sticky: new Set(), seq: 0, data: null };
+// Inbox | Sent picks the list (remembered in cc.mail.folder); All | Unread applies to the Inbox only.
+const mailState = { query: "", filter: store.get("cc.mail.filter") === "unread" ? "unread" : "all",
+  folder: store.get("cc.mail.folder") === "sent" ? "sent" : "inbox", sticky: new Set(), seq: 0, data: null };
 
 // Today: the time; this week: the weekday; this year: "Oct 21"; older: the date.
 function mailTime(iso) {
@@ -589,7 +591,7 @@ function mailRow(m) {
         el("span", { class: "mr-from", title: sent ? m.to || "" : fromLine(m.sender_name, m.sender) }, m.important ? importantStar() : "", who),
         !sent && m.sender && m.sender_name && el("span", { class: "mr-addr" }, m.sender),
         el("span", { class: "mr-icons" },
-          sent && el("span", { class: "tag" }, "Sent"), m.pinned && el("span", { class: "tag" }, "Opened"),
+          sent && mailState.data?.query && el("span", { class: "tag" }, "Sent"), m.pinned && el("span", { class: "tag" }, "Opened"),
           m.high_importance && el("span", { class: "mr-imp", title: "High importance" }, "❗"),
           m.flagged && el("span", { class: "flag", title: "Flagged" }, "⚑")),
         el("time", { class: "mr-time", datetime: m.received || "", title: when(m.received) }, mailTime(m.received))),
@@ -605,8 +607,9 @@ function renderMail() {
   if (!r) return;
   let mail = r.mail.slice();
   if (pinnedMail && pinnedMail.id === selectedMail && !mail.some((m) => m.id === pinnedMail.id)) mail.unshift(pinnedMail);
-  const unreadish = (m) => m.unread || mailState.sticky.has(m.id);
-  if (mailState.filter === "unread") mail = mail.filter((m) => unreadish(m) || m.pinned);
+  const sent = r.folder === "sent";
+  const unreadish = (m) => !sent && (m.unread || mailState.sticky.has(m.id));
+  if (mailState.filter === "unread" && !sent && !r.query) mail = mail.filter((m) => unreadish(m) || m.pinned);
   const byDate = (a, b) => String(b.received || "").localeCompare(String(a.received || ""));
   const pinned = mail.filter((m) => m.pinned);
   const unread = mail.filter((m) => !m.pinned && unreadish(m)).sort(byDate);
@@ -614,8 +617,9 @@ function renderMail() {
   const rows = [];
   if (pinned.length) rows.push(mailGroup("Opened"), ...pinned.map(mailRow));
   if (unread.length) rows.push(mailGroup("Unread", unread.filter((m) => m.unread).length), ...unread.map(mailRow));
-  if (rest.length) rows.push(mailGroup(r.query ? (unread.length ? "Other results" : "Results") : "Earlier"), ...rest.map(mailRow));
-  const empty = r.query ? `Nothing in the Inbox or Sent Items matches “${r.query}”.` : mailState.filter === "unread" ? "No unread mail. Inbox zero." : "No mail";
+  if (rest.length) rows.push(mailGroup(r.query ? (unread.length ? "Other results" : "Results") : sent ? "Sent" : "Earlier"), ...rest.map(mailRow));
+  const empty = r.query ? `Nothing in the Inbox or Sent Items matches “${r.query}”.` : sent ? "No sent mail"
+    : mailState.filter === "unread" ? "No unread mail. Inbox zero." : "No mail";
   fill($("#mail-list"), rows, empty);
   const count = $("#mail-unread-count");
   count.hidden = !r.unread_total;
@@ -635,7 +639,8 @@ loaders.mail = async () => {
   const my = ++mailState.seq, q = mailState.query;
   if (q) setMailStatus(`Searching for “${q}”…`);
   try {
-    const r = await api(`/api/mail?unread_only=${mailState.filter === "unread" && !q}&q=${encodeURIComponent(q)}`);
+    const folder = mailState.folder;
+    const r = await api(`/api/mail?unread_only=${mailState.filter === "unread" && !q && folder === "inbox"}&folder=${folder}&q=${encodeURIComponent(q)}`);
     if (my !== mailState.seq) return;  // a newer search or filter is on its way
     mailState.data = r;
     renderMail();
@@ -658,6 +663,18 @@ function setMailFilter(f) {
   $("#mail-f-all").setAttribute("aria-pressed", String(f !== "unread"));
   $("#mail-f-unread").setAttribute("aria-pressed", String(f === "unread"));
   reloadMail();
+}
+function showMailFolder() {
+  $("#mail-d-inbox").setAttribute("aria-pressed", String(mailState.folder === "inbox"));
+  $("#mail-d-sent").setAttribute("aria-pressed", String(mailState.folder === "sent"));
+  $("#mail-filter").hidden = mailState.folder === "sent";
+}
+function setMailFolder(f) {
+  mailState.folder = f;
+  store.set("cc.mail.folder", f === "sent" ? "sent" : null);
+  showMailFolder();
+  if (mailState.query) setMailQuery("");  // a folder pick ends a search (search covers both folders)
+  else reloadMail();
 }
 
 function closeReader() {
@@ -742,6 +759,9 @@ async function showMail(id) {
     else if (e.key === "Escape" && input.value) { e.preventDefault(); e.stopPropagation(); clearTimeout(timer); setMailQuery(""); }
     else if (e.key === "ArrowDown") { e.preventDefault(); document.querySelector("#mail-list li.mail-row")?.focus(); }
   });
+  $("#mail-d-inbox").addEventListener("click", () => setMailFolder("inbox"));
+  $("#mail-d-sent").addEventListener("click", () => setMailFolder("sent"));
+  showMailFolder();
   $("#mail-f-all").addEventListener("click", () => setMailFilter("all"));
   $("#mail-f-unread").addEventListener("click", () => setMailFilter("unread"));
   $("#mail-refresh").addEventListener("click", reloadMail);

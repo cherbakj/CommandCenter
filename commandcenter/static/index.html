@@ -133,13 +133,17 @@
 
     <!-- MAIL -->
     <section id="tab-mail" class="tab">
-      <!-- search, All | Unread, Refresh (spam.js adds Spam blocks); the list (unread on top) and the reader (app.js "mail") -->
+      <!-- search, Inbox | Sent, All | Unread (Inbox only), Refresh (spam.js adds Spam blocks); the list (unread on top) and the reader (app.js "mail") -->
       <div class="toolbar mail-toolbar">
         <div class="mail-search" role="search">
           <input id="mail-search" type="search" placeholder="Search mail: subject, people, text" aria-label="Search mail (Inbox and Sent Items)"
             autocomplete="off" spellcheck="false" maxlength="100">
         </div>
-        <div class="seg" role="group" aria-label="Show">
+        <div class="seg" role="group" aria-label="Folder">
+          <button id="mail-d-inbox" type="button" class="small" aria-pressed="true">Inbox</button>
+          <button id="mail-d-sent" type="button" class="small" aria-pressed="false">Sent</button>
+        </div>
+        <div id="mail-filter" class="seg" role="group" aria-label="Show">
           <button id="mail-f-all" type="button" class="small" aria-pressed="true">All</button>
           <button id="mail-f-unread" type="button" class="small" aria-pressed="false">Unread <span id="mail-unread-count" class="chip" hidden></span></button>
         </div>

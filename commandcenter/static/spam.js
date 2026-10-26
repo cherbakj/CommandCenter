@@ -32,7 +32,7 @@
   // this just keeps the button off where it would always be refused.
   function eligible(m) {
     const sender = String(m?.sender || "").trim().toLowerCase();
-    if (!m || !m.id || m.urgent || m.from_name || m.internal === true || !sender.includes("@")) return false;
+    if (!m || !m.id || m.urgent || m.from_name || m.internal === true || m.folder === "Sent" || !sender.includes("@")) return false;
     const host = sender.split("@").pop();
     if (host === "teams.microsoft.com" || host.endsWith(".teams.microsoft.com")) return false;
     return !info.internal.some((d) => host === d || host.endsWith(`.${d}`));
