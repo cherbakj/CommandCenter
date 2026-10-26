@@ -2,6 +2,52 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-26 (about 11 AM - 2:40 PM local)
+
+**Summary:** Nine of Joe's requests built, tested and committed. The biggest: desktop VS Code docked in the VS Code tab, so a CC restart keeps VS Code and its Claude chats running (it already worked live in Joe's 2:20 PM restart). Everything is live; nothing is waiting on a restart.
+
+### Done
+- `62041fc` Spam: a block deletes the alerts for that email, the previewed matching Inbox mail and other alerted emails it matches (Outlook lookup, newest 300), then Mail, Today, the alert feed and badge refresh. Today's **Recent alerts** column replaced by **Today's calendar** (`daycal.js`): a time grid of the day from `/api/planner?days=1` (Outlook, overlay calendars, personal entries; now line, all-day strip, overlaps side by side).
+- `d50e07e` Start-up: the launch puzzle (splash.js in gate mode, inlined by `desktop._gate_page`) plays behind Windows Hello instead of the padlock page; Unlock/Quit appear only if Hello fails. The dashboard then opens at `/#signed-in` and skips the fly-in. Lock still shows the padlock page.
+- `7f60cb4` Snip: ✂ Snip in the header and Ctrl+K open Windows' snip overlay (`ms-screenclip:`), which copies to the clipboard (`snip.py`, `snip.js`).
+- `ecd7bfa` Lunch blocks: Joe's recurring "Blocked" 12:00-1:30 (any plain appointment named Blocked/Lunch inside 11:00-14:30, `outlook.meetings.lunch`) shows as 🍽 Lunch: not counted, warned, prepped or summarized as a meeting.
+- `2c71c60` Vault stays unlocked for the day (`privacy.stay_unlocked_today`, default on): survives Windows lock, sleep and CC Lock; locks at midnight, with Lock vault, in Privacy mode and on restart.
+- `045dca7` + `44ccf58` **Docked desktop VS Code** (`codedock.py`, `codedock.js`): one window per project, the WORKING ON one shows. Restart/Quit hand the windows back (never closed) and record them (kv `vscode:dock`); the next start docks them again after unlock. Fix in `44ccf58`: later clean-up passes no longer wipe that record. CLAUDE.md rule updated (restarts must keep Joe's VS Code + Claude sessions alive). Web VS Code stays for serve mode.
+- `045dca7` Alerts: any action button marks the alert read; reading an email in CC marks its alerts read.
+- `be98df3` Mail tab: legible two-line rows, an **Unread** section on top with every unread Inbox email (not just the newest 50), All | Unread, and search across Inbox + Sent (subject, people, text via Outlook's index; ~3 s). Narrow pane: list and reader take turns.
+- Tests: preview check at 3 widths after each change (no page errors, no sideways scroll); unit tests with fakes (spam alert removal, vault lock rules 6/6, alert/mail read); a stand-in window + throwaway VS Code profile for the dock (16/16, then 9/9 for restart/quit incl. same VS Code processes before and after); read-only checks on Joe's real Outlook (lunch rule, mail view and search timings).
+
+### Decisions
+- Sign-in: keep Windows Hello at start, with the loading screen behind it (not "skip Hello at start").
+- VS Code: dock the real desktop VS Code (not "offer both" or "leave as is"). Running chats can't survive a web-VS-Code reload, which is why.
+- Vault: unlocked for the whole day; a CC restart still locks it (the key is never written to disk).
+- Snip: Windows' own snip overlay, not a CC-built tool.
+- Spam-blocked alerts are deleted (Undo doesn't bring them back). Mail rows drop the "OUTLOOK" source tag (address on hover and in the reader).
+- "Ledgeable" was taken as "legible".
+
+### Waiting on a restart
+- Nothing: CC restarted at 2:20 PM, after the last commit (2:18 PM). The tree is clean.
+
+### Waiting on Joe
+- [ ] **Remove the password he pasted into this chat** from the session transcript: run `C:\sonance\internal\CommandCenter\.venv\Scripts\python.exe -I "<scratchpad>\redact.py" fix` (the command is in the last message of the 2026-10-26 session; the script finds the message by its shape and overwrites it in place). Claude was blocked from editing its own transcript. Change that password if it's a real one (a copy went to Anthropic with the conversation).
+- [ ] Add the three weekday personal reminders (Personal tab). No reminder has ever been saved, which is why no pop-up has appeared.
+- [ ] Optional: blocked-sender mail still sitting in the Inbox (e.g. 23 matching "pricing"; CC hides it) can be moved with Spam → "Also move matching emails to Junk".
+- [ ] Still open from earlier: Toolkit → Connection → Test; SSMS AutoRecover on; sign in to the Pulse and Teams views; mark important senders; Google/iCloud calendar links; urgent people, Asana token.
+
+### In flight / not finished
+- Nothing uncommitted, no agents running. `redact.py` lives in the session's temp scratchpad; if it's gone, recreate it: find the single password-shaped user message in the transcript and overwrite it with `*` of the same length, in place.
+
+### Known issues
+- The start-up page always plays the puzzle, even with the launch animation turned off in Profile (it can't read the Profile before sign-in).
+- Docked VS Code: a force-kill or crash of CC closes docked VS Code windows (same as SSMS). Only tested at 100% display scaling.
+- After a crash or reboot the recorded VS Code windows are gone, so nothing re-docks (by design).
+- Carried over: the web VS Code terminal fails (0xC0000022); a hung docked SSMS or VS Code slows CC.
+
+### Incidents
+- Joe pasted what looks like a password into the chat. It was not used or stored by Claude; a scan found it in exactly one file on the PC (this session's transcript). Redaction was blocked by CC's safety rules, so Joe has to run the script himself (see Waiting on Joe).
+- The VS Code dock tests briefly showed a test window and a throwaway VS Code instance (temp profile, Joe's installed extensions read-only) on Joe's screen; all were closed by process command line. Joe's own VS Code windows were never targeted.
+- Read-only Outlook reads for checks: today's midday calendar item, this week's calendar (lunch rule), Inbox unread counts and search timings (counts only printed).
+
 ## 2026-10-25 (about 9 AM - 3:40 PM local)
 
 **Summary:** Fixed the boot error Joe hit ("Cannot read properties of null (reading 'replaceChildren')"). Then did the four open items from the last log: dead code removed, Today tools on one row, Pulse alerts open in the Pulse tab, and the preview artifact republished. Everything is committed and tested, and the tree is clean.
