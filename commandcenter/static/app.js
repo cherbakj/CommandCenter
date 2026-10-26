@@ -492,34 +492,22 @@ function alertAction(a) {
   return null;
 }
 
-function alertRow(a, compact = false) {
+function alertRow(a) {
   return el("li", { class: `alert-row ${a.read ? "" : "unread"}` },
     el("span", { class: `prio ${a.priority}` }),
     el("div", { class: "grow" },
       el("div", { class: "title" }, a.title),
-      a.body && el("div", { class: compact ? "fu-preview" : "" }, a.body),
+      a.body && el("div", {}, a.body),
       el("div", { class: "muted src-line" }, srcTag(alertSource(a), a.source), `${a.source} · ${when(a.ts)}`)),
     el("div", { class: "actions" }, alertAction(a),
       !a.read && el("button", { class: "small subtle", title: "Mark read", "aria-label": `Mark "${a.title}" read`,
-        onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); loadTodayAlerts(); }) }, "✓")));
+        onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); loaders.alerts(); }) }, "✓")));
 }
 
 loaders.alerts = () => guarded(async () => {
   const { alerts } = await api(`/api/alerts?unread_only=${$("#alerts-unread").checked}`);
   fill($("#alerts-list"), alerts.map((a) => alertRow(a)), "No alerts yet");
 });
-
-// The newest unread alerts, on Today (read ones are only on the Alerts tab).
-async function loadTodayAlerts() {
-  try {
-    const { alerts, unread } = await api("/api/alerts?unread_only=true");
-    fill($("#today-alerts"), alerts.slice(0, 12).map((a) => alertRow(a, true)), "No unread alerts");
-    $("#today-alerts-count").textContent = unread ? `${unread} UNREAD` : "ALL READ";
-  } catch (e) {
-    fill($("#today-alerts"), [el("li", { class: "err" }, e.message)], "");
-  }
-}
-$("#today-alerts-all").addEventListener("click", () => openTab("alerts"));
 
 $("#alerts-unread").addEventListener("change", loaders.alerts);
 $("#alerts-readall").addEventListener("click", () => guarded(async () => { await api("/api/alerts/read", {}); refresh(); }));
@@ -1816,7 +1804,6 @@ loaders.today = (refresh = false) => guarded(async () => {
     renderStats(todayData);
     renderSnoozedButton(todayData);
     updateTodayTabs(todayData);
-    loadTodayAlerts();
     // Feature modules (static/<module>.js) can react to fresh Today data without editing this file.
     document.dispatchEvent(new CustomEvent("cc:today", { detail: todayData }));
   } finally {
@@ -2312,7 +2299,6 @@ async function refresh() {
     renderTeamsBadge(st.teams);
     renderWindowControls(st);
     if (unread !== lastUnread && $("#tab-alerts").classList.contains("active")) loaders.alerts();
-    if (unread !== lastUnread && lastUnread !== -1 && $("#tab-today").classList.contains("active")) loadTodayAlerts();
     lastUnread = unread;
   } catch { $("#status").textContent = "Server not reachable"; }
 }
@@ -2387,6 +2373,7 @@ window.CC = {
   importantStar,  // the ★ before an important sender
   toast,  // short note in the corner
   get todayData() { return todayData; },
+  get workday() { return { ...WORKDAY }; },  // work hours {start, end} in hours (config offhours:)
   // The project picked in "Working on:" (right pane), or null. Changes fire document "cc:project" {detail:{path,name}}.
   get activeProject() { return activeProject(); },
   get projects() { return proj.list.slice(); },
@@ -2428,6 +2415,8 @@ window.CC = {
   addMeetingAction(fn) { if (typeof fn === "function") meetingActionSources.push(fn); },
   meetingActions,
   addMailAction(fn) { if (typeof fn === "function") mailActionSources.push(fn); },
+  // Alerts changed on the server (e.g. removed by a spam block): redraw the badge and the feed.
+  refreshAlerts() { refresh(); loaders.alerts(); },
   // A message that left the Inbox (e.g. marked as spam): drop it from the reader and the pinned row.
   forgetMail(id) {
     if (pinnedMail?.id === id) pinnedMail = null;

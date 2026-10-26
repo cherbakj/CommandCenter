@@ -199,6 +199,34 @@ def clear_alerts():
         _db().commit()
 
 
+def mail_alerts() -> list[tuple[int, str]]:
+    """(alert id, EntryID) of the alerts whose action opens an email, newest first."""
+    with _lock:
+        rows = _db().execute("SELECT id, action FROM alerts WHERE action IS NOT NULL ORDER BY id DESC").fetchall()
+    out = []
+    for alert_id, action in rows:
+        try:
+            a = json.loads(unseal(action))
+        except (SealError, ValueError):
+            continue
+        if isinstance(a, dict) and a.get("type") == "mail" and isinstance(a.get("id"), str):
+            out.append((alert_id, a["id"]))
+    return out
+
+
+def delete_alerts(ids) -> int:
+    ids = [int(i) for i in ids]
+    if not ids:
+        return 0
+    with _lock:
+        n = 0
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            n += _db().execute(f"DELETE FROM alerts WHERE id IN ({','.join('?' * len(chunk))})", chunk).rowcount
+        _db().commit()
+    return n
+
+
 # ---- key/value ----------------------------------------------------------------------------------------
 
 def kv_get(key, default=None):

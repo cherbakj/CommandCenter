@@ -23,6 +23,9 @@ Joe picks what to block each time: the exact sender address, the sender's whole 
   single-use preview_id (5 min) bound to the kind/value and the exact EntryIDs; POST /block uses it. Existing mail
   moves only if Joe ticks the box, and only the previewed ids that still match. /undo (30 s) removes the block and
   moves what this action moved back to the Inbox (new EntryIDs kept in memory only).
+- Alerts: a block deletes the feed's alerts (read or unread) for the email it started from, the matching Inbox mail
+  the preview found, and other alerted emails that match it (checked in Outlook, newest MAX_ALERT_LOOKUPS). Undo
+  doesn't bring them back (their "View mail" would point at the old EntryID).
 - Logging: counts and kinds only, never addresses, domains, subjects or phrases.
 """
 import asyncio
@@ -54,6 +57,7 @@ UNDO_SECONDS = 30
 MAX_BLOCKS = 500       # keeps the two rules well inside Exchange's rule storage
 MAX_MOVE = 500         # existing mail moved by one action
 MOVE_CHUNK = 50        # moves per Outlook-thread call, so other Outlook work can run in between
+MAX_ALERT_LOOKUPS = 300  # other mail alerts checked in Outlook against a new block (newest first)
 SAMPLE = 5
 PHRASE_MIN, PHRASE_MAX = 6, 120
 
@@ -340,6 +344,36 @@ def _move(ids, to_junk: bool, kind=None, value=None, trigger=False) -> tuple[lis
         except pywintypes.com_error:
             skipped += 1
     return moved, skipped
+
+
+def _alert_hits(entry_ids, kind, value) -> list[str]:
+    """Which of these emails (EntryIDs from mail alerts) the block matches. Gone or unreadable ones don't."""
+    ns, m, out = outlook._ns(), single(kind, value), []
+    for entry_id in entry_ids:
+        try:
+            item = ns.GetItemFromID(entry_id)
+            if item.Class == outlook.OL_MAIL and (item.SenderEmailType or "").upper() != "EX" \
+                    and m.hit(outlook._sender_smtp(item), item.Subject or "", item.SenderName or ""):
+                out.append(entry_id)
+        except pywintypes.com_error:
+            pass
+    return out
+
+
+async def _drop_alerts(kind, value, known) -> int:
+    """Deletes the alerts (read or not) for mail the new block covers: the emails the preview found (moved or
+    not, the app hides them either way) and, checked in Outlook, other alerted emails that match."""
+    alerts = db.mail_alerts()
+    drop = [a for a, e in alerts if e in known]
+    rest = [(a, e) for a, e in alerts if e not in known][:MAX_ALERT_LOOKUPS]
+    hits = set()
+    try:
+        for i in range(0, len(rest), MOVE_CHUNK):
+            hits.update(await outlook.call(_alert_hits, [e for _, e in rest[i:i + MOVE_CHUNK]], kind, value))
+    except outlook.OutlookClosed:
+        pass
+    drop += [a for a, e in rest if e in hits]
+    return db.delete_alerts(drop)
 
 
 def _com_message(e) -> str:
@@ -644,16 +678,20 @@ async def block(preview_id: str = Body(...), move_existing: bool = Body(False)):
             move_error = str(e)
         except pywintypes.com_error as e:
             move_error = f"Outlook couldn't move the mail: {_com_message(e)}"
+        try:
+            alerts_removed = await _drop_alerts(p["kind"], p["value"], {p["id"], *p["ids"]})
+        except pywintypes.com_error:
+            alerts_removed = 0
         rule = await sync()
     now = time.time()
     _prune(_undo, now)
     _undo[existing["id"]] = {"expires": now + UNDO_SECONDS, "created": created, "moved": moved}
-    log.info("Spam block %s: kind=%s, trigger %s, moved %d existing, skipped %d, rule %s",
+    log.info("Spam block %s: kind=%s, trigger %s, moved %d existing, skipped %d, %d alerts removed, rule %s",
              "added" if created else "re-used", p["kind"], "moved" if trigger_moved else "not moved",
-             len(moved) - int(trigger_moved), skipped, "saved" if rule.get("ok") else "not saved")
+             len(moved) - int(trigger_moved), skipped, alerts_removed, "saved" if rule.get("ok") else "not saved")
     return {"ok": True, "block": {**existing, "label": label(existing["kind"], existing["value"])}, "created": created,
             "trigger_moved": trigger_moved, "moved": len(moved) - int(trigger_moved), "skipped": skipped,
-            "move_error": move_error, "rule": rule, "undo_seconds": UNDO_SECONDS}
+            "alerts_removed": alerts_removed, "move_error": move_error, "rule": rule, "undo_seconds": UNDO_SECONDS}
 
 
 @router.post("/unblock")

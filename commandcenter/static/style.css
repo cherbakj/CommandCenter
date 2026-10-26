@@ -360,7 +360,7 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 
 /* Each list adapts to its own width: in a narrow column the buttons drop below the text
    instead of squeezing it (matters on laptops; on the ultrawide everything fits inline). */
-.a-agenda, .a-tasks, .a-alerts, .panel-list, #teams-activity { container-type: inline-size; }
+.a-agenda, .a-tasks, .panel-list, #teams-activity { container-type: inline-size; }
 @container (max-width: 36rem) {
   .list li { flex-wrap: wrap; row-gap: .4rem; }
   .list li > .actions { flex-basis: 100%; justify-content: flex-start; }
@@ -379,17 +379,16 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 
 /* ---- today layout ----
    The tabbed panel (Today's Agenda / Tasks / Follow-ups) is the main thing and gets the room. Clock + weather (one
-   compact panel) and the stats are a strip on top; recent alerts sit beside the tabbed panel on a wide pane and
-   under it on a narrow one. The layout follows the width of the PANE (container queries), so it works in the split
+   compact panel) and the stats are a strip on top; today's calendar (daycal.js) sits beside the tabbed panel on a
+   wide pane and under it on a narrow one. The layout follows the width of the PANE (container queries), so it works in the split
    view and in single-pane mode alike. */
 .today-layout {
   display: grid; gap: var(--gap);
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "strip" "work" "alerts";
+  grid-template-areas: "strip" "work" "day";
 }
 .a-strip { grid-area: strip; display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); min-width: 0; align-items: stretch; }
-.a-work { grid-area: work; } .a-alerts { grid-area: alerts; }
-.a-alerts .list { max-height: 24rem; overflow-y: auto; }
+.a-work { grid-area: work; } .a-day { grid-area: day; }
 /* Short window: the page scrolls, and a long tab scrolls inside the panel, at most about one screen tall. */
 .tw-panel { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; max-height: max(20rem, calc(100dvh - var(--header-h) - 9rem)); }
 .tw-panel[hidden], .tw-tools[hidden], .fu-rows[hidden], .fu-note[hidden], .tw-urgent[hidden] { display: none; }
@@ -456,16 +455,16 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 }
 @container pane (min-width: 72rem) {
   .a-strip { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.6fr); }
-  .today-layout { grid-template-columns: minmax(0, 2.1fr) minmax(21rem, 1fr); grid-template-areas: "strip strip" "work alerts"; }
+  .today-layout { grid-template-columns: minmax(0, 2.1fr) minmax(21rem, 1fr); grid-template-areas: "strip strip" "work day"; }
 }
 /* Tall enough: Today fills the pane exactly and each panel scrolls inside itself (no pane scroll). */
 @media (min-height: 900px) {
   @container pane (min-width: 46rem) {
     #tab-today.active { height: 100%; }
-    .today-layout { height: 100%; min-height: 34rem; grid-template-rows: auto minmax(0, 1fr) minmax(9rem, .3fr); }
-    .a-work, .a-alerts { overflow: hidden; min-height: 0; }
+    .today-layout { height: 100%; min-height: 34rem; grid-template-rows: auto minmax(0, 1fr) minmax(15rem, .55fr); }
+    .a-work, .a-day { overflow: hidden; min-height: 0; }
     .tw-panel { flex: 1; max-height: none; }
-    .a-alerts .list { flex: 1; max-height: none; }
+    .a-day .dc-scroll { flex: 1; max-height: none; }
   }
   @container pane (min-width: 72rem) {
     .today-layout { grid-template-rows: auto minmax(0, 1fr); }

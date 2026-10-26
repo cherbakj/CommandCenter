@@ -1,0 +1,53 @@
+/* Today's calendar (daycal.js): a time grid of the current day in Today's side column. --dc-hour is one hour's
+   height; events are placed with --t (hours from the top), --h (length in hours) and --col / --cols (overlaps). */
+.a-day { padding: .7rem .9rem .75rem; --dc-hour: 3.4rem; }
+.a-day .panel-head { margin-bottom: .5rem; }
+.dc-note { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: .76rem; margin-bottom: .4rem; }
+.dc-note[hidden], .dc-allday[hidden] { display: none; }
+
+.dc-allday { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin-bottom: .45rem; }
+.dc-allday-label { font-size: .64rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: .15rem; }
+.dc-allday-ev {
+  --ev: #ffd479; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: .74rem; padding: .12rem .5rem; border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--ev) 55%, transparent); background: color-mix(in srgb, var(--ev) 14%, transparent);
+}
+
+.dc-scroll { min-height: 0; overflow-y: auto; max-height: 26rem; border-top: 1px solid var(--line-soft); }
+.dc-grid { position: relative; min-height: calc(var(--hours, 9) * var(--dc-hour)); }
+.dc-hour { height: var(--dc-hour); border-bottom: 1px solid var(--line-soft); position: relative; }
+.dc-hour.off { background: rgb(255 255 255 / .022); }
+.dc-hour-label { position: absolute; top: .15rem; left: 0; width: 3.4rem; font-size: .66rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.dc-events { position: absolute; inset: 0 0 0 3.6rem; }
+.dc-ev {
+  --ev: #ffd479; --gap: 3px;
+  position: absolute; top: calc(var(--t) * var(--dc-hour) + 1px); height: calc(var(--h) * var(--dc-hour) - 2px);
+  left: calc(var(--col) / var(--cols) * 100%); width: calc(100% / var(--cols) - var(--gap));
+  display: flex; align-items: flex-start; gap: .3rem; overflow: hidden;
+  border-radius: .45rem; border: 1px solid color-mix(in srgb, var(--ev) 45%, transparent); border-left: 3px solid var(--ev);
+  background: color-mix(in srgb, var(--ev) 16%, rgb(var(--glass-rgb) / .85));
+}
+.dc-ev.k-meeting { --ev: #b3a6ff; }
+.dc-ev.k-personal, .dc-allday-ev.k-personal { --ev: var(--hot); }
+.dc-allday-ev.k-meeting { --ev: #b3a6ff; }
+.dc-ev.past { opacity: .5; }
+.dc-ev.live { box-shadow: 0 0 0 1px var(--ev), 0 0 .7rem color-mix(in srgb, var(--ev) 45%, transparent); }
+.dc-main {
+  all: unset; box-sizing: border-box; flex: 1; min-width: 0; height: 100%; padding: .2rem .4rem;
+  display: flex; flex-direction: column; gap: .05rem; overflow: hidden; color: var(--text);
+}
+button.dc-main { cursor: pointer; }
+button.dc-main:hover .dc-title { text-decoration: underline; }
+button.dc-main:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: .4rem; }
+.dc-title { font-size: .78rem; font-weight: 600; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.dc-time { font-size: .66rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* 30 minutes or less: one line, time after the title */
+.dc-ev.short .dc-main { flex-direction: row; align-items: center; gap: .4rem; padding-block: 0; }
+.dc-ev.short .dc-title { -webkit-line-clamp: 1; white-space: nowrap; display: block; min-width: 0; }
+.dc-join { flex: none; margin: .2rem .25rem 0 0; padding: .1rem .45rem; font-size: .68rem; }
+.dc-ev.short .dc-join { margin-top: 0; align-self: center; }
+
+.dc-now { position: absolute; left: 3.2rem; right: 0; top: calc(var(--t) * var(--dc-hour)); height: 0; border-top: 2px solid var(--red); z-index: 2; pointer-events: none; }
+.dc-now::before { content: ""; position: absolute; left: -.3rem; top: -.33rem; width: .55rem; height: .55rem; border-radius: 50%; background: var(--red); }
+.dc-empty { position: absolute; inset: 0 0 auto 3.6rem; padding: 1rem .5rem; text-align: center; font-size: .8rem; pointer-events: none; }

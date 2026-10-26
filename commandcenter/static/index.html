@@ -115,14 +115,8 @@
             <div id="followups" class="followups"></div>
           </div>
         </div>
-        <div class="panel a-alerts">
-          <div class="panel-head">
-            <span class="panel-label">RECENT ALERTS</span><span id="today-alerts-count" class="chip"></span>
-            <span class="spacer"></span>
-            <button id="today-alerts-all" class="small subtle" type="button">All alerts</button>
-          </div>
-          <ul id="today-alerts" class="list"></ul>
-        </div>
+        <!-- today's calendar: a time grid of the day (daycal.js) -->
+        <div class="panel a-day" id="today-day" role="region" aria-label="Today's calendar"></div>
       </div>
     </section>
     <!-- ALERTS -->
@@ -245,6 +239,7 @@
   <script src="/static/ssms.js"></script>
   <script src="/static/teamsview.js"></script>
   <script src="/static/planner.js"></script>
+  <script src="/static/daycal.js"></script>
   <script src="/static/profile.js"></script>
   <script src="/static/daily.js"></script>
   <script src="/static/triage.js"></script>

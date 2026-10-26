@@ -199,14 +199,16 @@
     refresh(true);
   }
 
-  // ---- after a block: refresh the views, toast with Undo -------------------------------------------
+  // ---- after a block: refresh the views (Mail, Today, the alert feed and badge), toast with Undo -----
   function done(m, r, opts) {
     CC.forgetMail?.(m.id);
     CC.loaders.mail?.();
     CC.loaders.today?.();
+    CC.refreshAlerts?.();
     opts.onBlocked?.(r);
     const moved = (r.moved || 0) + (r.trigger_moved ? 1 : 0);
     const parts = [`Blocked ${r.block.label}`, `moved ${moved} to Junk`];
+    if (r.alerts_removed) parts.push(`${plural(r.alerts_removed, "alert")} removed`);
     if (r.rule && r.rule.ok === false) parts.push("Outlook rule not saved (see Spam blocks)");
     if (r.move_error) parts.push(r.move_error);
     toast(parts.join(" · "), r.block.id, (r.undo_seconds || 30) * 1000 - 2000);
