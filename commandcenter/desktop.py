@@ -2,10 +2,12 @@
 (Edge WebView2 through pywebview), with a tray icon. Closing the window hides it to the tray so
 alerts keep running; Quit in the tray menu exits.
 
-Unlock: the window starts on a local lock screen, not the dashboard. The first time it is shown
-(at launch, or from the tray / a toast when it started minimized at sign-in) Windows Hello asks
-who you are (Windows password if Hello isn't set up). Only then does the window open the one-time
-/auth link that gives it the session cookie. There is no idle re-lock (security.unlock_on_start);
+Unlock: the window starts on a local start-up page, not the dashboard: the launch animation's puzzle
+assembling (static/splash.js in gate mode, no API calls). The first time it is shown (at launch, or from
+the tray / a toast when it started minimized at sign-in) Windows Hello asks who you are (Windows password
+if Hello isn't set up) in front of it; Unlock / Minimize / Hide / Quit appear only if that fails. Only then
+does the window open the one-time /auth link that gives it the session cookie, and the dashboard's splash
+carries on with the sync checks. Lock shows the padlock page (LOCK_HTML) instead. There is no idle re-lock (security.unlock_on_start);
 Lock in the dashboard (POST /api/session/lock) replaces the session secret and asks again.
 
 Window: frameless, full screen by default (ui.start_fullscreen). Command Center draws its own window
@@ -57,6 +59,36 @@ href="__ACTION__hide">Hide to tray</a><a class="quiet" href="__ACTION__quit">Qui
 
 def _lock_page(status: str) -> str:
     return LOCK_HTML.replace("__STATUS__", html.escape(status)).replace("__ACTION__", ACTION_URL)
+
+
+# The start-up page: the launch animation's puzzle (splash.js / splash.css inlined, gate mode) with the status
+# under it. Theme tokens are style.css's defaults (the Profile's colors live in the dashboard).
+GATE_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>Command Center</title><style>
+:root{--bg:#04070a;--accent:#39ff14;--accent-rgb:57 255 20;--accent-2:#00e5ff;--accent-2-rgb:0 229 255;
+--amber:#ffc21a;--amber-rgb:255 194 26;--text:#eef4f2;--muted:#b6c4c1;
+--font-display:"Segoe UI",sans-serif;--font-ui:"Segoe UI",sans-serif}
+html,body{margin:0;height:100%;overflow:hidden;background:#04070a;color:#eef4f2;font:16px "Segoe UI",sans-serif}
+.drag{position:fixed;top:0;left:0;right:0;height:2.5rem;z-index:200}
+.gate-foot{position:fixed;left:0;right:0;bottom:2rem;z-index:150;text-align:center;padding:0 1rem}
+#status{min-height:1.5em;color:#b6c4c1;margin-bottom:.7rem}#actions[hidden]{display:none}
+a{display:inline-block;margin:.3rem;padding:.6rem 1.2rem;border:1px solid #39ff14;color:#39ff14;
+text-decoration:none;border-radius:4px;font-weight:600}a.quiet{border-color:#334;color:#9fb3bb}
+a:hover{background:#39ff1422}
+__SPLASH_CSS__</style></head><body><div class="drag pywebview-drag-region"></div>
+<div class="gate-foot"><div id="status" role="status">__STATUS__</div><div id="actions" hidden>
+<a href="__ACTION__unlock">Unlock</a><a class="quiet" href="__ACTION__minimize">Minimize</a><a class="quiet"
+href="__ACTION__hide">Hide to tray</a><a class="quiet" href="__ACTION__quit">Quit</a></div></div>
+<script>window.CC_GATE=true;function setStatus(t,failed){document.getElementById('status').textContent=t;
+document.getElementById('actions').hidden=!failed}</script><script>__SPLASH_JS__</script></body></html>"""
+
+
+def _gate_page(status: str) -> str:
+    static = Path(__file__).parent / "static"
+    css, js = ((static / name).read_text(encoding="utf-8") for name in ("splash.css", "splash.js"))
+    if "</" in css or "</script" in js.lower():
+        return _lock_page(status)  # the inlined files must never close their own tags
+    page = GATE_HTML.replace("__STATUS__", html.escape(status)).replace("__ACTION__", ACTION_URL)
+    return page.replace("__SPLASH_CSS__", css).replace("__SPLASH_JS__", js)
 
 
 JC_J = [(4, 4), (15, 4), (15, 8), (12.5, 8), (12.5, 23), (8, 28), (2.5, 28), (2.5, 24), (6.5, 24), (8.5, 22), (8.5, 8), (4, 8)]
@@ -296,6 +328,7 @@ class DesktopApp:
         # True while the window shows the local lock page. Its buttons (ACTION_URL links) are honored only then:
         # any page could navigate to https://commandcenter.invalid/quit, but only the lock page should.
         self.lock_showing = True  # the window is created on the lock page
+        self.gate_showing = True  # ...the start-up one (the splash's puzzle), not the padlock page Lock shows
         self._unlocking = False
         self._unlock_lock = threading.Lock()
         self._cancel = threading.Event()
@@ -358,7 +391,7 @@ class DesktopApp:
         for view in self.overlays.values():
             view.forget()  # no site view or SSMS stays over the lock screen
         if self.window:
-            self.lock_showing = True
+            self.lock_showing, self.gate_showing = True, False
             self.window.load_html(_lock_page("Locked. Select Unlock to confirm it's you."))
 
     def restart(self):
@@ -395,10 +428,11 @@ class DesktopApp:
         self._unlock()
 
     # ---- unlock ----
-    def _lock_status(self, text):
+    def _lock_status(self, text, failed=False):
+        """failed: the start-up page shows its Unlock / Minimize / Hide / Quit links (the padlock page always does)."""
         def update():
             try:
-                self.window.evaluate_js(f"setStatus({json.dumps(text)})")
+                self.window.evaluate_js(f"setStatus({json.dumps(text)}, {json.dumps(failed)})")
             except Exception:
                 pass
         threading.Thread(target=update, daemon=True).start()
@@ -435,10 +469,11 @@ class DesktopApp:
                 log.info("Unlocked (%s)", detail)
                 self.unlocked, self.locked_by_user = True, False
                 self.lock_showing = False  # from here on the window shows the dashboard, not the lock page
-                self.window.load_url(security.bootstrap_url())
+                # From the start-up page the dashboard's splash starts assembled (no second fly-in).
+                self.window.load_url(security.bootstrap_url(signed_in=self.gate_showing))
             else:
                 log.info("Still locked: %s", detail)
-                self._lock_status(f"{detail}. Command Center stays locked.")
+                self._lock_status(f"{detail}. Command Center stays locked.", failed=True)
         finally:
             self._unlocking = False
 
@@ -581,7 +616,7 @@ class DesktopApp:
             # Frameless (Command Center draws its own controls; its header is the drag region) and full
             # screen by default. The size and position below are the windowed state it returns to.
             self.window = webview.create_window(
-                TITLE, html=_lock_page("Starting…" if self.require_unlock else "Opening…"),
+                TITLE, html=_gate_page("Starting…" if self.require_unlock else "Opening…"),
                 width=geo.get("width", 1600), height=geo.get("height", 1000), x=geo.get("x"), y=geo.get("y"),
                 min_size=(760, 560), background_color="#05070d", hidden=self.start_hidden,
                 frameless=True, easy_drag=False, fullscreen=self.fullscreen, text_select=True,

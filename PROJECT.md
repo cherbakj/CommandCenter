@@ -8,8 +8,8 @@ and for this Windows user only (127.0.0.1:8765 behind a per-launch session cooki
 ## Start it
 - Use the **Command Center** shortcut (desktop / Start menu), or `run.cmd`. It also starts at sign-in, minimized to the tray.
 - Opens **borderless full screen** (`ui.start_fullscreen`). The header has Lock, Restart, Minimize, Full screen (F11) and Close-to-tray buttons.
-- **Windows Hello / the Windows password** is asked when the window is first shown. There's no idle re-lock; **Lock** in the header logs out of Command Center.
-- A puzzle-piece launch animation with live sync checks plays on each load. Turn it off under Profile.
+- **Windows Hello / the Windows password** is asked when the window is first shown, in front of the start-up page: the launch animation's puzzle assembling ("SIGN IN"; `desktop._gate_page`, splash.js in gate mode, no API calls). Unlock / Minimize / Hide / Quit show only if Hello fails or is cancelled. There's no idle re-lock; **Lock** in the header logs out of Command Center and shows the padlock page.
+- A puzzle-piece launch animation with live sync checks plays on each load; after the start-up page the dashboard opens at `/#signed-in` (`/auth?...&s=1`) and it starts assembled, straight to the sync checks. Turn it off under Profile (the start-up page still shows the puzzle: it can't read the Profile before sign-in).
 - Commands: `run.cmd install|uninstall|serve|login <profile> <url>|setpass <connection>`. `serve` = server only, with a one-time browser sign-in link.
 - **Dependencies:** `requirements.txt` pins the top-level packages; `requirements.lock` pins everything (pip freeze). Set up or repair `.venv` with `.venv\Scripts\python.exe -m pip install -r requirements.lock`. After an intended upgrade, regenerate it with `pip freeze` (keep its header) and update the pins in `requirements.txt`.
 

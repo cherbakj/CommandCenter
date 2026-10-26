@@ -88,6 +88,11 @@
 .sp-sys.warn .sp-sys-state, .sp-sys.err .sp-sys-state { color: var(--amber); }
 .sp-sys.off { opacity: .7; }
 
+/* Gate mode (desktop start-up page, behind Windows Hello): no pointer, the phase blinks while it waits. */
+.sp-overlay.gate { cursor: default; }
+.sp-overlay.gate .sp-bar, .sp-overlay.gate .sp-systems { display: none; }
+.sp-overlay.waiting .sp-phase { animation: sp-blink 1.6s ease-in-out infinite; }
+
 .sp-skip { position: absolute; z-index: 1; bottom: 1.4rem; font: .78rem var(--font-ui); color: var(--muted); letter-spacing: .02em; }
 
 @media (max-width: 700px) { .sp-systems { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sp-stage { padding: 1.4rem 1rem; } }

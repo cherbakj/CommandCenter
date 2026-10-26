@@ -1,15 +1,23 @@
 // Launch splash: jigsaw pieces fly in and lock into the Command Center logo, then a sync pass checks each
 // connected system, then the app is revealed. Plays every time the dashboard loads (launch, restart, unlock);
 // click or Esc skips it.
+// Gate mode (window.CC_GATE, set by the desktop's start-up page, desktop.py _gate_page): the same pieces assemble
+// behind the Windows Hello prompt, then it waits ("SIGN IN"); no API calls, nothing to skip. After Hello the
+// dashboard opens at /#signed-in and its splash starts assembled and goes straight to the sync pass.
 // Built only with DOM/SVG APIs (no innerHTML, no inline style attributes) so it works under the app's CSP.
 (() => {
   const SVG = "http://www.w3.org/2000/svg";
   const COLS = 4, ROWS = 3, S = 110;               // puzzle grid and piece size (SVG units)
   const W = COLS * S, H = ROWS * S;
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  try {
-    if (localStorage.getItem("cc-splash-off")) return;  // Profile > Launch animation off
-  } catch { /* storage blocked: play it */ }
+  const gate = window.CC_GATE === true;
+  const signedIn = !gate && location.hash === "#signed-in";
+  if (signedIn) history.replaceState(null, "", location.pathname + location.search);
+  if (!gate) {
+    try {
+      if (localStorage.getItem("cc-splash-off")) return;  // Profile > Launch animation off
+    } catch { /* storage blocked: play it */ }
+  }
 
   const svgEl = (tag, attrs = {}, ...kids) => {
     const n = document.createElementNS(SVG, tag);
@@ -85,10 +93,11 @@
   const fill = div("sp-bar-fill");
   const bar = div("sp-bar", fill);
   const systems = div("sp-systems");
-  const skip = div("sp-skip", "Click or press Esc to skip");
+  const skip = div("sp-skip", gate ? "" : "Click or press Esc to skip");
   const overlay = div("sp-overlay", div("sp-stage", svg, title, phase, bar, systems), skip);
   overlay.setAttribute("role", "status");
   overlay.setAttribute("aria-label", "Command Center is starting");
+  if (gate) overlay.classList.add("gate");
 
   const mount = () => document.body.prepend(overlay);
   document.body ? mount() : document.addEventListener("DOMContentLoaded", mount, { once: true });
@@ -145,11 +154,13 @@
     }
     out.onfinish = () => overlay.remove();
   }
-  overlay.addEventListener("click", finish);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" || e.key === "Enter") finish(); });
+  if (!gate) {
+    overlay.addEventListener("click", finish);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" || e.key === "Enter") finish(); });
+  }
 
   async function play() {
-    if (reduced) {
+    if (reduced || signedIn) {
       overlay.classList.add("assembled");
     } else {
       const flights = pieces.map(({ g }, i) => {
@@ -165,6 +176,11 @@
       overlay.classList.add("assembled");     // seams fade, glow pulse, title appears
       await new Promise((r) => setTimeout(r, 650));
     }
+    if (gate) {  // wait for Windows Hello; the desktop replaces the page once it's done
+      phase.textContent = "SIGN IN";
+      overlay.classList.add("waiting");
+      return;
+    }
     phase.textContent = "SYNCING";
     overlay.classList.add("syncing");
     const started = Date.now();
@@ -178,5 +194,5 @@
   }
 
   play();
-  setTimeout(finish, 12000);                   // safety net: never block the app
+  if (!gate) setTimeout(finish, 12000);        // safety net: never block the app
 })();

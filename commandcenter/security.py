@@ -117,8 +117,9 @@ def new_bootstrap_code(ttl: float = 60) -> str:
     return code
 
 
-def bootstrap_url(ttl: float = 60) -> str:
-    return f"http://127.0.0.1:{port()}/auth?k={new_bootstrap_code(ttl)}"
+def bootstrap_url(ttl: float = 60, signed_in: bool = False) -> str:
+    """signed_in: the desktop's start-up page already played the splash's puzzle; the dashboard opens at /#signed-in."""
+    return f"http://127.0.0.1:{port()}/auth?k={new_bootstrap_code(ttl)}" + ("&s=1" if signed_in else "")
 
 
 def _consume_code(code: str) -> bool:
@@ -513,14 +514,14 @@ async def app_restart():
 
 
 @router.get("/auth", include_in_schema=False)
-async def auth(k: str = ""):
+async def auth(k: str = "", s: str = ""):
     """Exchanges a one-time code for the session cookie, then opens the dashboard."""
     if not _consume_code(k):
         log.warning("Refused a sign-in link that was invalid, already used or expired")
         return HTMLResponse(_page("This sign-in link has expired",
                                   "Links work once. Open Command Center again from the Start menu or tray"
                                   + (", or restart run.cmd serve." if _state["mode"] == "serve" else ".")), 401)
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse("/#signed-in" if s == "1" else "/", status_code=303)
     response.set_cookie(cookie_name(), SESSION_SECRET, httponly=True, samesite="strict", path="/")
     return response
 
