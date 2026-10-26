@@ -1,0 +1,16 @@
+/* VS Code tab, desktop app (static/codedock.js): the docked desktop VS Code's stage and bar. VS Code's own window
+   covers .cd-hole; the web VS Code panel (vscode.js) is hidden while the dock is on. */
+#tab-vscode.cd-on .vsc-panel { display: none; }
+.cd-panel { height: calc(100vh - var(--header-h) - 2.25rem); min-height: 30rem; padding: .7rem .8rem .8rem; }
+.cd-panel[hidden] { display: none; }
+.cd-bar { display: flex; align-items: center; gap: .45rem; margin-bottom: .55rem; min-width: 0; }
+.cd-bar > * { flex: none; }
+.cd-bar .spacer { flex: 1; }
+.cd-bar .panel-label { margin-right: .3rem; }
+.cd-win { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-bar > .cd-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .8rem var(--font-ui); color: var(--amber); }
+.cd-bar > .cd-note.err { color: var(--red); }
+.cd-stage { position: relative; flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: .35rem; background: #05070d; overflow: hidden; }
+.cd-hole { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; }
+.cd-card { max-width: 46rem; margin: 2rem; }
+.cd-card .row { flex-wrap: wrap; gap: .5rem; }

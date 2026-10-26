@@ -214,6 +214,17 @@ def mail_alerts() -> list[tuple[int, str]]:
     return out
 
 
+def mark_mail_alerts_read(entry_id: str) -> int:
+    """Marks read the unread alerts that open this email (it was just read in Command Center)."""
+    ids = [a for a, e in mail_alerts() if e == entry_id]
+    if not ids:
+        return 0
+    with _lock:
+        n = _db().execute(f"UPDATE alerts SET read = 1 WHERE read = 0 AND id IN ({','.join('?' * len(ids))})", ids).rowcount
+        _db().commit()
+    return n
+
+
 def delete_alerts(ids) -> int:
     ids = [int(i) for i in ids]
     if not ids:

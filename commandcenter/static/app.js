@@ -493,16 +493,27 @@ function alertAction(a) {
   return null;
 }
 
+// Opening what an alert points at (View mail, Open Pulse, Join, Prep, Open chat...) marks it read: it's been seen.
 function alertRow(a) {
-  return el("li", { class: `alert-row ${a.read ? "" : "unread"}` },
+  const markRead = () => {
+    if (a.read) return;
+    a.read = 1;
+    row.classList.remove("unread");
+    row.querySelector(".alert-done")?.remove();
+    api("/api/alerts/read", { id: a.id }).then(refresh).catch(() => { a.read = 0; });
+  };
+  const actions = el("div", { class: "actions" }, alertAction(a),
+    !a.read && el("button", { class: "small subtle alert-done", title: "Mark read", "aria-label": `Mark "${a.title}" read`,
+      onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); loaders.alerts(); }) }, "✓"));
+  actions.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.classList.contains("alert-done")) markRead(); });
+  const row = el("li", { class: `alert-row ${a.read ? "" : "unread"}` },
     el("span", { class: `prio ${a.priority}` }),
     el("div", { class: "grow" },
       el("div", { class: "title" }, a.title),
       a.body && el("div", {}, a.body),
       el("div", { class: "muted src-line" }, srcTag(alertSource(a), a.source), `${a.source} · ${when(a.ts)}`)),
-    el("div", { class: "actions" }, alertAction(a),
-      !a.read && el("button", { class: "small subtle", title: "Mark read", "aria-label": `Mark "${a.title}" read`,
-        onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); loaders.alerts(); }) }, "✓")));
+    actions);
+  return row;
 }
 
 loaders.alerts = () => guarded(async () => {
@@ -572,11 +583,10 @@ async function showMail(id) {
   view.replaceChildren(el("div", { class: "muted" }, "Loading…"));
   await guarded(async () => {
     const m = await api(`/api/mail/item?id=${encodeURIComponent(id)}`);
-    if (m.unread) {
-      await api("/api/mail/read", { id, read: true });
-      m.unread = false;
-      loaders.mail();
-    }
+    // Reading it closes its alerts too (server side, both ways); the badge follows.
+    const seen = m.unread ? await api("/api/mail/read", { id, read: true }) : await api("/api/alerts/read-mail", { id });
+    if (m.unread) { m.unread = false; loaders.mail(); }
+    if (seen?.alerts_read) { refresh(); if ($("#tab-alerts").classList.contains("active")) loaders.alerts(); }
     const act = (path, body, msg) => guarded(async () => { await api(path, body); if (msg) showMessage("Done", msg); loaders.mail(); showMail(id); });
     view.replaceChildren(
       el("h2", {}, m.subject),

@@ -31,6 +31,7 @@ from PIL import Image, ImageDraw
 
 from . import alerts, config, db, security
 from .siteview import PulseView, TeamsView, _no_autofill
+from .codedock import CodeDock
 from .ssmsdock import SsmsDock
 
 log = logging.getLogger(__name__)
@@ -333,6 +334,7 @@ class DesktopApp:
         self._unlock_lock = threading.Lock()
         self._cancel = threading.Event()
         self.quitting = False
+        self.restarting = False  # Restart (not Quit): docked VS Code windows are docked again by the new copy
         self.window = None
         self.tray = None
         self.server = None
@@ -343,7 +345,8 @@ class DesktopApp:
         self.teams = TeamsView(self)  # Teams on the web in the Teams tab
         self.ssms = SsmsDock(self)    # the SQL tab's docked SSMS
         self.ssms.hotkey_factory = GlobalHotkey
-        self.overlays = {"pulse": self.pulse, "teams": self.teams, "ssms": self.ssms}
+        self.code = CodeDock(self)    # desktop VS Code docked in the VS Code tab
+        self.overlays = {"pulse": self.pulse, "teams": self.teams, "ssms": self.ssms, "code": self.code}
 
     # ---- window (security.shell uses these for the /api/window/* routes) ----
     def show(self):
@@ -381,13 +384,14 @@ class DesktopApp:
 
     def window_state(self) -> dict:
         return {"desktop": True, "fullscreen": self.fullscreen, "locked": not self.unlocked, "pulse_view": True,
-                "teams_view": True, "ssms_dock": True}
+                "teams_view": True, "ssms_dock": True, "code_dock": True}
 
     def lock(self):
         """Lock from the dashboard (the session secret was already replaced by security.end_session)."""
         self.unlocked = False
         self.locked_by_user = True
         self.ssms.on_lock()  # SSMS goes back to a normal (minimized) window; docked again after unlock
+        self.code.on_lock()  # VS Code windows too
         for view in self.overlays.values():
             view.forget()  # no site view or SSMS stays over the lock screen
         if self.window:
@@ -402,6 +406,7 @@ class DesktopApp:
         subprocess.Popen(args, cwd=str(config.ROOT), close_fds=True,
                          creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
         log.info("Restarting")
+        self.restarting = True
         self.quit()
 
     def _hwnd(self) -> int:
@@ -561,6 +566,8 @@ class DesktopApp:
     def quit(self):
         self.quitting = True
         self.ssms.release("quit")  # SSMS goes back to a normal window before this one is destroyed (never closed)
+        # Docked VS Code windows too: minimized and recorded on Restart (the new copy docks them again), shown on Quit
+        self.code.release_all("restart" if self.restarting else "quit", minimize=self.restarting, remember=self.restarting)
         self._stop_hotkey()
         self._cancel.set()  # closes a pending Windows Hello prompt
         if self.server:
@@ -626,6 +633,7 @@ class DesktopApp:
             self.window.events.moved += self._remember_geometry
             self.window.events.shown += self._on_shown
             self.ssms.install_hooks()
+            self.code.install_hooks()
 
             self.tray = self._build_tray()
             self.tray.run_detached()

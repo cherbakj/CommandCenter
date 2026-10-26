@@ -296,12 +296,13 @@
 
     CC.addPaletteSource(() => state.projects.flatMap((p) => [
       { group: "Projects", label: `VS Code + Claude: ${p.name}`, hint: p.branch ? `${p.branch} · ${p.path}` : p.path,
-        run: () => { CC.setActiveProject(p.path); CC.openTab("vscode"); guarded(openSelected); } },
+        run: () => { if (CC.codeDock?.on()) return CC.codeDock.open(p.path); CC.setActiveProject(p.path); CC.openTab("vscode"); guarded(openSelected); } },
       { group: "Projects", label: `Claude (new window): ${p.name}`, hint: "Windows Terminal",
         run: () => { CC.setActiveProject(p.path); guarded(launchWindow); } },
     ]));
     CC.addPaletteSource(() => {
       const s = state.status.status;
+      if (CC.codeDock?.on()) return [{ group: "Commands", label: "New project…", hint: "git init in your projects folder", run: newProjectDialog }];
       return [
         { group: "Commands", label: "New project…", hint: "git init in your projects folder", run: newProjectDialog },
         { group: "Commands", label: "Sync VS Code from desktop VS Code", hint: "extensions, settings, keybindings, snippets", run: () => { CC.openTab("vscode"); guarded(syncDesktop); } },

@@ -196,6 +196,12 @@ async def read_alerts(id: int | None = Body(None, embed=True)):
     return {"ok": True}
 
 
+@app.post("/api/alerts/read-mail")
+async def read_mail_alerts(id: str = Body(..., embed=True)):
+    """An email was opened in Command Center (already read in Outlook): its alerts are read too."""
+    return {"ok": True, "alerts_read": await asyncio.to_thread(db.mark_mail_alerts_read, id)}
+
+
 @app.post("/api/alerts/clear")
 async def clear_alerts():
     db.clear_alerts()
@@ -522,7 +528,9 @@ async def mail_sent_log():
 @app.post("/api/mail/read")
 async def mail_read(id: str = Body(...), read: bool = Body(True)):
     await outlook.call(outlook.set_read, id, read)
-    return {"ok": True}
+    # Reading an email closes its alerts too (they'd only point at what Joe has just seen).
+    alerts_read = await asyncio.to_thread(db.mark_mail_alerts_read, id) if read else 0
+    return {"ok": True, "alerts_read": alerts_read}
 
 
 @app.post("/api/mail/flag")

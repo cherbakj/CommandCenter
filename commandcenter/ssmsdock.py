@@ -68,13 +68,14 @@ def ssms_path() -> Path:
 _sig_cache: dict[tuple, tuple[bool, str]] = {}
 
 
-def verify_exe(path: Path) -> tuple[bool, str]:
+def verify_exe(path: Path, what: str = "SSMS") -> tuple[bool, str]:
     """(ok, why): the file exists and Windows says its Authenticode signature is valid and from Microsoft.
-    Inline PowerShell (no .ps1 file), the path passed in an environment variable, no console window."""
+    Inline PowerShell (no .ps1 file), the path passed in an environment variable, no console window.
+    `what` names the app in messages (SSMS, VS Code: codedock.py uses this too)."""
     try:
         st = path.stat()
     except OSError:
-        return False, f"SSMS isn't installed at {path}"
+        return False, f"{what} isn't installed at {path}"
     key = (os.path.normcase(str(path)), st.st_size, st.st_mtime_ns)
     if key in _sig_cache:
         return _sig_cache[key]
@@ -87,7 +88,7 @@ def verify_exe(path: Path) -> tuple[bool, str]:
                              env={**os.environ, "CC_SIG_FILE": str(path)}, encoding="utf-8", errors="replace")
         r = json.loads(out.stdout)
     except (OSError, ValueError, subprocess.SubprocessError) as e:
-        return False, f"couldn't check SSMS's signature ({type(e).__name__})"
+        return False, f"couldn't check {what}'s signature ({type(e).__name__})"
     subject, status = r.get("Subject") or "", r.get("Status") or "no signature"
     org = next((part.strip()[2:] for part in subject.split(",") if part.strip().startswith("O=")), "")
     ok = status == "Valid" and org == "Microsoft Corporation"
@@ -95,7 +96,7 @@ def verify_exe(path: Path) -> tuple[bool, str]:
                                                               f"({status}{', signed by ' + org if org else ''})")
     _sig_cache[key] = result
     if not ok:
-        log.warning("SSMS dock: %s", result[1])
+        log.warning("%s dock: %s", what, result[1])
     return result
 
 

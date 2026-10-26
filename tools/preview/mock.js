@@ -578,6 +578,7 @@
       }
       case "/window/pulse": return json({ available: false, sites: { prod: "https://pulse.example.com/", dev: "https://dev.pulse.example.com/" }, views: {} });
       case "/window/ssms": return json({ available: false });
+      case "/window/code": return json({ available: false });  // the docked desktop VS Code: desktop app only
       case "/window/teams": return json({ available: false, views: {} });
       case "/people/important": return json(importantState());
       case "/window/state": return json({ fullscreen: false });
@@ -616,6 +617,7 @@
 
   function post(path, b) {
     switch (path) {
+      case "/alerts/read-mail": { let n = 0; alerts.forEach((a) => { if (!a.read && a.action?.type === "mail" && a.action.id === b.id) { a.read = 1; n++; } }); return json({ ok: true, alerts_read: n }); }
       case "/alerts/read": alerts.forEach((a) => { if (b.id == null || a.id === b.id) a.read = 1; }); return json({ ok: true });
       case "/alerts/clear": alerts = []; return json({ ok: true });
       case "/reload": return json({ ok: true });
@@ -642,7 +644,7 @@
       case "/followups/mute": if (b.sender && !muted.includes(b.sender)) muted.push(b.sender); return json({ ok: true });
       case "/followups/unmute": muted = muted.filter((s) => s !== b.sender); return json({ ok: true });
       case "/followups/urgent": urgentPeople = [...new Set(["Lena Ortiz", ...(b.people || [])])]; return json({ ok: true });
-      case "/mail/read": { const m = findMail(b.id); if (m) m.unread = !b.read; return json({ ok: true }); }
+      case "/mail/read": { const m = findMail(b.id); if (m) m.unread = !b.read; let n = 0; if (b.read) alerts.forEach((a) => { if (!a.read && a.action?.type === "mail" && a.action.id === b.id) { a.read = 1; n++; } }); return json({ ok: true, alerts_read: n }); }
       case "/mail/flag": { const m = findMail(b.id); if (m) m.flagged = !!b.flagged; return json({ ok: true }); }
       case "/mail/reply/preview": { const m = findMail(b.id) || {};
         const recips = [{ name: m.sender_name, email: m.sender, type: "To", external: m.internal === false }];
