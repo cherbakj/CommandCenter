@@ -17,6 +17,11 @@
       GetTickCount64 (counts sleep) with QueryUnbiasedInterruptTime (doesn't); a gap means the PC slept, and the
       vault is locked on resume.
     * privacy.auto_lock_minutes after an unlock (0 = off, the default; Joe doesn't want idle lock-outs).
+    * privacy.stay_unlocked_today (default on; Joe unlocks once in the morning): the three locks above (Command
+      Center lock, Windows lock, sleep / hibernate) are skipped, and the vault locks at midnight of the day it was
+      unlocked instead. Getting back into Command Center after a lock still takes Windows Hello, and into Windows
+      the Windows sign-in. Trade-off: the key stays in memory meanwhile, and in the hibernation file if Windows
+      hibernates. Privacy mode, the vault's Lock button, auto_lock_minutes and a restart still lock.
   A restart always starts locked: the key exists only in memory. Bad config values fall back to the defaults
   (checked at load, logged once) and never stop the watch loop.
 """
@@ -25,6 +30,7 @@ import ctypes
 import ctypes.wintypes as wt
 import hashlib
 import logging
+from datetime import date
 
 from fastapi import APIRouter, Body
 
@@ -34,7 +40,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/privacy")
 
 
-DEFAULTS = {"lock_on_windows_lock": True, "auto_lock_minutes": 0}
+DEFAULTS = {"lock_on_windows_lock": True, "auto_lock_minutes": 0, "stay_unlocked_today": True}
 _warned: set = set()
 
 
@@ -58,6 +64,10 @@ def settings() -> dict:
     if not isinstance(lock_win, bool):
         _warn_once("lock_on_windows_lock", "privacy.lock_on_windows_lock should be true or false; using true")
         lock_win = True
+    stay = s.get("stay_unlocked_today", True)
+    if not isinstance(stay, bool):
+        _warn_once("stay_unlocked_today", "privacy.stay_unlocked_today should be true or false; using true")
+        stay = True
     raw = s.get("auto_lock_minutes", 0)
     try:
         if isinstance(raw, bool):
@@ -68,7 +78,14 @@ def settings() -> dict:
     except (TypeError, ValueError):
         _warn_once("auto_lock_minutes", "privacy.auto_lock_minutes should be a number of minutes (0 = off); using 0")
         minutes = 0
-    return {"lock_on_windows_lock": lock_win, "auto_lock_minutes": int(minutes) if minutes == int(minutes) else minutes}
+    return {"lock_on_windows_lock": lock_win, "auto_lock_minutes": int(minutes) if minutes == int(minutes) else minutes,
+            "stay_unlocked_today": stay}
+
+
+def stay_today() -> bool:
+    """privacy.stay_unlocked_today: the vault stays unlocked until midnight through Command Center / Windows locks
+    and sleep."""
+    return settings()["stay_unlocked_today"]
 
 
 # ---- Privacy mode ----------------------------------------------------------------------------------
@@ -403,7 +420,9 @@ def _on_power(context, kind, setting):
     """Runs on a system thread. Windows waits for it before suspending, so the key is dropped before memory is
     written to the hibernation file. Resume notifications lock too, in case the suspend one was missed."""
     try:
-        if kind == PBT_APMSUSPEND:
+        if stay_today():
+            pass  # kept until midnight (the resume check below still catches a new day)
+        elif kind == PBT_APMSUSPEND:
             vault.lock("system sleep / hibernate")
         elif kind in (PBT_APMRESUMESUSPEND, PBT_APMRESUMEAUTOMATIC):
             vault.lock("resumed from sleep")
@@ -487,26 +506,30 @@ def check_once(state: dict):
 
     def session():
         fp = _session_fingerprint()
-        if fp != state.get("fingerprint"):
-            state["fingerprint"] = fp
-            vault.lock("Command Center locked")
-        if _shell_locked():
+        changed = fp != state.get("fingerprint")
+        state["fingerprint"] = fp
+        if (changed or _shell_locked()) and not stay_today():
             vault.lock("Command Center locked")
 
     def sleep():
-        if state["sleep"].slept():
+        if state["sleep"].slept() and not stay_today():
             vault.lock("resumed from sleep")
 
     def windows():
-        if vault.unlocked() and settings()["lock_on_windows_lock"] and windows_locked():
+        if vault.unlocked() and settings()["lock_on_windows_lock"] and not stay_today() and windows_locked():
             vault.lock("Windows locked")
+
+    def new_day():
+        day = vault.unlocked_day()
+        if day and day != date.today().isoformat():
+            vault.lock("new day")
 
     def idle():
         minutes = settings()["auto_lock_minutes"]
         if minutes and vault.unlocked() and vault.unlocked_for() > minutes * 60:
             vault.lock(f"auto-lock after {minutes} min")
 
-    for name, fn in (("session", session), ("sleep", sleep), ("windows", windows), ("auto-lock", idle)):
+    for name, fn in (("session", session), ("sleep", sleep), ("windows", windows), ("new day", new_day), ("auto-lock", idle)):
         attempt(name, fn)
 
 

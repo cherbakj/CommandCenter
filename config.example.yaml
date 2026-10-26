@@ -310,11 +310,13 @@ retention:
 # ---------------------------------------------------------------------------
 # Privacy: personal data (personal calendar entries, Google / iCloud overlay calendars) lives in the
 # personal vault, encrypted with a passphrase only you know (set it up under Privacy & Data; it is never
-# stored). Work data stays DPAPI-protected. The vault always locks when Command Center locks, in
-# Privacy mode (eye icon, Ctrl+Shift+P) and on restart.
+# stored). Work data stays DPAPI-protected. The vault always locks in Privacy mode (eye icon, Ctrl+Shift+P),
+# with Lock vault, at midnight and on restart.
 # ---------------------------------------------------------------------------
 privacy:
-  lock_on_windows_lock: true     # also lock the vault when Windows locks (Win+L)
+  stay_unlocked_today: true      # unlock once a day: stays unlocked until midnight through Windows lock, sleep and
+                                 #   Command Center's Lock (false: each of those locks it)
+  lock_on_windows_lock: true     # with stay_unlocked_today off: also lock the vault when Windows locks (Win+L)
   auto_lock_minutes: 0           # lock the vault this many minutes after unlocking (0 = off)
 
 # ---------------------------------------------------------------------------

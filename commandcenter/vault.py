@@ -7,8 +7,9 @@ passphrase Joe chose, that is not stored anywhere (no file, no Credential Manage
 
 - Key: scrypt(passphrase, random 16-byte salt, n=2**17, r=8, p=1) -> 32 bytes (AES-256). Derived on unlock and
   held only in this process's memory (inside the AES-GCM object; the derived bytes and the encoded passphrase
-  are overwritten as soon as that object exists, best effort). Lock, Privacy mode, a Command Center lock,
-  locking Windows, system sleep / hibernate (privacy.py) and every restart drop it.
+  are overwritten as soon as that object exists, best effort). Lock, Privacy mode, midnight and every restart drop
+  it; a Command Center lock, locking Windows and system sleep / hibernate (privacy.py) too, unless
+  privacy.stay_unlocked_today is on (then it stays until midnight of the day it was unlocked).
 - A lock generation counter (_gen) goes up on every lock and on Privacy mode on. An unlock / setup / change that
   was checking a passphrase when that happened throws its new key away, so a Lock or Privacy mode pressed during
   the (slow) key derivation is never undone.
@@ -35,7 +36,7 @@ import sys
 import threading
 import time
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Body, HTTPException
 
@@ -68,6 +69,7 @@ _migrate_lock = threading.Lock()    # one migration of old copies at a time
 _aead = None                        # AESGCM holding the key while unlocked; None = locked
 _gen = [0]                          # lock generation: +1 on every lock() and Privacy mode on
 _unlocked_at = [0.0]                # time.monotonic() of the last unlock
+_unlocked_day = [""]                # local date (ISO) of the last unlock (privacy.stay_unlocked_today)
 _privacy: dict = {}                 # {"on": bool}, cached copy of kv "privacy:mode"
 _stores: list[dict] = []
 
@@ -337,6 +339,13 @@ def _set_key(aead):
     with _state_lock:
         _aead = aead
         _unlocked_at[0] = time.monotonic()
+        _unlocked_day[0] = date.today().isoformat()
+
+
+def unlocked_day() -> str:
+    """Local date (ISO) the vault was unlocked on ("" while locked)."""
+    with _state_lock:
+        return _unlocked_day[0] if _aead is not None else ""
 
 
 def unlocked_for() -> float:

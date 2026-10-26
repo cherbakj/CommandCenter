@@ -385,9 +385,10 @@ def end_session():
     SESSION_SECRET = secrets.token_urlsafe(32)
     with _codes_lock:
         _codes.clear()
-    try:  # locking Command Center also locks the personal vault immediately (its own poller is the backup)
-        from . import vault
-        vault.lock("Command Center locked")
+    try:  # locking Command Center also locks the personal vault immediately (its own poller is the backup),
+        from . import privacy, vault  # unless it stays unlocked for the day (privacy.stay_unlocked_today)
+        if not privacy.stay_today():
+            vault.lock("Command Center locked")
     except Exception:
         log.warning("Personal vault lock on session end failed", exc_info=False)
 

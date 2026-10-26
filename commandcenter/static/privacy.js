@@ -262,7 +262,7 @@
       el("ul", { class: "pv-rules" },
         el("li", {}, el("b", {}, "Don't reuse "), "your Windows / Sonance password or any work password."),
         el("li", {}, el("b", {}, "No recovery: "), "if you forget it, the only option is to delete your personal data and start over."),
-        el("li", {}, "Locks itself when you lock Command Center or Windows, the PC sleeps or hibernates, you turn on Privacy mode, or restart.")),
+        el("li", {}, "Unlock once a day: it stays unlocked until midnight (privacy.stay_unlocked_today in config.yaml). Privacy mode, Lock vault and a restart lock it sooner.")),
       waitingText() ? el("p", { class: "pv-note" }, waitingText()) : null,
       el("label", { class: "field-label", for: "pv-new" }, "Passphrase"), pass, hint,
       el("label", { class: "field-label", for: "pv-again" }, "Confirm passphrase"), again,
@@ -446,9 +446,13 @@
       el("div", { class: "pv-grid" }, personal.map(itemCard)),
       el("div", { class: "panel-label gap" }, `Work (${work.length})`),
       el("div", { class: "pv-grid" }, work.map(itemCard)),
-      el("p", { class: "pv-note" }, "Lock the vault (or use Privacy mode) before leaving the PC unlocked; it also locks on sleep/hibernate."),
-      el("p", { class: "muted pv-foot" }, `Vault auto-lock: when Command Center locks${data.settings.lock_on_windows_lock ? ", when Windows locks" : ""}`,
-        data.settings.auto_lock_minutes ? `, ${data.settings.auto_lock_minutes} min after unlocking` : "", ", on sleep / hibernate, on restart and in Privacy mode. Settings: privacy: in config.yaml."),
+      data.settings.stay_unlocked_today
+        ? el("p", { class: "pv-note" }, "Unlocked for the day: the vault stays unlocked until midnight, through Windows lock, sleep and Command Center's Lock (Windows Hello still guards Command Center). Use Lock vault or Privacy mode to lock it sooner.")
+        : el("p", { class: "pv-note" }, "Lock the vault (or use Privacy mode) before leaving the PC unlocked; it also locks on sleep/hibernate."),
+      el("p", { class: "muted pv-foot" }, data.settings.stay_unlocked_today
+        ? `Vault auto-lock: at midnight${data.settings.auto_lock_minutes ? `, ${data.settings.auto_lock_minutes} min after unlocking` : ""}, on restart and in Privacy mode. Settings: privacy: in config.yaml.`
+        : [`Vault auto-lock: when Command Center locks${data.settings.lock_on_windows_lock ? ", when Windows locks" : ""}`,
+          data.settings.auto_lock_minutes ? `, ${data.settings.auto_lock_minutes} min after unlocking` : "", ", on sleep / hibernate, on restart and in Privacy mode. Settings: privacy: in config.yaml."].join("")),
       el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Close")));
   }
   document.querySelector("#dialog")?.addEventListener("close", () => { panelOpen = false; });
