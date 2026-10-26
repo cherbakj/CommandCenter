@@ -29,6 +29,8 @@
   background: color-mix(in srgb, var(--ev) 16%, rgb(var(--glass-rgb) / .85));
 }
 .dc-ev.k-meeting { --ev: #b3a6ff; }
+.dc-ev.k-lunch { --ev: #8fa39f; background: repeating-linear-gradient(135deg, rgb(255 255 255 / .03) 0 .4rem, transparent .4rem .8rem), rgb(var(--glass-rgb) / .85); }
+.dc-ev.k-lunch .dc-title { font-weight: 500; color: var(--muted); }
 .dc-ev.k-personal, .dc-allday-ev.k-personal { --ev: var(--hot); }
 .dc-allday-ev.k-meeting { --ev: #b3a6ff; }
 .dc-ev.past { opacity: .5; }

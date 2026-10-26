@@ -297,7 +297,7 @@ async def build(refresh=False) -> dict:
 def summary(data) -> str:
     today = date.today().isoformat()
     agenda = data["agenda"] if isinstance(data["agenda"], list) else []
-    remaining = [m for m in agenda if m["end"] >= datetime.now().isoformat()]
+    remaining = [m for m in agenda if m["end"] >= datetime.now().isoformat() and not m.get("lunch")]
     due = [t for t in data["tasks"]["items"] if t["due"] and t["due"] <= today]
     f = data["followups"] if "error" not in data["followups"] else {}
     n_follow = sum(len(f.get(k, [])) for k in FOLLOWUP_GROUPS)
@@ -324,7 +324,7 @@ def _time_reached(at, now, window_hours=4) -> bool:
 async def _briefing(now):
     data = await build(refresh=True)
     agenda = data["agenda"] if isinstance(data["agenda"], list) else []
-    first = next((m for m in agenda if m["start"] >= now.isoformat(timespec="minutes")), None)
+    first = next((m for m in agenda if m["start"] >= now.isoformat(timespec="minutes") and not m.get("lunch")), None)
     body = f"First up: {first['subject']} at {datetime.fromisoformat(first['start']):%I:%M %p}" if first else ""
     alerts.raise_alert("Today", summary(data), body, "normal", {"type": "today"}, toast="morning briefing")
 
@@ -332,7 +332,7 @@ async def _briefing(now):
 async def _wrapup(now):
     data = await build(refresh=True)
     next_day = 3 if now.weekday() == 4 else 1  # Friday wraps up to Monday
-    tomorrow = await outlook.call(outlook.meetings_for_day, next_day)
+    tomorrow = [m for m in await outlook.call(outlook.meetings_for_day, next_day) if not m.get("lunch")]
     today_iso = date.today().isoformat()
     open_due = [t for t in data["tasks"]["items"] if t["due"] and t["due"] <= today_iso]
     f = data["followups"] if "error" not in data["followups"] else {}

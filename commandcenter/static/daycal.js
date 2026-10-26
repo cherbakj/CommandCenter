@@ -28,7 +28,7 @@
     const date = day.date;
     const out = [];
     for (const m of day.meetings || []) {
-      out.push({ kind: m.join_url ? "meeting" : "calendar", allDay: m.all_day, start: new Date(m.start), end: new Date(m.end),
+      out.push({ kind: m.lunch ? "lunch" : m.join_url ? "meeting" : "calendar", allDay: m.all_day, start: new Date(m.start), end: new Date(m.end),
         title: m.subject, where: m.location, m });
     }
     for (const e of day.overlays || []) {
@@ -65,7 +65,7 @@
     if (group.length) close();
   }
 
-  const KIND_LABEL = { meeting: "Teams meeting", calendar: "Outlook", personal: "Personal" };
+  const KIND_LABEL = { meeting: "Teams meeting", calendar: "Outlook", personal: "Personal", lunch: "Lunch block (not a meeting)" };
 
   function block(ev, startH, now) {
     const past = ev.end <= now, live = ev.start <= now && now < ev.end;
@@ -73,7 +73,7 @@
     const source = ev.kind === "overlay" ? ev.calendar : KIND_LABEL[ev.kind];
     const tip = [span, ev.title, ev.where, source].filter(Boolean).join(" · ");
     const short = ev.e - ev.s <= 0.5;
-    const text = [el("span", { class: "dc-title" }, ev.title), el("span", { class: "dc-time" }, short ? clock(ev.start) : span)];
+    const text = [el("span", { class: "dc-title" }, ev.kind === "lunch" ? "🍽 Lunch" : ev.title), el("span", { class: "dc-time" }, short ? clock(ev.start) : span)];
     let main;
     if (ev.m) main = el("button", { type: "button", class: "dc-main", title: `${tip}\nOpen in Outlook`, "aria-label": `${ev.title}, ${span}: open in Outlook`,
       onclick: () => guarded(() => api("/api/outlook/open", { id: ev.m.id })) }, ...text);
@@ -131,7 +131,7 @@
     const nowLine = nowH >= startH && nowH <= endH
       ? el("div", { class: "dc-now", title: `Now ${clock(now)}`, "aria-hidden": "true" }) : null;
     nowLine?.style.setProperty("--t", String(nowH - startH));
-    const left = timed.filter((e) => e.end > now).length;
+    const left = timed.filter((e) => e.kind !== "lunch" && e.end > now).length;
     const empty = !timed.length && !chips.length
       ? el("div", { class: "dc-empty muted" }, weekend ? "Weekend: nothing on the calendar." : "Nothing on the calendar today.") : null;
     grid.style.setProperty("--hours", String(endH - startH));

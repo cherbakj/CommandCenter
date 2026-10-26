@@ -102,6 +102,9 @@ outlook:
       priority: normal
   meetings:
     remind_minutes: [15, 5, 0]          # pop-ups this many minutes before a meeting (0 = when it starts); each has Join and Prep
+    lunch:                              # plain appointments (no attendees) that are just lunch: shown as "Lunch",
+      subjects: [lunch, blocked]        #   not counted, reminded or prepped as meetings. Whole subject, any case,
+      between: "11:00-14:30"            #   starting and ending inside this window.
 
 # ---------------------------------------------------------------------------
 # Mark as spam (Spam on an email from outside Sonance; manage under Mail > Spam blocks or Ctrl+K).

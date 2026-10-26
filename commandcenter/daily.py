@@ -532,7 +532,7 @@ async def meeting_end_loop():
             if settings().get("meeting_notes_prompt", True) and await asyncio.to_thread(outlook.is_running):
                 now = datetime.now()
                 for m in await outlook.call(outlook.meetings_today):
-                    if m.get("all_day") or m.get("status") == "free":
+                    if m.get("all_day") or m.get("lunch") or m.get("status") == "free":
                         continue
                     end = datetime.fromisoformat(m["end"])
                     if not now - timedelta(minutes=20) <= end <= now or not OUTLOOK_ID.fullmatch(m["id"] or ""):

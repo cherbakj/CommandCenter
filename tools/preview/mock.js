@@ -128,6 +128,7 @@
     mtg("Daily ops stand-up", atB(-150), atB(-135), "Microsoft Teams", "Dana Reyes", true),
     mtg("Forecast review with sales leads", atB(-20), atB(25), "Conf Room B", "Marcus Lee"),
     mtg("Vendor call: Contoso Supply", atB(70), atB(100), "Microsoft Teams", "Sam Patel", true),
+    mtg("Lunch", atB(105), atB(145), "", ME.name, false, { lunch: true }),
     mtg("Focus: Q4 pricing sheet", atB(150), atB(210), "", ME.name),
     mtg("1:1 with Lena", atB(240), atB(270), "Lena's office", "Lena Ortiz", false, { status: "tentative" }),
   ];

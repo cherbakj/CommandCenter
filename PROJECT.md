@@ -52,6 +52,7 @@ Appearance (colors, text size, density, effects: glow, frosted glass, background
   - Parsing is bounded: single events far from the window are dropped as text first, at most 5000 VEVENTs and 1000 events per calendar, SECONDLY/MINUTELY rules (and dense rules running since long ago) are skipped, 3 s budget per parse, one download + parse in flight per calendar.
   - Per-calendar detail level: full / titles (default) / busy. Fields are stripped before they're cached or returned.
   - Events are held in memory for 15 minutes, only while the vault is unlocked. Never written to Outlook or disk.
+- **Lunch blocks (`outlook._is_lunch`):** a plain Outlook appointment (no attendees, not all day) whose whole subject is "Blocked" or "Lunch", inside 11:00-14:30 (`outlook.meetings.lunch: {subjects, between}`), comes back as subject "Lunch", `lunch: true`. It shows (🍽 Lunch in the agenda, a hatched block on Today's calendar, "Lunch" on the Calendar tab) and still fills its time for free slots, but it's not counted as a meeting (tiles, Agenda count, briefing, wrap-up), gets no 15 / 5 / now warnings, no "capture notes?" prompt and no Prep / Notes actions. Joe's recurring "Blocked" 12:00-1:30 is his lunch.
 - **Calendar (`planner.py`, `planner.js`; the tab is planner.js's alone):**
   - Outlook meetings for the next 10 days, including all-day events.
   - Dated follow-ups: tasks, flags due, snoozes, reply checks.

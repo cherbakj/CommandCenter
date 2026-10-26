@@ -416,7 +416,7 @@
     ];
     const agenda = Array.isArray(CC.todayData?.agenda) ? CC.todayData.agenda : [];
     for (const m of agenda) {
-      if (!m.all_day && START_RE.test(m.start || "")) out.push({ group: "Agenda", label: `Notes: ${m.subject}`, hint: clock(m.start), run: () => notesDialog(m) });
+      if (!m.all_day && !m.lunch && START_RE.test(m.start || "")) out.push({ group: "Agenda", label: `Notes: ${m.subject}`, hint: clock(m.start), run: () => notesDialog(m) });
     }
     return out;
   });

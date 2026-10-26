@@ -234,22 +234,56 @@ def current_focus_block(keywords) -> dict | None:
 OL_BUSY_STATUS = {0: "free", 1: "tentative", 2: "busy", 3: "out of office", 4: "working elsewhere"}
 
 
+LUNCH_DEFAULTS = {"subjects": ["lunch", "blocked"], "between": "11:00-14:30"}
+
+
+def _lunch_rule() -> tuple[set, int, int]:
+    """outlook.meetings.lunch: (subjects, window start, window end in minutes after midnight)."""
+    cfg = {**LUNCH_DEFAULTS, **((config.section("outlook", {}).get("meetings") or {}).get("lunch") or {})}
+    subjects = {str(s).strip().lower() for s in cfg.get("subjects") or [] if str(s).strip()}
+    try:
+        a, b = (int(h) * 60 + int(m) for h, m in (part.strip().split(":") for part in str(cfg["between"]).split("-")))
+    except (ValueError, KeyError):
+        a, b = 11 * 60, 14 * 60 + 30
+    return subjects, a, b
+
+
+def _is_lunch(item, subject, start, end, rule) -> bool:
+    """A lunch block: a plain appointment (not a meeting with attendees), not all day, whose whole subject is one of
+    the lunch subjects, starting and ending on the same day inside the lunch window."""
+    subjects, a, b = rule
+    if item.AllDayEvent or subject.strip().lower() not in subjects or start.date() != end.date():
+        return False
+    try:
+        if item.MeetingStatus != 0:  # olNonMeeting
+            return False
+    except pywintypes.com_error:
+        return False
+    return a <= start.hour * 60 + start.minute and end.hour * 60 + end.minute <= b
+
+
 def _meetings(start, end, limit=50, all_day=False) -> list[dict]:
+    """Calendar items overlapping [start, end). Lunch blocks (_is_lunch) come back as subject "Lunch" with
+    lunch: True: shown, but not counted, reminded or prepped as meetings."""
     items = _ns().GetDefaultFolder(OL_FOLDER_CALENDAR).Items
     items.Sort("[Start]")
     items.IncludeRecurrences = True
     fmt = "%m/%d/%Y %I:%M %p"
     found = items.Restrict(f"[Start] <= '{end.strftime(fmt)}' AND [End] >= '{start.strftime(fmt)}'")
-    out, item = [], found.GetFirst()
+    out, item, rule = [], found.GetFirst(), _lunch_rule()
     while item is not None and len(out) < limit:
         if all_day or not item.AllDayEvent:
             body = item.Body or ""
             link = TEAMS_LINK.search(body)
+            subject = item.Subject or "(no subject)"
+            m_start, m_end = _local_time(item.Start), _local_time(item.End)
+            lunch = _is_lunch(item, subject, m_start, m_end, rule)
             out.append({
                 "id": item.EntryID,
-                "subject": item.Subject or "(no subject)",
-                "start": _local_time(item.Start).isoformat(timespec="minutes"),
-                "end": _local_time(item.End).isoformat(timespec="minutes"),
+                "subject": "Lunch" if lunch else subject,
+                "lunch": lunch,
+                "start": m_start.isoformat(timespec="minutes"),
+                "end": m_end.isoformat(timespec="minutes"),
                 "location": item.Location or "",
                 "organizer": item.Organizer or "",
                 "join_url": link.group(0) if link else None,
@@ -766,6 +800,8 @@ def scan_meetings() -> list[tuple[dict, int]]:
     due = []
     now = datetime.now()
     for m in upcoming_meetings(hours=max(reminders) / 60 + 1):
+        if m["lunch"]:
+            continue
         minutes = (datetime.fromisoformat(m["start"]) - now).total_seconds() / 60
         if minutes < -2:  # a "now" (0) reminder still fires if a scan lands up to 2 minutes after the start
             continue

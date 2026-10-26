@@ -466,6 +466,7 @@ const alertActionTypes = {};
 // ...and add buttons to meeting rows (Today agenda, prep card, Calendar tab): CC.addMeetingAction(fn(meeting, where)).
 const meetingActionSources = [];
 function meetingActions(m, where) {
+  if (m?.lunch) return [];  // a lunch block (outlook.py _is_lunch) isn't a meeting: no notes / prep actions
   return meetingActionSources.flatMap((fn) => { try { return [fn(m, where)].flat().filter(Boolean); } catch { return []; } });
 }
 // ...and to received emails (Mail list rows, the reader, a follow-up row's ⋯ menu): CC.addMailAction(fn(mail, where)),
@@ -1172,7 +1173,7 @@ function expandFollowups(...keys) {
 
 function renderStats(d) {
   const agenda = Array.isArray(d.agenda) ? d.agenda : [];
-  const left = agenda.filter((m) => new Date(m.end) > new Date()).length;
+  const left = agenda.filter((m) => !m.lunch && new Date(m.end) > new Date()).length;
   const today = isoDate(new Date());
   const due = d.tasks.items.filter((t) => t.due && t.due <= today).length;
   const { total: fu, urgent, needs } = followupCounts(d);
@@ -1267,6 +1268,11 @@ function renderAgenda(agenda) {
   const rows = agenda.map((m) => {
     const start = new Date(m.start), end = new Date(m.end);
     const live = start <= now && now < end;
+    if (m.lunch) return { at: start, node: el("li", { class: `lunch-row ${live ? "now" : end <= now ? "past" : ""}` },
+      el("div", { class: "time-col" }, timeOf(m.start), el("div", { class: "muted" }, timeOf(m.end))),
+      el("div", { class: "grow" },
+        el("div", { class: "title" }, "🍽 Lunch", live && el("span", { class: "tag live" }, "Now")),
+        el("div", { class: "muted src-line" }, srcTag("calendar", "lunch block"), "Not counted as a meeting"))) };
     return { at: start, node: el("li", { class: live ? "now" : end <= now ? "past" : "" },
       el("div", { class: "time-col" }, timeOf(m.start), el("div", { class: "muted" }, timeOf(m.end))),
       el("div", { class: "grow" },
@@ -1919,7 +1925,7 @@ function setBadge(sel, n, text) {
 
 function updateTodayTabs(d) {
   const agenda = Array.isArray(d.agenda) ? d.agenda : [];
-  $("#agenda-count").textContent = d.agenda?.error ? "!" : agenda.length;
+  $("#agenda-count").textContent = d.agenda?.error ? "!" : agenda.filter((m) => !m.lunch).length;
   const items = d.tasks?.items || [];
   const high = items.filter((t) => t.priority === "high").length;
   $("#tasks-count").textContent = items.length;
@@ -2183,7 +2189,7 @@ function paletteSources() {
     const next = agenda.find((m) => m.join_url && new Date(m.end) > now);
     if (next) add("Commands", `Join next meeting: ${next.subject}`, timeOf(next.start), () => openExternal(next.join_url));
     for (const m of agenda) add("Agenda", m.subject, timeOf(m.start), () => guarded(() => api("/api/outlook/open", { id: m.id })));
-    for (const m of agenda.filter((m) => new Date(m.end) > now)) add("Agenda", `Prep: ${m.subject}`, timeOf(m.start), () => prepDialog(m.id, m));
+    for (const m of agenda.filter((m) => !m.lunch && new Date(m.end) > now)) add("Agenda", `Prep: ${m.subject}`, timeOf(m.start), () => prepDialog(m.id, m));
     for (const t of todayData.tasks.items) add("Tasks", t.subject, dueText(t.due), () => t.url ? openExternal(t.url) : guarded(() => api("/api/outlook/open", { id: t.id })));
     const f = todayData.followups.error ? {} : todayData.followups;
     const seenFu = new Set();  // a message can be in two groups (e.g. needs a reply and flagged): list it once

@@ -327,6 +327,7 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 .list li.clickable:hover { background-color: rgb(255 255 255 / .055); }
 .list li.selected { box-shadow: inset 3px 0 0 var(--accent); background: rgb(var(--accent-rgb) / .1); }
 .list li.past { opacity: .72; }
+#agenda li.lunch-row .title { font-weight: 500; color: var(--muted); }
 .list li.past .title { color: var(--muted); font-weight: 500; }
 .list li.now { box-shadow: inset 3px 0 0 var(--accent-2); background: linear-gradient(90deg, rgb(var(--accent-2-rgb) / .13), transparent 75%); }
 .list.compact li { padding: .32rem .6rem; font: .82rem var(--font-mono); }
