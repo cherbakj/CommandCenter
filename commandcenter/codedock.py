@@ -7,9 +7,10 @@ cut-outs). One window per project: several can be docked, the one for the "Worki
 are hidden inside the panel, still running. VS Code keeps a 7 px invisible resize border even when docked, so the
 window is placed that much outside the panel and the panel clips it.
 
-Restart: Restart puts every docked window back as a normal, minimized window (never closed) and records them in kv
-`vscode:dock` (window handle, process id, folder); the new copy docks them again once it's unlocked. Lock does the same
-in memory. Quit puts them back as normal windows and forgets them.
+Restart / Quit: every docked window goes back as a normal window (minimized on Restart, shown on Quit; never closed)
+and is recorded in kv `vscode:dock` (window handle, process id, folder); the next start docks the ones still open
+again once it's unlocked, so a Claude Code chat in them carries on. Lock does the same in memory. Undock takes a
+window off the list. After a reboot or a crash the recorded handles are gone and nothing is docked.
 
 Which windows are touched: only top-level VS Code main windows (class Chrome_WidgetWin_1, title ending
 "Visual Studio Code") of a Code.exe that runs as this Windows user and whose image is the installed desktop VS Code
@@ -269,9 +270,13 @@ class CodeDock(NativeOverlay):
                     for h, d in self.docked.items()]
 
     def release_all(self, why: str, minimize=False, remember=False):
-        """Every docked window back to normal. remember: dock them again later (Lock: in memory; Restart: kv too)."""
+        """Every docked window back to normal. remember: dock them again later (in memory, and in kv for the next
+        start). Later calls with nothing docked (the window-closing handler, the exit hook after Restart / Quit) never
+        overwrite what an earlier call recorded."""
         entries = self._entries()
-        if remember and entries:
+        if not entries:
+            return
+        if remember:
             self.pending = entries
         for e in entries:
             self.release(e["hwnd"], why, minimize=minimize)
@@ -297,7 +302,7 @@ class CodeDock(NativeOverlay):
         if self._hooks:
             return
         self._hooks = True
-        atexit.register(lambda: self.release_all("exit", remember=getattr(self.app, "restarting", False)))
+        atexit.register(lambda: self.release_all("exit", remember=True))
         old_hook, old_thread_hook = sys.excepthook, threading.excepthook
 
         def excepthook(*a):
@@ -324,8 +329,7 @@ class CodeDock(NativeOverlay):
             self.panel = self._new_panel()
             # The window is being destroyed: the panel's WM_DESTROY comes before its children are destroyed.
             self.panel.HandleDestroyed += lambda *_: self.release_all(
-                "Command Center window closing", minimize=getattr(self.app, "restarting", False),
-                remember=getattr(self.app, "restarting", False))
+                "Command Center window closing", minimize=getattr(self.app, "restarting", False), remember=True)
             self.panel.Resize += lambda *_: self._fit()
         return self.panel
 

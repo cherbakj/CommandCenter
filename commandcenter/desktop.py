@@ -566,8 +566,8 @@ class DesktopApp:
     def quit(self):
         self.quitting = True
         self.ssms.release("quit")  # SSMS goes back to a normal window before this one is destroyed (never closed)
-        # Docked VS Code windows too: minimized and recorded on Restart (the new copy docks them again), shown on Quit
-        self.code.release_all("restart" if self.restarting else "quit", minimize=self.restarting, remember=self.restarting)
+        # Docked VS Code windows too (minimized on Restart, shown on Quit), recorded so the next start docks them again
+        self.code.release_all("restart" if self.restarting else "quit", minimize=self.restarting, remember=True)
         self._stop_hotkey()
         self._cancel.set()  # closes a pending Windows Hello prompt
         if self.server:
