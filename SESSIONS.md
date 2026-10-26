@@ -2,6 +2,37 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-26, second session (about 2:25 PM - 4:30 PM local)
+
+**Summary:** Fixed typing in the docked VS Code (the keyboard stayed on CC's dashboard) and added an Inbox | Sent switch to the Mail tab. Both are committed and loaded (CC restarted at 3:06 PM); the tree is clean.
+
+### Done
+- `917ea5d` Docked VS Code: a click inside it now gives it the keyboard. Cause: as a child window VS Code (Chromium) is never the active window, so it never took the focus and keys went to the dashboard's WebView2. The panel now gets `WM_PARENTNOTIFY` for button presses through a window subclass (`SetWindowSubclass`) and calls `SetFocus` on the docked window. Tested with a stand-in window + throwaway VS Code profile and real input: 3/8 checks without the fix (bug reproduced), 8/8 with it. Confirmed on the live app with a read-only focus watcher (a click on VS Code moved focus to it in 7 ms); Joe confirmed he can type.
+- `c738cc1` Mail tab: **Inbox | Sent** switch (`folder=inbox|sent` on `/api/mail`, `outlook.sent_mail`, localStorage `cc.mail.folder`). Sent shows the newest 50 sent emails as "To: …" rows; All | Unread hides there; picking a folder ends a search (search still covers both); sent mail gets no Spam / ☆ actions (`get_message` returns `folder: "Sent"`). Preview mock serves Sent mail. Tests: read-only Outlook check (50 rows, newest first, ~1.2 s warm, reader detects Sent) and a Playwright preview check at 1920 / 1280 / 390 (no page errors, no sideways scroll; the only 3 fails were the test's case-sensitive "Sent" vs the CSS-uppercased "SENT").
+
+### Decisions
+- Joe changed the password he had pasted in the earlier session, so redacting the old transcript is no longer needed.
+- Inbox | Sent: search keeps covering both folders rather than only the chosen one.
+
+### Waiting on a restart
+- Nothing: CC started at 3:06 PM, after the last commit (2:45 PM). Tree clean.
+
+### Waiting on Joe
+- [ ] Add the three weekday personal reminders (Personal tab); none saved yet.
+- [ ] Optional: move blocked-sender mail still in the Inbox via Spam → "Also move matching emails to Junk".
+- [ ] Still open from earlier: Toolkit → Connection → Test; SSMS AutoRecover on; sign in to the Pulse and Teams views; mark important senders; Google/iCloud calendar links; urgent people, Asana token.
+
+### In flight / not finished
+- Nothing uncommitted, no agents, no test servers left running.
+
+### Known issues
+- Docked VS Code: the keyboard follows a mouse click only. Choosing a project's window in the tab bar doesn't move the keyboard into VS Code (click inside it).
+- Carried over: start-up page always plays the puzzle; a force-kill or crash of CC closes docked VS Code / SSMS windows; web VS Code terminal fails (0xC0000022); a hung docked SSMS or VS Code slows CC.
+
+### Incidents
+- The focus tests (with Joe's OK) took over the mouse and keyboard for about two minutes and showed a stand-in window and a throwaway VS Code (temp profile in the session scratchpad); those were closed by command line afterwards and the cursor put back. Joe's own VS Code windows were only read (focus probes), never changed.
+- Read-only Outlook reads for checks: Sent Items and Inbox lists (counts and timings only printed).
+
 ## 2026-10-26 (about 11 AM - 2:40 PM local)
 
 **Summary:** Nine of Joe's requests built, tested and committed. The biggest: desktop VS Code docked in the VS Code tab, so a CC restart keeps VS Code and its Claude chats running (it already worked live in Joe's 2:20 PM restart). Everything is live; nothing is waiting on a restart.
@@ -29,7 +60,7 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
 - Nothing: CC restarted at 2:20 PM, after the last commit (2:18 PM). The tree is clean.
 
 ### Waiting on Joe
-- [ ] **Remove the password he pasted into this chat** from the session transcript: run `C:\sonance\internal\CommandCenter\.venv\Scripts\python.exe -I "<scratchpad>\redact.py" fix` (the command is in the last message of the 2026-10-26 session; the script finds the message by its shape and overwrites it in place). Claude was blocked from editing its own transcript. Change that password if it's a real one (a copy went to Anthropic with the conversation).
+- [x] (Done another way: Joe changed the password, 2026-10-26 second session.) **Remove the password he pasted into this chat** from the session transcript: run `C:\sonance\internal\CommandCenter\.venv\Scripts\python.exe -I "<scratchpad>\redact.py" fix` (the command is in the last message of the 2026-10-26 session; the script finds the message by its shape and overwrites it in place). Claude was blocked from editing its own transcript. Change that password if it's a real one (a copy went to Anthropic with the conversation).
 - [ ] Add the three weekday personal reminders (Personal tab). No reminder has ever been saved, which is why no pop-up has appeared.
 - [ ] Optional: blocked-sender mail still sitting in the Inbox (e.g. 23 matching "pricing"; CC hides it) can be moved with Spam → "Also move matching emails to Junk".
 - [ ] Still open from earlier: Toolkit → Connection → Test; SSMS AutoRecover on; sign in to the Pulse and Teams views; mark important senders; Google/iCloud calendar links; urgent people, Asana token.
