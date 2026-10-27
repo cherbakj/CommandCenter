@@ -946,6 +946,8 @@ function reviewReply(m, replyAll, p, remindDays, typed = p.text) {
       return;
     }
     replyDrafts.delete(m.id);
+    refresh();  // the email's alerts were removed with the reply
+    if ($("#tab-alerts").classList.contains("active")) loaders.alerts();
     $("#dialog").close();
     showMessage("Sent", `Your reply was sent from Outlook.${remindDays ? ` If nobody replies within ${remindDays} day${remindDays > 1 ? "s" : ""}, you'll get an alert.` : ""}`);
   });

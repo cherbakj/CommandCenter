@@ -491,6 +491,8 @@ def diff_alerts(old: dict | None, tickets: list[dict], me: set[str]) -> tuple[li
         if t["status"] != prev.get("status"):
             if t["status"] == "Resolved" and (t.get("resolved_by") or "").lower() in me:
                 continue  # Joe closed it himself
+            if t["status"] == "Waiting on reporter":
+                continue  # not wanted (Joe, 2026-10-27); it coming back to Open still alerts
             back_on_you = t["status"] == "Open" and prev.get("status") in ("Waiting on reporter", "On hold", "Resolved")
             out.append({"toast": "ticket back on you" if back_on_you else "ticket status changed",
                         "title": f"{label}: {prev.get('status')} -> {t['status']}",

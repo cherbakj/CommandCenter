@@ -538,6 +538,10 @@ async def mail_reply(id: str = Body(...), text: str = Body(...), reply_all: bool
         db.kv_set("mail:sent_log", sent[:200])
         if remind_days > 0:
             today.watch_for_reply(info, remind_days, id)
+        removed = await asyncio.to_thread(db.delete_mail_alerts, id)  # replied: its alerts are done with
+        if removed:
+            log.info("Reply sent: removed %d alert(s) for that email", removed)
+        return {"ok": True, "alerts_removed": removed}
     return {"ok": True}
 
 

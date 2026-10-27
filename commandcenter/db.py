@@ -199,8 +199,8 @@ def clear_alerts():
         _db().commit()
 
 
-def mail_alerts() -> list[tuple[int, str]]:
-    """(alert id, EntryID) of the alerts whose action opens an email, newest first."""
+def action_alerts(kind: str) -> list[tuple[int, dict]]:
+    """(alert id, action) of the alerts whose action is of this type ("mail", "teams", ...), newest first."""
     with _lock:
         rows = _db().execute("SELECT id, action FROM alerts WHERE action IS NOT NULL ORDER BY id DESC").fetchall()
     out = []
@@ -209,9 +209,19 @@ def mail_alerts() -> list[tuple[int, str]]:
             a = json.loads(unseal(action))
         except (SealError, ValueError):
             continue
-        if isinstance(a, dict) and a.get("type") == "mail" and isinstance(a.get("id"), str):
-            out.append((alert_id, a["id"]))
+        if isinstance(a, dict) and a.get("type") == kind:
+            out.append((alert_id, a))
     return out
+
+
+def mail_alerts() -> list[tuple[int, str]]:
+    """(alert id, EntryID) of the alerts whose action opens an email, newest first."""
+    return [(i, a["id"]) for i, a in action_alerts("mail") if isinstance(a.get("id"), str)]
+
+
+def delete_mail_alerts(entry_id: str) -> int:
+    """Deletes the alerts (read or not) that open this email: Joe replied to it."""
+    return delete_alerts([a for a, e in mail_alerts() if e == entry_id])
 
 
 def mark_mail_alerts_read(entry_id: str) -> int:

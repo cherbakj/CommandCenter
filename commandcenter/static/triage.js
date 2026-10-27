@@ -375,6 +375,7 @@
       S.reviewing = false;
       card.classList.remove("reviewing");
       toast("Reply sent from Outlook.");
+      CC.refreshAlerts();  // the email's alerts were removed with the reply
       markCleared("replied");
     }
 

@@ -363,13 +363,36 @@ def _alert_new(unread: list[dict]):
             mention = i["kind"] == "mention"
             title = (f"{i['who']} mentioned you" if mention else f"Teams message from {i['who']}") +                 (f" in {i['where']}" if i["where"] else "")
             alerts.raise_alert("Teams", title, i["preview"], "high" if i["urgent"] else base,
-                               {"type": "teams", "url": i["link"] or "msteams:"}, toast="mention" if mention else "new message")
+                               {"type": "teams", "url": i["link"] or "msteams:", "thread": i["thread"]},
+                               toast="mention" if mention else "new message")
         if len(new) > ALERTS_PER_CHECK:
             alerts.raise_alert("Teams", f"{len(new) - ALERTS_PER_CHECK} more new in Teams", "", base,
                                {"type": "teams", "url": "msteams:"}, toast="new messages")
         if new:
             log.info("Teams: %d newly unread item(s)", len(new))
     db.kv_set("teams:alerted", current)
+
+
+_LINK_THREAD = re.compile(r"/l/(?:chat|message)/([^/?#]+)/")
+
+
+def _clear_answered(unread: list[dict]) -> int:
+    """Deletes the alerts for chats that aren't unread any more: Joe read or answered them (in Command Center's Teams
+    view, the Teams app or anywhere else). Only after a full read (chat list and activity feed), so a partial one never
+    clears anything. Alerts without a chat ("N more new in Teams") stay."""
+    still = {i["thread"] for i in unread}
+    done = []
+    for alert_id, a in db.action_alerts("teams"):
+        thread = a.get("thread")
+        if not thread:  # alerts from before the thread was stored: from the deep link
+            m = _LINK_THREAD.search(str(a.get("url") or ""))
+            thread = urllib.parse.unquote(m.group(1)) if m else None
+        if thread and thread not in still:
+            done.append(alert_id)
+    n = db.delete_alerts(done)
+    if n:
+        log.info("Teams: removed %d alert(s) for chats read or answered", n)
+    return n
 
 
 async def check() -> dict:
@@ -382,6 +405,8 @@ async def check() -> dict:
         _details.update(recent=found["recent"], read_at=db.now())
         if counts["badge"] is not None:
             _alert_new(found["unread"])
+            if counts["details"] == "ok":
+                _clear_answered(found["unread"])
         elif total > state.get("unread", 0):  # no chat list this time: the title count alone, as before
             alerts.raise_alert("Teams", f"{total} unread in Teams", "", settings().get("priority", "normal"),
                                {"type": "teams", "url": "msteams:"}, toast=f"{int(total)} unread")
