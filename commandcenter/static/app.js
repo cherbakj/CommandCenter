@@ -2510,20 +2510,37 @@ $("#win-lock").addEventListener("click", async () => {
   // The server drops the session and the window switches itself to the local lock screen.
   await guarded(() => api("/api/session/lock", {}));
 });
-$("#win-restart").addEventListener("click", async () => {
-  if (!await confirmDialog("Restart Command Center?", "The app closes and opens again. Claude sessions and the VS Code server stop.", "Restart")) return;
+// Restart and Close: a confirm, then a full-window overlay while the app goes (native views hide under it).
+async function appExit(path, title, text, verb, doing) {
+  if (!await confirmDialog(title, text, verb)) return;
   const overlay = el("div", { class: "restart-overlay", role: "status", "aria-live": "assertive" },
-    el("div", { class: "restart-box" }, el("img", { class: "restart-mark", src: "/static/jc-logo.svg", alt: "" }), el("div", {}, "Restarting…")));
+    el("div", { class: "restart-box" }, el("img", { class: "restart-mark", src: "/static/jc-logo.svg", alt: "" }), el("div", {}, doing)));
   document.body.append(overlay);
-  try { await api("/api/app/restart", {}); } catch (e) { overlay.remove(); showMessage("Restart", e.message); }
-});
+  try { await api(path, {}); } catch (e) { overlay.remove(); showMessage(verb, e.message); }
+}
+const restartApp = () => appExit("/api/app/restart", "Restart Command Center?",
+  "The app closes and opens again. Docked VS Code windows step out and dock again (Claude chats keep running); SSMS goes back to a normal window.",
+  "Restart", "Restarting…");
+const quitApp = () => appExit("/api/app/quit", "Close Command Center?",
+  "Alerts, reminders and the Teams reader stop until you start it again. Docked VS Code and SSMS go back to normal windows (nothing is closed).",
+  "Close", "Closing…");
+$("#win-restart").addEventListener("click", restartApp);
+// ⏻ Power (where ✕ was): minimize, windowed / full screen, restart, or close the app for real.
+const powerBtn = $("#win-power");
+const powerItems = () => [
+  el("button", { type: "button", onclick: () => guarded(() => api("/api/window/minimize", {})) }, "— Minimize"),
+  el("button", { type: "button", onclick: toggleFullscreen }, isFullscreen ? "❐ Windowed" : "⛶ Full screen"),
+  el("button", { type: "button", onclick: restartApp }, "↻ Restart Command Center"),
+  el("button", { type: "button", class: "cc-menu-danger", onclick: quitApp }, "⏻ Close Command Center"),
+];
+powerBtn.addEventListener("click", (e) => { e.stopPropagation(); menuOpen?.btn === powerBtn ? closeMenu(true) : showMenu(powerBtn, powerItems(), "Power"); });
+powerBtn.addEventListener("keydown", (e) => { if (e.key === "ArrowDown") { e.preventDefault(); showMenu(powerBtn, powerItems(), "Power"); } });
 // Buttons in the header must never start a window drag: stop their mousedown before pywebview's body listener.
 document.querySelector("header").addEventListener("mousedown", (e) => {
   if (e.target.closest("button, input, select, textarea, a, [tabindex]")) e.stopPropagation();
 });
 $("#win-min").addEventListener("click", () => guarded(() => api("/api/window/minimize", {})));
 $("#win-full").addEventListener("click", toggleFullscreen);
-$("#win-hide").addEventListener("click", () => guarded(() => api("/api/window/hide", {})));
 document.addEventListener("keydown", (e) => {
   if (e.key !== "F11" || $("#win-controls").hidden) return;
   e.preventDefault();

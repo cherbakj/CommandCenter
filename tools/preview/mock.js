@@ -726,7 +726,7 @@
       case "/spam/sync": return json({ ok: true });
       case "/vscode/start": case "/vscode/sync": case "/vscode/claude": return fail(409, `VS Code web runs only in the Command Center desktop app. ${DESKTOP_ONLY}`);
       case "/vscode/stop": return json({ status: "stopped" });
-      case "/projects/launch": case "/projects/new": case "/app/restart": case "/session/lock":
+      case "/projects/launch": case "/projects/new": case "/app/restart": case "/app/quit": case "/session/lock":
       case "/window/fullscreen": case "/window/minimize": case "/window/hide": return fail(409, DESKTOP_ONLY);
       case "/window/pulse/action": case "/window/ssms/action": case "/window/teams/action": return fail(409, DESKTOP_ONLY);
       case "/people/important": {

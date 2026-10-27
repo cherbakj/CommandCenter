@@ -538,6 +538,9 @@ button.prio-pill:hover { color: #fff; border-color: rgb(var(--accent-rgb) / .7);
 .cc-menu > .cc-menu-item:hover, .cc-menu > .cc-menu-item:focus-visible {
   color: #fff; background: rgb(var(--accent-rgb) / .14); border-color: rgb(var(--accent-rgb) / .45); box-shadow: none; outline: none;
 }
+.cc-menu > .cc-menu-item.cc-menu-danger:hover, .cc-menu > .cc-menu-item.cc-menu-danger:focus-visible {
+  background: rgb(var(--red-rgb) / .22); border-color: var(--red);
+}
 .cc-menu > [aria-checked=true]::after { content: "✓"; margin-left: auto; padding-left: 1rem; color: var(--accent); }
 
 /* ---- clock + weather ---- */

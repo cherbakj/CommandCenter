@@ -514,6 +514,16 @@ async def app_restart():
     return {"ok": True, "restarting": True}
 
 
+@router.post("/api/app/quit", include_in_schema=False)
+async def app_quit():
+    """The power menu's Close: the same full exit as Quit in the tray (docked windows step out, never closed)."""
+    if not shell:
+        return _no_shell()
+    log.info("Quit requested from the dashboard")
+    threading.Timer(0.3, shell.quit).start()  # let this response reach the page first
+    return {"ok": True, "quitting": True}
+
+
 @router.get("/auth", include_in_schema=False)
 async def auth(k: str = "", s: str = ""):
     """Exchanges a one-time code for the session cookie, then opens the dashboard."""
