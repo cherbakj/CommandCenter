@@ -16,7 +16,8 @@ and for this Windows user only (127.0.0.1:8765 behind a per-launch session cooki
 ## Configure it
 `config.yaml` (created from `config.example.yaml`; every setting is commented). Secrets are never in config: work secrets live in
 Windows Credential Manager (services `CommandCenter-SQL`, `CommandCenter-Toolkit`, `CommandCenter-Pulse`, `CommandCenter-Asana`); personal ones in the personal vault.
-Appearance (colors, text size, density, effects: glow, frosted glass, background motion, dot grid, animations) lives in the in-app **Profile** (avatar at top right), stored in SQLite (DPAPI-encrypted with the name and initials).
+Appearance (skin, colors, text size, density, effects: glow, frosted glass, background motion, dot grid, animations) lives in the in-app **Profile** (avatar at top right), stored in SQLite (DPAPI-encrypted with the name and initials).
+- **Skin** (Profile > Skin): **Command Center** (the original glass and neon look, the default) or **Pulse**, which matches the Pulse site's dark theme (`static/skin-pulse.css`, on with `<html data-skin="pulse">`; its colors are Pulse's own tokens from pulse-nextjs `app/globals.css`): charcoal surfaces (#1a1f24 / #242a31 / #2d343c) with hairline borders, Montserrat for all text with tabular figures (JetBrains Mono only for paths, SQL and logs), Sonance blue (picking the skin also picks the **Sonance Blue** theme, #00a3e1 + #00b2a9, unless the colors are custom), Pulse's shared-nav header, underlined tabs, uppercase dim section labels, KPI-card stat tiles (label on top, the tile's color as a left rail), outline / solid-blue buttons, page-ground fields with a blue focus ring, card-colored dialogs and Pulse's blue scrollbars. It's flat like Pulse: glow, frosted glass, background motion and the dot grid are off (their switches are greyed while it's chosen and come back as they were on the Command Center skin) and nothing blinks. Element-level rules use `:where(...)` so a module's own button and field classes still apply. The last skin is kept per viewer in localStorage `cc-skin`, so a reload paints in it before the profile loads. The launch animation, lock and start-up pages keep the Command Center look.
 
 ## Layout of the window
 - **Split workspace** (>= 1600px wide; toggle Split/Single in the header):
@@ -185,7 +186,7 @@ Appearance (colors, text size, density, effects: glow, frosted glass, background
 - **Secrets:** only in Credential Manager, the personal vault or memory. Logs, the database and API responses were swept for secrets.
   Logi passwords never come back in lists (`has_password` only); one user's password is fetched on an explicit Show/Clipboard click (POST `/api/toolkit/logi/password`), logged as a `reveal` in `toolkit_changes` without the value. New Logi passwords: 16 random characters (crypto.getRandomValues), upper/lower/digit/symbol, no look-alikes.
 - **Log:** `data/commandcenter.log`, rotated at 5 MB (3 old files). Alerts are logged by id, source and priority only, never titles or bodies. Request errors are logged as type, path and code locations only, never the exception message (it can quote row values). At startup, older lines carrying work data are rewritten as `[redacted]`.
-- **Fonts and network:** fonts are self-hosted (`static/fonts`: Inter for text, Orbitron for headings and numbers; CSP `font-src 'self'`). The page makes no requests beyond 127.0.0.1.
+- **Fonts and network:** fonts are self-hosted (`static/fonts`: Inter for text, Orbitron for headings and numbers, JetBrains Mono for code, Montserrat for the Pulse skin; all SIL OFL; CSP `font-src 'self'`). The page makes no requests beyond 127.0.0.1.
 - **Dev bypass:** `CC_DEV_NO_AUTH=1` works in `serve` mode only and logs a warning.
 
 ## Code layout
@@ -194,7 +195,7 @@ Appearance (colors, text size, density, effects: glow, frosted glass, background
 - `commandcenter/connectors/`: outlook, web, sql, sqlcert, asana, weather, teams. `people.py` handles internal domains, urgent people and important senders.
 - `commandcenter/static/`:
   - Core UI: `app.js`, `style.css`, `index.html` (+ `teams.css` for the Teams tab; its code is the "teams" section of `app.js`).
-  - Feature modules: `vscode`, `toolkit`, `pulse` (+ `pulseview.js`), `teamsview.js` (Teams on the web; its CSS is in `teams.css`), `ssms` (SQL tab), `codedock` (docked desktop VS Code), `nativestage.js` (stage reports for native windows), `planner`, `daycal` (Today's calendar), `profile`, `splash`, `daily`, `triage`, `capture`, `privacy`, `spam`, `important` (important senders), `offhours`, `personal` (`.js`/`.css`), `snip` (`.js`).
+  - Feature modules: `vscode`, `toolkit`, `pulse` (+ `pulseview.js`), `teamsview.js` (Teams on the web; its CSS is in `teams.css`), `ssms` (SQL tab), `codedock` (docked desktop VS Code), `nativestage.js` (stage reports for native windows), `planner`, `daycal` (Today's calendar), `profile`, `splash`, `daily`, `triage`, `capture`, `privacy`, `spam`, `important` (important senders), `offhours`, `personal` (`.js`/`.css`), `snip` (`.js`), `skin-pulse.css` (Profile > Skin > Pulse).
   - Shared assets: `jc-logo.svg` and `icon.ico` (the JC monogram).
 - `data/` (git-ignored, private ACL): the SQLite DB, log, browser profiles, `vscode/`, and the ACL backup.
 

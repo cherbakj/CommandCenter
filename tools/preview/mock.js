@@ -488,8 +488,10 @@
     neon: { label: "Neon Green", accent: "#39ff14", accent2: "#00e5ff" }, cyan: { label: "Cyber Cyan", accent: "#00e5ff", accent2: "#39ff14" },
     synth: { label: "Synthwave Magenta", accent: "#ff2bd6", accent2: "#00e5ff" }, amber: { label: "Amber Terminal", accent: "#ffb000", accent2: "#ff6a3d" },
     ice: { label: "Ice Blue", accent: "#7cc4ff", accent2: "#b8f2ff" }, violet: { label: "Ultraviolet", accent: "#b98cff", accent2: "#00e5ff" },
+    sonance: { label: "Sonance Blue", accent: "#00a3e1", accent2: "#00b2a9" },
   };
-  const PROFILE_DEFAULTS = { name: ME.name, initials: "JC", preset: "neon", accent: "#39ff14", accent2: "#00e5ff", text_scale: 100, density: "comfortable",
+  const SKINS = { cc: { label: "Command Center", preset: "neon" }, pulse: { label: "Pulse", preset: "sonance" } };
+  const PROFILE_DEFAULTS = { name: ME.name, initials: "JC", skin: "cc", preset: "neon", accent: "#39ff14", accent2: "#00e5ff", text_scale: 100, density: "comfortable",
     glow: true, glass: true, aurora: true, grid: true, animations: true, splash: false };
   let profile = { ...PROFILE_DEFAULTS };
   function saveProfile(p) {
@@ -499,6 +501,7 @@
     next.initials = String(next.initials || "").trim().toUpperCase();
     if (!/^[A-Z0-9]{1,3}$/.test(next.initials)) throw new Error("Initials: 1-3 letters or digits");
     if (!String(next.name || "").trim()) throw new Error("Name: letters, spaces, . ' - only (up to 60)");
+    if (!SKINS[next.skin]) throw new Error("Unknown skin");
     if (PRESETS[next.preset]) { next.accent = PRESETS[next.preset].accent; next.accent2 = PRESETS[next.preset].accent2; }
     profile = next;
     return profile;
@@ -597,7 +600,7 @@
       case "/snoozes": return json({ snoozes, reply_watches: watches });
       case "/planner": return json(planner(Number(q.get("days") || 10)));
       case "/feeds": return json({ feeds: vaultStatus().available ? feeds : [], colors: FEED_COLORS });
-      case "/profile": return json({ profile, presets: PRESETS, defaults: PROFILE_DEFAULTS });
+      case "/profile": return json({ profile, presets: PRESETS, skins: SKINS, defaults: PROFILE_DEFAULTS });
       case "/vault/status": return json(vaultStatus());
       case "/privacy/inventory": return json({ items: inventory(), vault: vaultStatus(), settings: { lock_on_windows_lock: true, auto_lock_minutes: 240 } });
       case "/reminders": return json(remindersData());

@@ -1,4 +1,4 @@
-"""User profile: name/initials and appearance (theme colors, text size, density, effects), saved locally."""
+"""User profile: name/initials and appearance (skin, theme colors, text size, density, effects), saved locally."""
 import re
 
 from fastapi import APIRouter, Body, HTTPException
@@ -14,9 +14,16 @@ PRESETS = {
     "amber": {"label": "Amber Terminal", "accent": "#ffb000", "accent2": "#ff6a3d"},
     "ice": {"label": "Ice Blue", "accent": "#7cc4ff", "accent2": "#b8f2ff"},
     "violet": {"label": "Ultraviolet", "accent": "#b98cff", "accent2": "#00e5ff"},
+    "sonance": {"label": "Sonance Blue", "accent": "#00a3e1", "accent2": "#00b2a9"},  # Pulse's accent + Foundation green
+}
+# Skins restyle the whole app (static/skin-<key>.css, selected by <html data-skin>). "cc" is the original glass look;
+# "pulse" matches the Pulse site (its dark theme): flat charcoal panels, Montserrat, Sonance blue, no glow effects.
+SKINS = {
+    "cc": {"label": "Command Center", "preset": "neon"},
+    "pulse": {"label": "Pulse", "preset": "sonance"},
 }
 DEFAULTS = {
-    "name": "Joe Cherbak", "initials": "JC", "preset": "neon", "accent": "#39ff14", "accent2": "#00e5ff",
+    "name": "Joe Cherbak", "initials": "JC", "skin": "cc", "preset": "neon", "accent": "#39ff14", "accent2": "#00e5ff",
     "text_scale": 100, "density": "comfortable", "glow": True, "glass": True, "aurora": True, "grid": True,
     "animations": True, "splash": True,
 }
@@ -41,6 +48,10 @@ def _clean(data: dict) -> dict:
             if not isinstance(value, str) or not HEX.match(value):
                 raise ValueError("Colors must look like #39ff14")
             p[key] = value.lower()
+        elif key == "skin":
+            if not isinstance(value, str) or value not in SKINS:
+                raise ValueError("Unknown skin")
+            p[key] = value
         elif key == "preset":
             if value not in PRESETS and value != "custom":
                 raise ValueError("Unknown theme")
@@ -74,7 +85,7 @@ def _clean(data: dict) -> dict:
 
 @router.get("")
 async def read_profile():
-    return {"profile": get(), "presets": PRESETS, "defaults": DEFAULTS}
+    return {"profile": get(), "presets": PRESETS, "skins": SKINS, "defaults": DEFAULTS}
 
 
 @router.post("")

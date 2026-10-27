@@ -17,7 +17,7 @@ STATIC = REPO / "commandcenter" / "static"
 OUT = HERE / "out" / "preview.html"
 
 FONTS = ("https://fonts.googleapis.com/css2?family=Inter:wght@100..900"
-         "&family=JetBrains+Mono:wght@400..700&family=Orbitron:wght@400..900&display=swap")
+         "&family=JetBrains+Mono:wght@400..700&family=Montserrat:wght@100..900&family=Orbitron:wght@400..900&display=swap")
 SKIP_SCRIPTS = {"splash.js"}            # launch animation: off in the preview
 SKIP_STYLES = {"fonts.css", "splash.css"}  # local @font-face files -> Google Fonts; splash is not loaded
 

@@ -74,3 +74,27 @@ html.pf-no-glow .logo-jc { box-shadow: var(--hi); }
 /* Animations off */
 html.pf-no-motion *, html.pf-no-motion *::before, html.pf-no-motion *::after { animation: none !important; transition: none !important; }
 html.pf-no-motion .stat:hover, html.pf-no-motion .pf-preset:hover { transform: none; }
+/* Skin picker: a small drawing of each skin (header strip, accent, panel) and its name. */
+.pf-skins { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: .45rem; margin-bottom: .4rem; }
+.pf-skin {
+  display: flex; flex-direction: column; align-items: stretch; gap: .45rem; padding: .5rem; white-space: normal; text-align: left;
+  border-radius: var(--r-card); background: rgb(255 255 255 / .04); border-color: var(--control);
+}
+.pf-skin[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.pf-skin-name { font: 600 .84rem/1.2 var(--font-ui); color: var(--text); display: flex; }
+.pf-skin[aria-pressed="true"] .pf-skin-name::after { content: "✓"; margin-left: auto; color: var(--accent); font-weight: 800; }
+.pf-skin-art { position: relative; display: block; height: 3rem; border-radius: .4rem; overflow: hidden; }
+.pf-skin-art i { position: absolute; display: block; }
+.pf-skin-art i:nth-child(1) { left: 0; right: 0; top: 0; height: .7rem; }
+.pf-skin-art i:nth-child(2) { left: .5rem; top: .25rem; width: 1.6rem; height: .2rem; border-radius: 2px; }
+.pf-skin-art i:nth-child(3) { left: .5rem; right: .5rem; top: 1.05rem; bottom: .45rem; border-radius: .3rem; }
+.pf-skin-cc .pf-skin-art { background: radial-gradient(60% 80% at 20% 30%, rgb(57 255 20 / .25), transparent 70%), radial-gradient(50% 70% at 85% 20%, rgb(0 229 255 / .22), transparent 70%), #04070a; }
+.pf-skin-cc .pf-skin-art i:nth-child(1) { background: rgb(9 13 17 / .7); border-bottom: 1px solid rgb(255 255 255 / .12); }
+.pf-skin-cc .pf-skin-art i:nth-child(2) { background: #39ff14; box-shadow: 0 0 .4rem #39ff14; }
+.pf-skin-cc .pf-skin-art i:nth-child(3) { background: rgb(14 20 24 / .64); border: 1px solid rgb(255 255 255 / .12); }
+.pf-skin-pulse .pf-skin-art { background: #1a1f24; }
+.pf-skin-pulse .pf-skin-art i:nth-child(1) { background: #242a31; border-bottom: 1px solid #3a444c; }
+.pf-skin-pulse .pf-skin-art i:nth-child(2) { background: #00a3e1; }
+.pf-skin-pulse .pf-skin-art i:nth-child(3) { background: #242a31; border: 1px solid #3a444c; }
+.pf-toggle.off { opacity: .5; cursor: default; }
+.pf-flat-note[hidden] { display: none; }

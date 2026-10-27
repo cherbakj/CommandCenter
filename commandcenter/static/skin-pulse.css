@@ -1,0 +1,245 @@
+/* Pulse skin (Profile > Skin > Pulse): Command Center dressed like Pulse (pulse-nextjs app/globals.css, its dark
+   theme). Flat charcoal surfaces with hairline borders instead of glass, Montserrat everywhere, Sonance blue,
+   no glow / aurora / dot grid (profile.js also sets the pf-no-* switches), underlined tabs, uppercase dim section
+   labels, KPI-style stat tiles and Pulse's blue scrollbars. Only <html data-skin="pulse"> is affected; the
+   colors here are Pulse's own tokens. Class rules start with :root[data-skin="pulse"] (0,2,0), so they beat the
+   rule they restyle and the html.pf-* switches. Element-level rules (button, input, table, dialog) use
+   :where(...) instead: the same weight as style.css's own, so this file (loaded after it) wins there, while a
+   module's own button or field classes (its CSS is injected later) still win over them. */
+:root[data-skin="pulse"] {
+  --bg: #1a1f24;                     /* Pulse --bg */
+  --glass-rgb: 36 42 49;
+  --panel: #242a31;                  /* Pulse --panel */
+  --panel-solid: #242a31;
+  --glass-strong: #2d343c;           /* Pulse --card (dialogs, menus) */
+  --pl-card: #2d343c;
+  --pl-glass: rgb(255 255 255 / .04);        /* Pulse --glass-bg */
+  --pl-glass-hover: rgb(255 255 255 / .07);
+  --pl-glass-border: rgb(255 255 255 / .09);
+  --pl-glass-border-hover: rgb(255 255 255 / .14);
+  --blur: 0px;
+  --glass-filter: none;
+  --text: #ffffff;
+  --muted: #d9d9d6;                  /* Pulse --muted (Sonance warm grey) */
+  --dim: #8f999f;
+  --line: #3a444c;                   /* Pulse --border */
+  --line-soft: #323b43;
+  --line-strong: var(--accent);
+  --control: #424c54;                /* Pulse --border-lt */
+  --hi: 0 0 #0000;
+  --shadow: 0 2px 8px rgb(0 0 0 / .3);   /* Pulse --shadow-card */
+  --glow: 0 0 #0000; --glow-2: 0 0 #0000; --glow-text: 0 0 #0000;
+  --hot: #9d8cff;         --hot-rgb: 157 140 255;   /* Pulse --accent2 violet, lifted to read as text */
+  --amber: #e8b84b;       --amber-rgb: 232 184 75;  /* Pulse --warn-bright */
+  --red: #ef6f6c;         --red-rgb: 239 111 108;   /* Pulse --danger / --neg */
+  --r-panel: .875rem;     /* 14px, Pulse tiles and KPI cards */
+  --r-card: .625rem;      /* 10px */
+  --r-btn: .44rem;        /* 7px, Pulse buttons */
+  --font-display: "Montserrat", "Segoe UI", system-ui, sans-serif;
+  --font-ui: "Montserrat", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Montserrat", "Segoe UI", system-ui, sans-serif;
+  /* Pulse sets times, counts and labels in Montserrat too (tabular digits, below), never a monospace font, so
+     the mono token follows. Real code keeps JetBrains Mono (--pl-code: paths, SQL, logs). */
+  --font-mono: "Montserrat", "Segoe UI", system-ui, sans-serif;
+  --pl-code: "JetBrains Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+:root[data-skin="pulse"] body { font-feature-settings: normal; font-variant-numeric: tabular-nums; }
+:root[data-skin="pulse"] :is(.project-path, .pulse-sql, .vsc-log, .vsc-where, .tk-error) { font-family: var(--pl-code); }
+:root[data-skin="pulse"] body::before, :root[data-skin="pulse"] body::after { display: none; }
+:root[data-skin="pulse"] * { text-shadow: none !important; }
+
+/* ---- header: Pulse's shared nav (translucent charcoal, hairline under it, logo | divider | title) ---- */
+:root[data-skin="pulse"] body > header {
+  background: rgb(36 42 49 / .85); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--pl-glass-border); box-shadow: none;
+}
+:root[data-skin="pulse"] body > header::after { display: none; }
+:root[data-skin="pulse"] .logo { font: 700 .95rem var(--font-ui); letter-spacing: .06em; gap: .75rem; }
+:root[data-skin="pulse"] .logo-jc { padding: 0; width: 1.75rem; height: 1.75rem; background: none; border: 0; border-radius: 0; box-shadow: none; }
+:root[data-skin="pulse"] .logo-text { border-left: 1px solid var(--line); padding-left: .75rem; }
+:root[data-skin="pulse"] .slash { font-size: 0; margin: 0; }
+:root[data-skin="pulse"] .slash::before { content: " "; font-size: .95rem; }
+/* Nav: Pulse's underlined tab strip instead of the sliding pill. */
+:root[data-skin="pulse"] .nav-group { padding: 0 .2rem; border: 0; border-radius: 0; background: none; box-shadow: none; }
+:root[data-skin="pulse"] .nav-group::before { display: none; }
+:root[data-skin="pulse"] .nav-label {
+  font: 700 .62rem var(--font-ui); letter-spacing: .12em; color: var(--dim); background: none; border: 0; padding: .2rem .4rem 0 0;
+}
+:root[data-skin="pulse"] .nav-group[data-pane="work"] .nav-label { color: var(--dim); background: none; }
+:root[data-skin="pulse"] nav button {
+  font: 600 .82rem var(--font-ui); color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  padding: .5rem .8rem .4rem; background: none;
+}
+:root[data-skin="pulse"] nav button:hover { color: var(--text); background: none; }
+:root[data-skin="pulse"] nav button.active,
+:root[data-skin="pulse"] .nav-group:not(.pill-on) button.active { color: rgb(var(--pill-c)); border-bottom-color: rgb(var(--pill-c)); background: none; }
+:root[data-skin="pulse"] nav button:focus-visible { background: var(--pl-glass-hover); }
+:root[data-skin="pulse"] .status > span { background: var(--pl-glass); border-color: var(--line); border-radius: .375rem; }
+:root[data-skin="pulse"] .dot.ok { background: #5cb82e; }   /* Pulse --pos */
+:root[data-skin="pulse"] .badge {
+  font: 700 .68rem/1.45 var(--font-ui); color: var(--bg); background: var(--red); border-radius: .7rem; padding: 0 .45rem;
+}
+:root[data-skin="pulse"] .search-btn kbd { font-family: var(--font-ui); background: var(--pl-glass); }
+/* Pulse doesn't blink: urgent things stay red and still. */
+:root[data-skin="pulse"] :is(.stat.alarm .n, .tag.urgent, .tag.live, .dot.bad) { animation: none; }
+:root[data-skin="pulse"] .win-btn { background: transparent; border-color: var(--line); border-radius: .375rem; }
+:root[data-skin="pulse"] .win-btn:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
+:root[data-skin="pulse"] .win-btn.win-close:hover { color: var(--red); border-color: var(--red); background: transparent; }
+:root[data-skin="pulse"] .pf-avatar { background: var(--accent); color: #fff; border: 0; font: 700 .78rem var(--font-ui); letter-spacing: 0; }
+:root[data-skin="pulse"] .pf-avatar:hover, :root[data-skin="pulse"] .pf-avatar:focus-visible { color: #fff; filter: brightness(1.1); }
+
+/* ---- surfaces: flat panels with a hairline (Pulse .tile) ---- */
+:root[data-skin="pulse"] .panel, :root[data-skin="pulse"] .panel-list {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-panel); box-shadow: var(--shadow);
+}
+:root[data-skin="pulse"] .panel::before { display: none; }
+/* Section labels: Pulse .dash-section-label (small, bold, uppercase, dim). */
+:root[data-skin="pulse"] .panel-label, :root[data-skin="pulse"] .prep-sec h4, :root[data-skin="pulse"] #palette-results .group {
+  font: 700 .7rem var(--font-ui); letter-spacing: .12em; color: var(--dim);
+}
+:root[data-skin="pulse"] #mail-list li.mail-group { font: 700 .66rem var(--font-ui); letter-spacing: .12em; color: var(--dim); }
+:root[data-skin="pulse"] .work-bar { background: var(--panel); border: 1px solid var(--line); box-shadow: none; }
+:root[data-skin="pulse"] .work-label { font: 700 .62rem var(--font-ui); letter-spacing: .12em; color: var(--dim); }
+:root[data-skin="pulse"] .card, :root[data-skin="pulse"] .rv-card, :root[data-skin="pulse"] .prep-notes { background: var(--pl-glass); border-color: var(--line); }
+:root[data-skin="pulse"] .splitter::after { background: var(--line); }
+:root[data-skin="pulse"] .splitter:hover::after, :root[data-skin="pulse"] body.resizing .splitter::after { background: var(--accent); }
+
+/* ---- stat tiles: Pulse .kpi-card (label on top, big white figure, glass fill); the tile's color is the left rail ---- */
+:root[data-skin="pulse"] .stat {
+  display: flex; flex-direction: column; background: var(--pl-glass); border: 1px solid var(--pl-glass-border);
+  border-radius: var(--r-panel); box-shadow: none;
+}
+:root[data-skin="pulse"] .stat::before { display: none; }
+:root[data-skin="pulse"] .stat::after { background: var(--c, var(--accent)); }
+:root[data-skin="pulse"] .stat:hover { transform: none; border-color: var(--pl-glass-border-hover); box-shadow: 0 0 20px rgb(var(--accent-rgb) / .15); }
+:root[data-skin="pulse"] .stat .l { order: -1; margin: 0 0 .25rem; font-weight: 600; letter-spacing: .08em; color: var(--dim); }  /* sizes stay style.css's (per pane) */
+:root[data-skin="pulse"] .stat .n { margin-top: auto; font-weight: 700; line-height: 1.1; color: var(--text); }  /* figures line up when a label wraps */
+:root[data-skin="pulse"] .stat .sub { font-family: var(--font-ui); color: var(--muted); }
+:root[data-skin="pulse"] .stat.alarm { border-color: var(--red); box-shadow: none; }
+:root[data-skin="pulse"] .stat.alarm .n { color: var(--red); }
+:root[data-skin="pulse"] .big-number { font: 700 2.6rem/1 var(--font-ui); color: var(--text); }
+
+:root[data-skin="pulse"] .clock, :root[data-skin="pulse"] .w-temp { font-family: var(--font-ui); font-weight: 700; color: var(--text); }
+:root[data-skin="pulse"] .clock .sec { color: var(--accent); }
+:root[data-skin="pulse"] .date-line { color: var(--muted); letter-spacing: .08em; }
+:root[data-skin="pulse"] #xp-fill { background: var(--accent); }
+:root[data-skin="pulse"] .xp-bar, :root[data-skin="pulse"] .segments i { background: var(--pl-glass-hover); box-shadow: none; }
+:root[data-skin="pulse"] .w-icon { filter: none; }
+
+/* ---- buttons: Pulse .btn-outline / .btn-blue / .btn-danger ---- */
+:where(:root[data-skin="pulse"]) button {
+  font: 600 .8rem var(--font-ui); color: var(--muted); background: transparent; border: 1px solid var(--control);
+  border-radius: var(--r-btn); box-shadow: none;
+}
+:where(:root[data-skin="pulse"]) button:hover { color: var(--accent); border-color: var(--accent); background: transparent; box-shadow: none; }
+:where(:root[data-skin="pulse"]) button:active { transform: none; }
+:where(:root[data-skin="pulse"]) button.primary, :where(:root[data-skin="pulse"]) button.send-btn {
+  background: var(--accent); color: #fff; border-color: transparent; box-shadow: none; filter: none;
+}
+:where(:root[data-skin="pulse"]) button.send-btn { background: var(--accent-2); }
+:where(:root[data-skin="pulse"]) button.primary:hover, :where(:root[data-skin="pulse"]) button.send-btn:hover { color: #fff; opacity: .88; filter: none; box-shadow: none; }
+:where(:root[data-skin="pulse"]) button.primary:focus-visible, :where(:root[data-skin="pulse"]) button.send-btn:focus-visible { color: #fff; }
+:where(:root[data-skin="pulse"]) button.alt { color: var(--accent-2); border-color: var(--accent-2); background: transparent; }
+:where(:root[data-skin="pulse"]) button.alt:hover { color: var(--accent-2); background: rgb(var(--accent-2-rgb) / .1); }
+:where(:root[data-skin="pulse"]) button.subtle { border-color: transparent; color: var(--muted); }
+:where(:root[data-skin="pulse"]) button.subtle:hover { color: var(--accent); border-color: var(--line); }
+:where(:root[data-skin="pulse"]) button.danger { color: var(--red); border-color: var(--red); background: transparent; }
+:where(:root[data-skin="pulse"]) button.danger:hover { color: var(--red); background: rgb(var(--red-rgb) / .1); box-shadow: none; }
+:root[data-skin="pulse"] button.danger-solid { color: var(--bg); background: var(--red); border-color: var(--red); }
+:root[data-skin="pulse"] button.danger-solid:hover { color: var(--bg); background: var(--red); opacity: .88; }
+:where(:root[data-skin="pulse"]) button:focus-visible { color: var(--text); box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / .25); }
+:root[data-skin="pulse"] .focus-chip.on { color: #fff; background: var(--accent-2); border-color: var(--accent-2); }
+:root[data-skin="pulse"] button.prio-pill.high, :root[data-skin="pulse"] .tw-urgent, :root[data-skin="pulse"] .tag.urgent,
+:root[data-skin="pulse"] .fu-sec.hot .chip { color: var(--bg); background: var(--red); border-color: var(--red); box-shadow: none; }
+
+/* ---- fields: Pulse filter inputs (page-ground fill, 7px corners, blue focus ring) ---- */
+:where(:root[data-skin="pulse"]) :is(input, select, textarea) {
+  font: 500 .86rem var(--font-ui); background: var(--bg); border: 1px solid var(--pl-glass-border-hover); border-radius: var(--r-btn);
+}
+:where(:root[data-skin="pulse"]) :is(input, select, textarea):hover { border-color: var(--control); }
+:where(:root[data-skin="pulse"]) :is(input, select, textarea):focus { border-color: var(--accent); background: var(--bg); box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / .15); }
+:where(:root[data-skin="pulse"]) :is(input[type=checkbox], input[type=range], input[type=color]) { background: transparent; }
+:root[data-skin="pulse"] #palette-input, :root[data-skin="pulse"] #palette-input:focus { background: transparent; border: 0; border-bottom: 1px solid var(--line); }
+
+/* ---- tabs and segmented controls ---- */
+/* Today's tabs: Pulse .trends-tabs (a rule under the strip, the active tab underlined in blue). */
+:root[data-skin="pulse"] .tw-tabs { padding: 0; gap: 2px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; box-shadow: none; }
+:root[data-skin="pulse"] .tw-tabs [role=tab] {
+  font: 600 .82rem var(--font-ui); color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  margin-bottom: -1px; padding: .45rem .9rem;
+}
+:root[data-skin="pulse"] .tw-tabs [role=tab]:hover { color: var(--text); background: none; }
+:root[data-skin="pulse"] .tw-tabs [role=tab][aria-selected=true] { color: var(--accent); background: none; border-bottom-color: var(--accent); box-shadow: none; }
+/* Two-way switches: Pulse .inv-pane-tabs (a pill track, the chosen side filled blue). */
+:root[data-skin="pulse"] .seg { background: var(--bg); border-color: var(--line); }
+:root[data-skin="pulse"] .seg button, :root[data-skin="pulse"] .seg-btn { border: 0; color: var(--muted); font-weight: 600; }
+:root[data-skin="pulse"] .seg button:hover, :root[data-skin="pulse"] .seg-btn:hover:not(.on) { color: var(--text); background: none; }
+:root[data-skin="pulse"] .seg button[aria-pressed="true"], :root[data-skin="pulse"] .seg-btn.on { background: var(--accent); color: var(--bg); }
+:root[data-skin="pulse"] .chip { color: var(--muted); background: var(--pl-glass); border-color: var(--line); font-weight: 600; }
+:root[data-skin="pulse"] .tw-tabs [role=tab][aria-selected=true] .chip { color: var(--accent); border-color: rgb(var(--accent-rgb) / .5); }
+
+/* ---- lists ---- */
+:root[data-skin="pulse"] .list li { border-radius: .5rem; }
+:root[data-skin="pulse"] .list li.unread, :root[data-skin="pulse"] #mail-list li.mail-row.unread { background: var(--sep), rgb(var(--accent-rgb) / .06); }
+:root[data-skin="pulse"] .list li.clickable:hover, :root[data-skin="pulse"] .list li.fu-row:hover { background-color: var(--pl-glass-hover); }
+:root[data-skin="pulse"] .list li.alert-row.unread { background: rgb(var(--accent-rgb) / .07); box-shadow: inset 3px 0 0 var(--accent); }
+:root[data-skin="pulse"] .title, :root[data-skin="pulse"] .list li.task.prio-high .title { color: var(--text); }
+:root[data-skin="pulse"] .fu-sec-h { background: var(--panel); border-bottom-color: var(--line); }
+:root[data-skin="pulse"] .fu-toggle { font: 700 .7rem var(--font-ui); letter-spacing: .1em; }
+:root[data-skin="pulse"] .mr-acts { background: linear-gradient(90deg, transparent, var(--panel) 1.4rem); }
+/* Tags and source tags: Pulse .tile-badge (square-ish, bordered, uppercase). */
+:root[data-skin="pulse"] .tag, :root[data-skin="pulse"] .src { border-radius: .25rem; font-family: var(--font-ui); }
+:root[data-skin="pulse"] .src { background: color-mix(in srgb, currentColor 10%, transparent); }
+:root[data-skin="pulse"] .src-outlook, :root[data-skin="pulse"] .src-sent { color: #74b9ff; }   /* Pulse --chip-info */
+:root[data-skin="pulse"] .src-todo { color: #4caf82; }                                         /* Pulse --chip-ok */
+:root[data-skin="pulse"] .src-asana { color: #e17055; }                                        /* Pulse --chip-alert */
+:root[data-skin="pulse"] .src-sql { color: #9fd8d4; }                                          /* Pulse --accent5-text */
+:root[data-skin="pulse"] .src-pulse { color: #00a3fe; }                                        /* the Pulse mark blue */
+
+/* ---- tables: Pulse's data table (card-colored sticky head, row rules only, no zebra) ---- */
+:where(:root[data-skin="pulse"]) table { font: .78rem var(--font-ui); font-variant-numeric: tabular-nums; }
+:where(:root[data-skin="pulse"]) :is(th, td) { border: 0; border-bottom: 1px solid var(--line); }
+:where(:root[data-skin="pulse"]) th { background: var(--pl-card); color: var(--dim); font-size: .66rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+:where(:root[data-skin="pulse"]) tr:nth-child(even) td { background: none; }
+
+/* ---- dialogs, menus, palette, toast: Pulse .cl-dialog (card fill, border, 10px corners, dark scrim) ---- */
+:where(:root[data-skin="pulse"]) dialog, :root[data-skin="pulse"] .palette-box {
+  background: var(--pl-card); -webkit-backdrop-filter: none; backdrop-filter: none;
+  border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: 0 12px 40px rgb(0 0 0 / .35);
+}
+:where(:root[data-skin="pulse"]) dialog::backdrop, :root[data-skin="pulse"] #palette { background: rgb(0 0 0 / .65); -webkit-backdrop-filter: none; backdrop-filter: none; }
+:where(:root[data-skin="pulse"]) dialog h3 { font: 700 1.05rem/1.3 var(--font-ui); }
+:where(:root[data-skin="pulse"]) dialog .field-label, :root[data-skin="pulse"] .rv-label, :root[data-skin="pulse"] .inline-field > label {
+  font: 700 .64rem var(--font-ui); letter-spacing: .06em; color: var(--dim);
+}
+:root[data-skin="pulse"] .cc-menu { background: var(--pl-card); -webkit-backdrop-filter: none; backdrop-filter: none; border-color: var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); }
+:root[data-skin="pulse"] .cc-menu > .cc-menu-item { color: var(--text); border-radius: .375rem; }
+:root[data-skin="pulse"] .cc-menu > .cc-menu-item:hover, :root[data-skin="pulse"] .cc-menu > .cc-menu-item:focus-visible { color: var(--accent); background: var(--pl-glass-hover); border-color: transparent; }
+:root[data-skin="pulse"] .cc-menu > .cc-menu-item.cc-menu-danger:hover, :root[data-skin="pulse"] .cc-menu > .cc-menu-item.cc-menu-danger:focus-visible { color: var(--red); background: rgb(var(--red-rgb) / .1); }
+:root[data-skin="pulse"] #palette-results .item.active { background: var(--pl-glass-hover); box-shadow: inset 3px 0 0 var(--accent); }
+:root[data-skin="pulse"] #toast { background: var(--pl-card); -webkit-backdrop-filter: none; backdrop-filter: none; border-color: var(--line); box-shadow: var(--shadow); }
+:root[data-skin="pulse"] .restart-overlay { background: rgb(0 0 0 / .65); -webkit-backdrop-filter: none; backdrop-filter: none; }
+:root[data-skin="pulse"] .restart-box { font: 700 .9rem var(--font-ui); letter-spacing: .14em; background: var(--pl-card); border-color: var(--line); }
+:root[data-skin="pulse"] .restart-mark { filter: none; }
+:root[data-skin="pulse"] .rv-warn { color: var(--bg); box-shadow: none; }
+:root[data-skin="pulse"] .spotlight { box-shadow: inset 0 0 0 2px var(--accent); }
+
+/* ---- triage: a flat page instead of CC's glow and dot grid ---- */
+:root[data-skin="pulse"] dialog.tri { background-image: none; }
+:root[data-skin="pulse"] .tri-card { border-radius: var(--r-panel); box-shadow: var(--shadow); }
+:root[data-skin="pulse"] .tri-card::before { display: none; }
+:root[data-skin="pulse"] .tri-body { background: var(--bg); border-color: var(--line); }
+:root[data-skin="pulse"] .tri-bar i { box-shadow: none; }
+
+/* ---- Profile panel ---- */
+:root[data-skin="pulse"] .pf-preset, :root[data-skin="pulse"] .pf-toggle { background: var(--pl-glass); border-color: var(--line); }
+:root[data-skin="pulse"] .pf-preset:hover { transform: none; }
+:root[data-skin="pulse"] .pf-preset.on { background: rgb(var(--accent-rgb) / .1); box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* ---- scrollbars: Pulse's (blue thumb inset in a page-ground track) ---- */
+:root[data-skin="pulse"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+:root[data-skin="pulse"] ::-webkit-scrollbar-track { background: var(--bg); border-radius: var(--r-pill); }
+:root[data-skin="pulse"] ::-webkit-scrollbar-thumb { background: var(--accent); border: 2px solid var(--bg); border-radius: var(--r-pill); background-clip: padding-box; }
+:root[data-skin="pulse"] ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--accent) 80%, #fff); background-clip: padding-box; }
+:root[data-skin="pulse"] ::-webkit-scrollbar-corner { background: var(--bg); }

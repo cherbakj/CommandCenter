@@ -1,6 +1,6 @@
-// User profile: an initials avatar at the top right opens a panel to set name/initials, theme colors,
-// text size, density and effects (glow, frosted glass, background motion, dot grid, animations).
-// Saved server-side (/api/profile) and applied immediately.
+// User profile: an initials avatar at the top right opens a panel to set name/initials, the skin (Command Center
+// or Pulse: skin-pulse.css), theme colors, text size, density and effects (glow, frosted glass, background motion,
+// dot grid, animations). Saved server-side (/api/profile) and applied immediately.
 (() => {
   const CC = window.CC;
   if (!CC) return;
@@ -11,7 +11,10 @@
   link.href = "/static/profile.css";
   document.head.append(link);
 
-  let profile = null, presets = {};
+  // The skin from the last load, so the page doesn't paint in the wrong one while the profile loads.
+  try { const s = localStorage.getItem("cc-skin"); if (s) document.documentElement.dataset.skin = s; } catch { /* per-viewer convenience only */ }
+
+  let profile = null, presets = {}, skins = {};
   let panelClose = null;  // aborts the open panel's "close" listener when the panel is rebuilt
   const avatar = el("button", { class: "pf-avatar", title: "Profile and appearance", "aria-label": "Profile and appearance", onclick: () => openPanel() }, "JC");
 
@@ -33,14 +36,20 @@
     root.style.setProperty("--on-accent", onAccent(p.accent));
     root.style.setProperty("--pf-scale", String(p.text_scale / 100));
     root.classList.toggle("pf-compact", p.density === "compact");
-    root.classList.toggle("pf-no-glow", !p.glow);
-    root.classList.toggle("pf-no-glass", p.glass === false);
-    root.classList.toggle("pf-no-aurora", p.aurora === false);
-    root.classList.toggle("pf-no-grid", !p.grid);
+    // The Pulse skin is flat, like Pulse: no glow, glass, background motion or dot grid, whatever the switches say.
+    const flat = p.skin === "pulse";
+    root.dataset.skin = p.skin || "cc";
+    root.classList.toggle("pf-no-glow", flat || !p.glow);
+    root.classList.toggle("pf-no-glass", flat || p.glass === false);
+    root.classList.toggle("pf-no-aurora", flat || p.aurora === false);
+    root.classList.toggle("pf-no-grid", flat || !p.grid);
     root.classList.toggle("pf-no-motion", !p.animations);
     avatar.textContent = p.initials || "JC";
     avatar.title = `${p.name} · profile and appearance`;
-    try { localStorage.setItem("cc-splash-off", p.splash ? "" : "1"); } catch { /* per-viewer convenience only */ }
+    try {
+      localStorage.setItem("cc-splash-off", p.splash ? "" : "1");
+      localStorage.setItem("cc-skin", root.dataset.skin);
+    } catch { /* per-viewer convenience only */ }
   }
 
   function placeAvatar() {
@@ -50,7 +59,7 @@
 
   async function load() {
     const data = await api("/api/profile");
-    profile = data.profile; presets = data.presets;
+    profile = data.profile; presets = data.presets; skins = data.skins || {};
     apply(profile);
   }
 
@@ -66,12 +75,25 @@
     const scaleOut = el("span", { class: "pf-scale-out" }, `${draft.text_scale}%`);
     const density = el("select", { id: "pf-density" }, el("option", { value: "comfortable" }, "Comfortable"), el("option", { value: "compact" }, "Compact"));
     density.value = draft.density;
+    const boxes = {};
     const toggle = (key, label) => {
-      const box = el("input", { type: "checkbox", id: `pf-${key}` });
+      const box = boxes[key] = el("input", { type: "checkbox", id: `pf-${key}` });
       box.checked = !!draft[key];
       box.addEventListener("change", () => { draft[key] = box.checked; preview(); });
       return el("label", { class: "pf-toggle" }, box, label);
     };
+    // Glow, glass, motion and the dot grid don't exist in the Pulse skin: their switches are off and greyed there.
+    const FLAT = ["glow", "glass", "aurora", "grid"];
+    const flatNote = el("p", { class: "muted pf-flat-note" }, "The Pulse skin is flat, like Pulse: no glow, glass, background motion or dot grid.");
+    function markEffects() {
+      const flat = draft.skin === "pulse";
+      for (const k of FLAT) {
+        boxes[k].disabled = flat;
+        boxes[k].checked = flat ? false : !!draft[k];
+        boxes[k].closest(".pf-toggle").classList.toggle("off", flat);
+      }
+      flatNote.hidden = !flat;
+    }
     const err = el("p", { class: "err", hidden: true });
 
     const swatches = el("div", { class: "pf-presets" }, [...Object.entries(presets), ["custom", { label: "Custom" }]].map(([key, pr]) => {
@@ -96,6 +118,23 @@
       });
     }
     const markCustom = () => { draft.preset = "custom"; markPreset("custom"); };
+
+    // Skin: picking one also picks its colors (Pulse: Sonance Blue), unless the colors are custom.
+    const skinPicker = el("div", { class: "pf-skins", role: "group", "aria-label": "Skin" }, Object.entries(skins).map(([key, sk]) =>
+      el("button", { type: "button", class: `pf-skin pf-skin-${key}`, "data-key": key, "aria-pressed": String((draft.skin || "cc") === key),
+        onclick: () => {
+          draft.skin = key;
+          const pr = presets[sk.preset];
+          if (pr && draft.preset !== "custom") {
+            draft.preset = sk.preset; draft.accent = pr.accent; draft.accent2 = pr.accent2;
+            accent.value = pr.accent; accent2.value = pr.accent2; markPreset(sk.preset);
+          }
+          skinPicker.querySelectorAll(".pf-skin").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.key === key)));
+          markEffects();
+          preview();
+        } },
+        el("span", { class: "pf-skin-art", "aria-hidden": "true" }, el("i", {}), el("i", {}), el("i", {})),
+        el("span", { class: "pf-skin-name" }, sk.label))));
     accent.addEventListener("input", () => { draft.accent = accent.value; markCustom(); preview(); });
     accent2.addEventListener("input", () => { draft.accent2 = accent2.value; markCustom(); preview(); });
     scale.addEventListener("input", () => { draft.text_scale = Number(scale.value); scaleOut.textContent = `${scale.value}%`; preview(); });
@@ -130,7 +169,7 @@
       const keep = el("button", { type: "button", class: "subtle", onclick: () => { row.classList.remove("pf-confirm"); row.replaceChildren(...buttons()); } }, "Keep my look");
       row.classList.add("pf-confirm");
       row.replaceChildren(
-        el("span", { class: "pf-confirm-text", role: "alert" }, "Reset colors, text size and effects to the default Neon Green look?"),
+        el("span", { class: "pf-confirm-text", role: "alert" }, "Reset the skin, colors, text size and effects to the default Command Center look (Neon Green)?"),
         keep,
         el("button", { type: "button", class: "danger-solid", onclick: doReset }, "Reset"));
       keep.focus();
@@ -144,20 +183,23 @@
       openPanel();  // same dialog, rebuilt with the reset values
     });
 
+    const toggles = el("div", { class: "pf-toggles" }, toggle("glow", "Glow effects"), toggle("glass", "Frosted glass"), toggle("aurora", "Background motion"),
+      toggle("grid", "Dot grid"), toggle("animations", "Animations"), toggle("splash", "Launch animation"));
+    markEffects();
     CC.wideDialog(
       el("h3", {}, "Profile"),
       el("div", { class: "pf-grid" },
         el("section", {},
           el("div", { class: "panel-label" }, "You"),
           el("div", { class: "pf-row" }, field("Name", name), field("Initials", initials)),
+          el("div", { class: "panel-label gap" }, "Skin"), skinPicker,
           el("div", { class: "panel-label gap" }, "Theme"), swatches,
           el("div", { class: "pf-row" }, field("Accent", accent), field("Second accent", accent2))),
         el("section", {},
           el("div", { class: "panel-label" }, "Style"),
           field("Text size", el("div", { class: "pf-scale" }, scale, scaleOut)),
           field("Spacing", density),
-          el("div", { class: "pf-toggles" }, toggle("glow", "Glow effects"), toggle("glass", "Frosted glass"), toggle("aurora", "Background motion"),
-            toggle("grid", "Dot grid"), toggle("animations", "Animations"), toggle("splash", "Launch animation")),
+          toggles, flatNote,
           el("p", { class: "muted" }, "Changes preview live. Saved only on this PC."))),
       err, row);
   }
