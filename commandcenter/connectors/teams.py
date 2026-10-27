@@ -21,6 +21,7 @@ given; you press send.
 import asyncio
 import logging
 import re
+import time
 import urllib.parse
 from datetime import datetime
 
@@ -409,9 +410,11 @@ def is_set_up() -> bool:
 async def watch_loop():
     while True:
         cfg = settings()
+        started = time.monotonic()
         if cfg.get("enabled", True) and is_set_up():
             try:
                 await check()
             except Exception:
                 log.exception("Teams check crashed")
-        await asyncio.sleep(max(60, int(cfg.get("poll_minutes", 2)) * 60))
+        # poll_minutes from the start of one check to the next (a read takes ~20 s), at least 15 s apart
+        await asyncio.sleep(max(15, max(60, int(cfg.get("poll_minutes", 2)) * 60) - (time.monotonic() - started)))
