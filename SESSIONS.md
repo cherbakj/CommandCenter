@@ -2,6 +2,37 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-26, third session (about 6:40 PM - 8:00 PM local)
+
+**Summary:** Joe had never seen a personal reminder: none had been saved, and the pop-up only ever showed inside CC's window. Due reminders now bring CC to the front (not while it's locked or the screen may be shared). Joe saved his reminders for tomorrow; the bring-to-front hasn't been seen firing live yet.
+
+### Done
+- `6f8da62` Personal reminders come to the front: a due reminder (or a snooze running out) restores CC from the tray / minimized and brings it in front of other apps, with the pop-up centered (`DesktopApp.raise_for_reminder`, `reminders.front_hook`, `CC.reminderPoll`). Kept back (toast + sound only, pop-up waits in CC) while CC is locked or when `reminders.share_risk` finds presentation mode / a full-screen app other than CC, the mic or camera in use (Windows' CapabilityAccessManager records), or a duplicated display. Logs "brought forward" / "kept back (<reason>)". Tests: 12/12 logic checks with a fake window and user32, real detection read-only on this PC (all clear), preview page check (hook present, no errors). PROJECT.md updated.
+
+### Decisions
+- Bring to front, but not while sharing (chosen over "always jump to front" and "a small always-on-top window").
+- Vault across restarts: **leave as is**. It stays unlocked all day but a CC restart still locks it (the key is never written to disk). Turned down: keeping the key until midnight sealed by a Windows Hello/TPM key, or by DPAPI.
+
+### Waiting on a restart
+- Nothing: CC started at 7:00 PM, after `6f8da62` (6:52 PM). Tree clean, safe to restart.
+
+### Waiting on Joe
+- [ ] Tomorrow: watch for the first personal reminder (four saved at 7:55-7:56 PM: ids fb79b6, 6112d0, dc3a5c, 9a80e3) and say whether CC came forward; the log line "Personal reminders: window …" says what happened.
+- [ ] Optional: blocked-sender mail still in the Inbox via Spam → "Also move matching emails to Junk".
+- [ ] Still open from earlier: Toolkit → Connection → Test; SSMS AutoRecover on; sign in to the Pulse and Teams views; mark important senders; Google/iCloud calendar links; urgent people, Asana token.
+
+### In flight / not finished
+- Nothing uncommitted, no agents or test servers running. A scratch test copy (code only) was made and deleted without being started.
+
+### Known issues
+- Bring-to-front not yet seen live (only tested with fakes). Two demo attempts at 7:05 and 7:10 didn't happen because the reminders were never saved (the vault was locked after the 7:00 restart, then not re-saved); saving itself works (4 saves logged).
+- If CC is already in front while Joe shares his screen, the pop-up still shows its text (as before). Offered to hide it during calls; not asked for.
+- Ad-hoc screen shares without the mic or camera on aren't detected (only the mic/camera, presentation/full-screen and duplicated-display signals).
+- Carried over: start-up page always plays the puzzle; a force-kill or crash of CC closes docked VS Code / SSMS; web VS Code terminal fails (0xC0000022); a hung docked SSMS or VS Code slows CC; the keyboard follows only a mouse click into docked VS Code.
+
+### Incidents
+- None. Only read-only checks on the PC: microphone/camera privacy registry keys, the notification state and display topology, and the CC log.
+
 ## 2026-10-26, second session (about 2:25 PM - 4:30 PM local)
 
 **Summary:** Fixed typing in the docked VS Code (the keyboard stayed on CC's dashboard) and added an Inbox | Sent switch to the Mail tab. Both are committed and loaded (CC restarted at 3:06 PM); the tree is clean.
