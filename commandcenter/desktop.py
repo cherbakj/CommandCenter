@@ -1,11 +1,11 @@
 """Desktop shell: runs the server in the background and shows the dashboard in a native window
-(Edge WebView2 through pywebview), with a tray icon. Closing the window hides it to the tray so
-alerts keep running; Quit in the tray menu exits.
+(Edge WebView2 through pywebview), with a tray icon. The window is open, minimized or closed for good:
+closing it (Alt+F4) minimizes it so alerts keep running; Close in the power menu or Quit in the tray exits.
 
 Unlock: the window starts on a local start-up page, not the dashboard: the launch animation's puzzle
 assembling (static/splash.js in gate mode, no API calls). The first time it is shown (at launch, or from
 the tray / a toast when it started minimized at sign-in) Windows Hello asks who you are (Windows password
-if Hello isn't set up) in front of it; Unlock / Minimize / Hide / Quit appear only if that fails. Only then
+if Hello isn't set up) in front of it; Unlock / Minimize / Quit appear only if that fails. Only then
 does the window open the one-time /auth link that gives it the session cookie, and the dashboard's splash
 carries on with the sync checks. Lock shows the padlock page (LOCK_HTML) instead. There is no idle re-lock (security.unlock_on_start);
 Lock in the dashboard (POST /api/session/lock) replaces the session secret and asks again.
@@ -54,7 +54,7 @@ a:hover{background:#39ff1422}</style></head><body><div class="drag pywebview-dra
 <div class="logo">COMMAND<b>//</b>CENTER</div><div class="lock">&#128274;</div>
 <div id="status">__STATUS__</div>
 <a href="__ACTION__unlock">Unlock</a><a class="quiet" href="__ACTION__minimize">Minimize</a><a class="quiet"
-href="__ACTION__hide">Hide to tray</a><a class="quiet" href="__ACTION__quit">Quit</a>
+href="__ACTION__quit">Quit</a>
 </div><script>function setStatus(t){document.getElementById('status').textContent=t}</script></body></html>"""
 
 
@@ -78,7 +78,7 @@ a:hover{background:#39ff1422}
 __SPLASH_CSS__</style></head><body><div class="drag pywebview-drag-region"></div>
 <div class="gate-foot"><div id="status" role="status">__STATUS__</div><div id="actions" hidden>
 <a href="__ACTION__unlock">Unlock</a><a class="quiet" href="__ACTION__minimize">Minimize</a><a class="quiet"
-href="__ACTION__hide">Hide to tray</a><a class="quiet" href="__ACTION__quit">Quit</a></div></div>
+href="__ACTION__quit">Quit</a></div></div>
 <script>window.CC_GATE=true;function setStatus(t,failed){document.getElementById('status').textContent=t;
 document.getElementById('actions').hidden=!failed}</script><script>__SPLASH_JS__</script></body></html>"""
 
@@ -437,8 +437,8 @@ class DesktopApp:
     def _on_closing(self):
         if self.quitting:
             return True
-        self.window.hide()
-        return False  # cancel the close; keep running in the tray
+        self.window.minimize()
+        return False  # cancel the close: open, minimized or quit, never hidden (Joe's call 2026-10-27)
 
     def _remember_geometry(self, *_):
         w = self.window
@@ -453,7 +453,7 @@ class DesktopApp:
 
     # ---- unlock ----
     def _lock_status(self, text, failed=False):
-        """failed: the start-up page shows its Unlock / Minimize / Hide / Quit links (the padlock page always does)."""
+        """failed: the start-up page shows its Unlock / Minimize / Quit links (the padlock page always does)."""
         def update():
             try:
                 self.window.evaluate_js(f"setStatus({json.dumps(text)}, {json.dumps(failed)})")
@@ -465,7 +465,7 @@ class DesktopApp:
         if not self.lock_showing:
             log.warning("Ignored a lock-screen action (%s) while the lock screen isn't showing", str(action)[:20])
             return
-        actions = {"unlock": self._unlock, "quit": self.quit, "hide": self.hide, "minimize": self.minimize}
+        actions = {"unlock": self._unlock, "quit": self.quit, "minimize": self.minimize}
         actions.get(action, lambda: None)()
 
     def _unlock(self):
