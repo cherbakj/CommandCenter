@@ -359,6 +359,25 @@ class DesktopApp:
             self.window.on_top = False
             self._unlock()
 
+    def raise_for_reminder(self) -> str:
+        """A personal reminder is due (reminders._notify): restore the window and bring it in front so the pop-up
+        shows in the middle of it. Not while locked (that would start Windows Hello by itself) or while the screen
+        may be on show to others (reminders.share_risk); then the toast alone, and the pop-up waits in the window."""
+        if not self.window or self.quitting or not self.unlocked or self.lock_showing:
+            return "kept back (locked)"
+        user32 = ctypes.windll.user32
+        hwnd = self._hwnd()
+        in_front = user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd) \
+            and user32.GetAncestor(user32.GetForegroundWindow(), 2) & 0xFFFFFFFF == hwnd & 0xFFFFFFFF  # GA_ROOT: docked ones count
+        if not in_front:
+            from . import reminders
+            risk = reminders.share_risk()
+            if risk:
+                return f"kept back ({risk})"
+            self.show()
+        self.window.run_js("window.CC && CC.reminderPoll && CC.reminderPoll()")  # the pop-up now, not at the next poll
+        return "already in front" if in_front else "brought forward"
+
     def minimize(self):
         if self.window:
             self.window.minimize()
@@ -588,6 +607,8 @@ class DesktopApp:
         from .app import app
         app.state.show_window = self.show
         alerts.open_hook = self.show
+        from . import reminders
+        reminders.front_hook = self.raise_for_reminder
         security.shell = self
         self.server = uvicorn.Server(uvicorn.Config(security.guard(app), host="127.0.0.1", port=self.port,
                                                     log_config=None, log_level="warning", access_log=False))

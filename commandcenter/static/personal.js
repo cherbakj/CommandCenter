@@ -371,5 +371,6 @@
   setInterval(poll, 10000);
   setInterval(() => { if (section?.classList.contains("active") && !document.hidden) load(); }, 60000);  // overdue marks, next times
   CC.addPersonalReminder = addReminder;
+  CC.reminderPoll = poll;  // the desktop app calls it when it brings the window forward for a due reminder
   poll();
 })();

@@ -21,17 +21,22 @@ Occurrences before the reminder was created / its time last changed never fire.
 
 Pop-ups and the Windows toast: the toast always says only "Personal reminder" (whatever alerts.toast_detail
 says), plays the alert sound when alerts.sound_for includes high (as meeting reminders do), and, like meeting
-reminders (high priority), shows during focus mode too. Reminders don't go into the Alerts feed. The in-app pop-up
+reminders (high priority), shows during focus mode too. Reminders don't go into the Alerts feed. In the desktop app
+the window is restored and brought in front (front_hook), except while Command Center is locked or the screen may be
+on show (share_risk: presentation / full-screen app, microphone or camera in use, duplicated display): then only
+the toast, and the pop-up waits in the window. The in-app pop-up
 (personal.js) shows the text only while the vault is open and Privacy mode is off; otherwise "Personal reminder at
 3:00 PM" with Unlock. Done and Snooze work without unlocking (they need only the id and day).
 
 Logs: counts and short id prefixes only.
 """
 import asyncio
+import ctypes
 import logging
 import re
 import threading
 import time
+import winreg
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Body, HTTPException
@@ -255,8 +260,66 @@ def check_now(now: datetime | None = None) -> list[dict]:
     return announce
 
 
+front_hook = None  # set by the desktop app: brings its window in front for due reminders (DesktopApp.raise_for_reminder)
+
+_CONSENT = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore"
+QUNS_NAMES = {2: "full-screen app", 3: "full-screen game", 4: "presentation mode", 7: "full-screen app"}
+
+
+def _device_in_use(capability: str) -> bool:
+    """An app is using the microphone / camera right now: Windows' privacy record for it has a start time and no stop
+    time (the same records as the taskbar's in-use icon; packaged apps directly under the key, others under NonPackaged)."""
+    def walk(path, depth):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+                try:
+                    if winreg.QueryValueEx(k, "LastUsedTimeStart")[0] and not winreg.QueryValueEx(k, "LastUsedTimeStop")[0]:
+                        return True
+                except OSError:
+                    pass
+                return depth > 0 and any(walk(f"{path}\\{winreg.EnumKey(k, i)}", depth - 1)
+                                         for i in range(winreg.QueryInfoKey(k)[0]))
+        except OSError:
+            return False
+    return walk(f"{_CONSENT}\\{capability}", 2)
+
+
+def _display_cloned() -> bool:
+    """The screen is duplicated to another display (a projector or a meeting-room TV): topology "clone"."""
+    user32 = ctypes.windll.user32
+    paths, modes, topology = ctypes.c_uint32(), ctypes.c_uint32(), ctypes.c_uint32()
+    QDC_DATABASE_CURRENT, CLONE = 0x4, 0x2
+    if user32.GetDisplayConfigBufferSizes(QDC_DATABASE_CURRENT, ctypes.byref(paths), ctypes.byref(modes)):
+        return False
+    path_buf = (ctypes.c_byte * (72 * max(paths.value, 1)))()  # DISPLAYCONFIG_PATH_INFO, DISPLAYCONFIG_MODE_INFO
+    mode_buf = (ctypes.c_byte * (64 * max(modes.value, 1)))()
+    if user32.QueryDisplayConfig(QDC_DATABASE_CURRENT, ctypes.byref(paths), path_buf, ctypes.byref(modes), mode_buf,
+                                 ctypes.byref(topology)):
+        return False
+    return topology.value == CLONE
+
+
+def share_risk() -> str | None:
+    """Why the screen might be on show to others right now (a call, a presentation, a duplicated display), or None.
+    Called only when Command Center isn't the foreground window, so a full-screen state is another app's."""
+    state = ctypes.c_int()
+    if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state)) == 0 and state.value in QUNS_NAMES:
+        return QUNS_NAMES[state.value]
+    if _device_in_use("microphone"):
+        return "microphone in use"
+    if _device_in_use("webcam"):
+        return "camera in use"
+    try:
+        if _display_cloned():
+            return "display duplicated"
+    except Exception:
+        pass
+    return None
+
+
 def _notify(entries: list[dict]):
-    """One toast (and the alert sound) per batch. Generic text only: Windows keeps toast text unencrypted."""
+    """One toast (and the alert sound) per batch. Generic text only: Windows keeps toast text unencrypted.
+    Then the desktop window comes in front with the pop-up, unless the screen may be shared (front_hook decides)."""
     missed = sum(1 for e in entries if e.get("missed"))
     log.info("Personal reminders: %d due (%d missed)", len(entries), missed)
     s = config.section("alerts", {}) or {}
@@ -264,6 +327,11 @@ def _notify(entries: list[dict]):
         alerts._toast("Personal reminder", "")
     if "high" in (s.get("sound_for") or ["high"]):
         alerts._sound()
+    if front_hook:
+        try:
+            log.info("Personal reminders: window %s", front_hook())
+        except Exception as e:
+            log.warning("Personal reminders: couldn't bring the window forward (%s)", type(e).__name__)
 
 
 def _seconds_to_next(now: datetime) -> float:
