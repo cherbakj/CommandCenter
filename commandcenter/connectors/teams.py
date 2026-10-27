@@ -1,7 +1,9 @@
 """Teams connector.
 
 Reading: a background browser (saved profile "teams", logged in once by you) opens Teams on the web and reads,
-without clicking or typing anything:
+without clicking or typing anything. The browser stays open between checks, like a Teams tab left open, and each
+check re-reads the open page; it starts afresh every `keep_open_minutes` (60) and after a failed read
+(0 = close it after every read, which cold-starts Teams each time: several cores for ~20 s). It reads:
   * the unread count from the page title, e.g. "(3) Chat | Microsoft Teams";
   * which chats are unread and which carry an @mention of you, from the chat list (role=treeitem rows with
     data-item-type="chat"/"channel"; the conversation id in data-fui-tree-item-value; Teams' own screen-reader
@@ -195,40 +197,108 @@ async def _block_writes(route):
         await route.abort()
 
 
+class _Session:
+    """The background browser with Teams open, kept between checks (only read(), login() and shutdown() touch it)."""
+    pw = None
+    ctx = None
+    page = None
+    opened = 0.0  # time.monotonic() when Teams was loaded
+    hold = False  # a sign-in window has the profile: don't reopen
+
+
+_session = _Session()
+
+
+def _signed_out(page) -> bool:
+    return "login.microsoftonline.com" in page.url or "login.live.com" in page.url
+
+
+def _looks_loaded(title: str) -> bool:
+    return "Teams" in title and "|" in title
+
+
+async def _close():
+    s = _session
+    ctx, pw = s.ctx, s.pw
+    s.pw = s.ctx = s.page = None
+    for step in (ctx.close if ctx else None, pw.stop if pw else None):
+        if step:
+            try:
+                await asyncio.wait_for(step(), 15)
+            except Exception as e:
+                log.warning("Teams browser didn't close cleanly (%s)", type(e).__name__)
+
+
+async def _open():
+    """Starts the browser and loads Teams: ~20 s on several cores, the expensive part, hence kept open."""
+    s = _session
+    s.pw = await async_playwright().start()
+    try:
+        s.ctx = await web._launch(s.pw, PROFILE, headless=True)
+        await s.ctx.add_init_script(_HIDDEN_JS)
+        await s.ctx.route(_WRITES, _block_writes)
+        s.page = s.ctx.pages[0] if s.ctx.pages else await s.ctx.new_page()
+        await s.page.goto(url(), wait_until="domcontentloaded", timeout=60000)
+        # Teams takes a while to boot; wait until the title says Teams, or we land on a sign-in page.
+        for _ in range(45):
+            if _signed_out(s.page):
+                raise web.LoginNeeded("Teams needs you to sign in. Use Log in on the Teams tab.")
+            if _looks_loaded(await s.page.title()):
+                break
+            await s.page.wait_for_timeout(1000)
+        else:
+            raise TimeoutError(f"Teams didn't finish loading (title: {await s.page.title()!r})")
+        try:  # the chat list renders after the title; Teams may also open on another app (then there's none)
+            await s.page.wait_for_selector('[role="treeitem"][data-item-type="chat"]', state="attached", timeout=15000)
+        except Exception:
+            pass
+        await s.page.wait_for_timeout(3000)  # let the unread badges settle
+        s.opened = time.monotonic()
+    except BaseException:
+        await _close()
+        raise
+
+
 async def read() -> tuple[int, dict | None]:
     """(title count, raw details or None). Read-only; see the module docstring."""
-    async with web._lock(PROFILE), async_playwright() as pw:
-        ctx = await web._launch(pw, PROFILE, headless=True)
-        try:
-            await ctx.add_init_script(_HIDDEN_JS)
-            await ctx.route(_WRITES, _block_writes)
-            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-            await page.goto(url(), wait_until="domcontentloaded", timeout=60000)
-            # Teams takes a while to boot; wait until the title says Teams, or we land on a sign-in page.
-            for _ in range(45):
-                if "login.microsoftonline.com" in page.url or "login.live.com" in page.url:
-                    raise web.LoginNeeded("Teams needs you to sign in. Use Log in on the Teams tab.")
-                title = await page.title()
-                if "Teams" in title and "|" in title:
-                    break
-                await page.wait_for_timeout(1000)
-            else:
-                raise TimeoutError(f"Teams didn't finish loading (title: {await page.title()!r})")
-            try:  # the chat list renders after the title; Teams may also open on another app (then there's none)
-                await page.wait_for_selector('[role="treeitem"][data-item-type="chat"]', state="attached", timeout=15000)
-            except Exception:
-                pass
-            await page.wait_for_timeout(3000)  # let the unread badges settle
-            m = TITLE_COUNT.match(await page.title())
-            total = int(m.group(1)) if m else 0
+    keep = max(0, int(settings().get("keep_open_minutes", 60))) * 60
+    while True:
+        while _session.hold:
+            await asyncio.sleep(1)
+        async with web._lock(PROFILE):
+            if _session.hold:  # a sign-in started while this waited for the lock
+                continue
+            s = _session
             try:
-                raw = await page.evaluate(_READ_JS, {"days": RECENT_DAYS, "previewLen": PREVIEW_LEN})
-            except Exception as e:
-                log.warning("Teams details unavailable (%s)", type(e).__name__)
-                raw = None
-            return total, raw
-        finally:
-            await ctx.close()
+                reused = s.page is not None and not s.page.is_closed() and time.monotonic() - s.opened < keep
+                if reused and (_signed_out(s.page) or not _looks_loaded(await s.page.title())):
+                    log.info("Teams page needs a fresh start")
+                    reused = False
+                if not reused:
+                    await _close()
+                    await _open()
+                m = TITLE_COUNT.match(await s.page.title())
+                total = int(m.group(1)) if m else 0
+                try:
+                    raw = await s.page.evaluate(_READ_JS, {"days": RECENT_DAYS, "previewLen": PREVIEW_LEN})
+                except Exception as e:
+                    log.warning("Teams details unavailable (%s)", type(e).__name__)
+                    raw = None
+                if not reused:
+                    log.info("Teams background browser opened (kept open %d min)", keep // 60)
+                if not keep:
+                    await _close()
+                return total, raw
+            except BaseException:
+                await _close()  # a failed read starts afresh next time
+                raise
+
+
+async def shutdown():
+    """Closes the background browser (Command Center quitting)."""
+    _session.hold = True
+    async with web._lock(PROFILE):
+        await _close()
 
 
 # ---- the raw read -> counts and the Recent list ----------------------------------------------------------------
@@ -425,7 +495,15 @@ async def check() -> dict:
 
 
 async def login():
-    await web.login(PROFILE, url())
+    # The sign-in window needs the profile, which the background browser keeps open: close it, and keep read()
+    # from reopening it until the window has closed.
+    _session.hold = True
+    try:
+        async with web._lock(PROFILE):
+            await _close()
+        await web.login(PROFILE, url())
+    finally:
+        _session.hold = False
 
 
 def is_set_up() -> bool:
@@ -441,5 +519,5 @@ async def watch_loop():
                 await check()
             except Exception:
                 log.exception("Teams check crashed")
-        # poll_minutes from the start of one check to the next (a read takes ~20 s), at least 15 s apart
+        # poll_minutes from the start of one check to the next (a fresh start takes ~20 s), at least 15 s apart
         await asyncio.sleep(max(15, max(60, int(cfg.get("poll_minutes", 2)) * 60) - (time.monotonic() - started)))

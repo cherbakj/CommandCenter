@@ -36,7 +36,9 @@ ui:
 teams:
   enabled: true            # checks Teams once you've logged in on the Teams tab
   url: https://teams.microsoft.com/v2/
-  poll_minutes: 2          # each check opens Teams in a hidden Edge for ~20 s (read-only: unread DMs, @mentions)
+  poll_minutes: 2          # how often a hidden Edge's Teams page is read (read-only: unread DMs, @mentions)
+  keep_open_minutes: 60    # that Edge stays open between checks (~1.4 GB) and starts afresh this often;
+                           # 0 = close it after every check (cold-starts Teams each time: several cores for ~20 s)
   priority: normal         # alerts for new DMs / @mentions; from urgent people they are always high
   # The Teams tab also shows Teams on the web (its own sign-in, data/webview-teams). It goes only to Teams and its
   # sign-in (teams.microsoft.com, teams.cloud.microsoft, login.microsoftonline.com, login.microsoft.com,

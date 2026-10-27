@@ -150,6 +150,10 @@ async def lifespan(app: FastAPI):
     yield
     for t in tasks:
         t.cancel()
+    try:
+        await asyncio.wait_for(teams.shutdown(), 20)  # the background Teams browser stays open between checks
+    except Exception:
+        log.exception("Couldn't close the Teams browser")
 
 
 app = FastAPI(title="Command Center", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
