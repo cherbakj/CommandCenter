@@ -303,6 +303,8 @@ def response_headers(path: str) -> list[tuple[bytes, bytes]]:
     ]
     if not path.startswith("/static/"):
         headers.append((b"cache-control", b"no-store"))  # keep mail etc. out of the browser's disk cache
+    else:  # app files: always revalidated (ETag, cheap 304s), never reused stale after an update
+        headers.append((b"cache-control", b"no-cache"))
     return headers
 
 

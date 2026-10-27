@@ -4,6 +4,7 @@ import hashlib
 import importlib
 import logging
 import os
+import re
 import secrets
 import time
 import traceback
@@ -12,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import alerts, config, db, orders, security, today
@@ -178,9 +179,23 @@ async def errors(request: Request, exc: Exception):
     return JSONResponse({"error": str(exc).splitlines()[0] if str(exc) else type(exc).__name__}, status_code=500)
 
 
+_STATIC_REF = re.compile(r'(src|href)="/static/([A-Za-z0-9_./-]+)"')
+
+
+def _versioned(m: re.Match) -> str:
+    """/static/app.js -> /static/app.js?v=<mtime>: a changed file is a new URL, so the window never pairs a new
+    index.html with an older cached script (that left window.CC undefined after a restart)."""
+    try:
+        v = (STATIC / m.group(2)).stat().st_mtime_ns // 1_000_000
+    except OSError:
+        return m.group(0)
+    return f'{m.group(1)}="/static/{m.group(2)}?v={v}"'
+
+
 @app.get("/")
 async def index():
-    return FileResponse(STATIC / "index.html")
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(_STATIC_REF.sub(_versioned, page))
 
 
 # ---- alerts / status ---------------------------------------------------------
