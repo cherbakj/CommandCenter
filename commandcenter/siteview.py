@@ -106,7 +106,8 @@ class SiteView(NativeOverlay):
     NAME = "site view"
     PROFILE = "webview-site"
     OUT_SCHEMES = ("mailto", "msteams", "com-okta-authenticator")
-    ACTIONS = ("back", "forward", "reload", "home", "open", "navigate")
+    OS_SSO = False  # sign in with the Windows account (Microsoft 365 single sign-on, as Edge does)
+    ACTIONS =("back", "forward", "reload", "home", "open", "navigate")
 
     def __init__(self, app):
         super().__init__(app)
@@ -223,7 +224,7 @@ class SiteView(NativeOverlay):
         opts = CoreWebView2EnvironmentOptions()
         opts.AdditionalBrowserArguments = ""  # no remote debugging or other switches (the env vars were removed too)
         opts.AreBrowserExtensionsEnabled = False
-        opts.AllowSingleSignOnUsingOSPrimaryAccount = False
+        opts.AllowSingleSignOnUsingOSPrimaryAccount = self.OS_SSO
         opts.ExclusiveUserDataFolderAccess = True
         scheduler = TaskScheduler.FromCurrentSynchronizationContext()
 
@@ -586,6 +587,11 @@ class TeamsView(SiteView):
     NAME = "Teams view"
     PROFILE = "webview-teams"
     SITES = ("web",)
+    # Joe's call (2026-10-27). Without it, Teams on the web asks for a sign-in pop-up when its session lapses, and the
+    # view never opens a second window (it went to the browser, where it can't hand the sign-in back): "Sign in" did
+    # nothing. With it, Teams signs in silently with the Windows work account, as in Edge (tested in a stand-in
+    # WebView2: off = Microsoft's sign-in page, on = straight into Teams). Pages are still limited to teams_hosts().
+    OS_SSO = True
 
     def sites(self):
         return {"web": TEAMS_HOME}
