@@ -462,7 +462,12 @@ class SiteView(NativeOverlay):
         elif name == "home":
             core.Navigate(v.home)
         elif name == "navigate":
-            core.Navigate(url)
+            core.Navigate(self._in_page(str(core.Source), url))
+
+    def _in_page(self, src, url):
+        """Where a navigate really goes, given the page shown (src): the url itself, unless a view can reach it inside
+        the page it already has (TeamsView)."""
+        return url
 
     def _pending_for(self, site, url):
         """A page opened before that site's view exists: remembered, and opened when the view starts."""
@@ -539,6 +544,9 @@ class PulseView(SiteView):
 # ---- Teams on the web (COMMS Teams tab) ----------------------------------------------------------------
 
 TEAMS_HOME = "https://teams.microsoft.com/v2/"
+TEAMS_WEB_CHAT = "https://teams.microsoft.com/_#/l/"  # what teams_web_link builds
+TEAMS_APP_HOSTS = {"teams.cloud.microsoft", "teams.microsoft.com"}
+TEAMS_APP_PATHS = {"/", "/v2", "/v2/"}  # the Teams app page itself (not the launcher, not a sign-in hop)
 # Where Teams on the web and its sign-in really go (checked 2026-10 without signing in: teams.microsoft.com/v2 sends
 # the browser to login.microsoftonline.com; Microsoft's realm lookup for sonance.com answers "Federated" with
 # sonance.okta.com (WS-Fed) as the sign-in page, which posts back to login.microsoftonline.com). login.microsoft.com
@@ -601,6 +609,19 @@ class TeamsView(SiteView):
 
     def site_of(self, url):
         return "web" if _https_on(url, {"teams.microsoft.com", "teams.cloud.microsoft"}) else None
+
+    def _in_page(self, src, url):
+        """A chat while Teams is already up: only the #/l/... part changes, a same-document navigation that Teams'
+        router follows (no reload; tested 2026-10-27 in a stand-in view: the chat shows in ~1 s, while the deep link
+        reloads Teams through its launcher). Anything else (sign-in page, still on the old host) takes the deep link."""
+        if not url.startswith(TEAMS_WEB_CHAT):
+            return url
+        p = urllib.parse.urlsplit(src)
+        if p.scheme != "https" or p.port not in (None, 443) or p.username or p.password \
+                or (p.hostname or "").lower() not in TEAMS_APP_HOSTS or p.path not in TEAMS_APP_PATHS:
+            return url
+        # the page's own address up to the "#" (same document), then the deep link's "/l/..." part
+        return urllib.parse.urlunsplit(("https", p.hostname.lower(), p.path, p.query, url.split("#", 1)[1]))
 
     def on_permission(self, v, kind):
         from Microsoft.Web.WebView2.Core import CoreWebView2PermissionKind as K
