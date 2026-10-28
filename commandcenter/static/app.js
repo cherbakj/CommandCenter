@@ -2586,19 +2586,11 @@ const restartApp = () => appExit("/api/app/restart", "Restart Command Center?",
   "The app closes and opens again. Docked VS Code windows step out and dock again (Claude chats keep running); SSMS goes back to a normal window.",
   "Restart", "Restarting…");
 const quitApp = () => appExit("/api/app/quit", "Close Command Center?",
-  "Alerts, reminders and the Teams reader stop until you start it again. Docked VS Code and SSMS go back to normal windows (nothing is closed).",
+  "Command Center closes completely. Alerts, reminders and the Teams reader stop until you start it again. Docked VS Code and SSMS go back to normal windows (nothing is closed).",
   "Close", "Closing…");
 $("#win-restart").addEventListener("click", restartApp);
-// ⏻ Power (where ✕ was): minimize, windowed / full screen, restart, or close the app for real.
-const powerBtn = $("#win-power");
-const powerItems = () => [
-  el("button", { type: "button", onclick: () => guarded(() => api("/api/window/minimize", {})) }, "— Minimize"),
-  el("button", { type: "button", onclick: toggleFullscreen }, isFullscreen ? "❐ Windowed" : "⛶ Full screen"),
-  el("button", { type: "button", onclick: restartApp }, "↻ Restart Command Center"),
-  el("button", { type: "button", class: "cc-menu-danger", onclick: quitApp }, "⏻ Close Command Center"),
-];
-powerBtn.addEventListener("click", (e) => { e.stopPropagation(); menuOpen?.btn === powerBtn ? closeMenu(true) : showMenu(powerBtn, powerItems(), "Power"); });
-powerBtn.addEventListener("keydown", (e) => { if (e.key === "ArrowDown") { e.preventDefault(); showMenu(powerBtn, powerItems(), "Power"); } });
+// ⏻ (where ✕ was): close the app for real, after a confirm. Minimize, full screen and Restart have their own buttons.
+$("#win-power").addEventListener("click", quitApp);
 // Buttons in the header must never start a window drag: stop their mousedown before pywebview's body listener.
 document.querySelector("header").addEventListener("mousedown", (e) => {
   if (e.target.closest("button, input, select, textarea, a, [tabindex]")) e.stopPropagation();

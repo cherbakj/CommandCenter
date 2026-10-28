@@ -37,6 +37,21 @@ from .ssmsdock import SsmsDock
 log = logging.getLogger(__name__)
 APP_ID = "Sonance.CommandCenter"
 TITLE = "Command Center"
+QUIT_DEADLINE = 45  # s from Quit / Restart to the process ending, whatever hangs (Restart's new copy waits 60 s)
+
+
+def exit_process(code: int):
+    """Ends the process for sure once the app has closed (or failed to). The atexit hooks (the docked VS Code and SSMS
+    safety nets, Claude terminals) get 10 s, then os._exit: a normal interpreter exit waits for every worker thread,
+    and one stuck in an Outlook COM call kept a closed Command Center running with no window, so the next launch
+    handed off to that copy instead of starting."""
+    import atexit
+    hooks = threading.Thread(target=atexit._run_exitfuncs, name="exit-hooks", daemon=True)
+    hooks.start()
+    hooks.join(10)
+    log.info("Process ended (code %d)", code)
+    logging.shutdown()
+    os._exit(code)
 ICON_PATH = Path(__file__).parent / "static" / "icon.ico"
 # Lock-screen buttons navigate here; the navigation guard cancels the navigation and acts on it.
 # (No pywebview js_api: its dispatcher lets page JS reach any attribute path on the exposed object.)
@@ -593,6 +608,12 @@ class DesktopApp:
         self.ssms.release("quit")  # SSMS goes back to a normal window before this one is destroyed (never closed)
         # Docked VS Code windows too (minimized on Restart, shown on Quit), recorded so the next start docks them again
         self.code.release_all("restart" if self.restarting else "quit", minimize=self.restarting, remember=True)
+        # From here nothing of Joe's is inside the window, so the process may be ended outright if the orderly close
+        # below gets stuck (e.g. the window's thread deadlocked): a copy left running with no window takes the next launch.
+        watchdog = threading.Timer(QUIT_DEADLINE, lambda: (log.warning("Didn't close within %d s; ending the process",
+                                                                       QUIT_DEADLINE), exit_process(0)))
+        watchdog.daemon = True
+        watchdog.start()
         self._stop_hotkey()
         self._cancel.set()  # closes a pending Windows Hello prompt
         if self.server:

@@ -138,12 +138,14 @@ def main():
     elif args.cmd == "serve":
         run_server(open_browser=not args.no_browser)
     else:
-        from .desktop import DesktopApp
+        from .desktop import DesktopApp, exit_process
+        code = 0
         try:
             DesktopApp(start_hidden=getattr(args, "minimized", False), after_pid=getattr(args, "after_pid", None)).run()
         except Exception:
             logging.exception("Desktop app crashed")
-            raise
+            code = 1
+        exit_process(code)  # never waits on a stuck worker thread (see exit_process)
 
 
 def run_server(open_browser=True):
