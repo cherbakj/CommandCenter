@@ -2,6 +2,40 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-28, third session (about 2:50 PM - 3:30 PM local)
+
+**Summary:** Email alerts now need the email to name Joe; urgent people's mail still always alerts. Joe asked about ChatGPT voice control, heard the options and parked it. He restarted at 3:27 PM after the commit, so everything is loaded.
+
+### Done
+- `257545c` **Mail alerts only when Joe is named.**
+  - A new email alerts only if its subject, or the new text above the quoted history, has his name (`followups.mention_names`, his Outlook name), his address or an @mention. It's the same check as Follow-ups' Needs your reply.
+  - What it applies to:
+    - **Needs his name to alert:** important senders and every `outlook.rules` match (VIP sender, High importance, Flagged, Keyword).
+    - **Always alerts:** urgent people's mail.
+    - **Never alerts:** automated mail (no-reply senders, list headers) and Teams' notification emails, so the "Teams activity" rule is now dead. Teams alerts come from the Teams reader.
+  - Off switch: `outlook.alerts_require_mention: false`.
+  - Tested by feeding `scan_new_mail` 11 fake mail items with no Outlook (scratchpad `mention_alert_test.py`), with the setting on and off. Documented in PROJECT.md and config.example.yaml.
+
+### Decisions
+- **Exceptions to the "names Joe" rule:** only urgent people's mail always alerts. Joe turned down:
+  - no exceptions at all;
+  - exempting important senders too.
+- **Voice control (ChatGPT voice):** parked ("nevermind for now"). What was discussed, so it isn't re-researched:
+  - The ChatGPT app's voice mode can't be embedded.
+  - OpenAI's Realtime API could drive CC by push-to-talk. It needs an API key, billed separately from ChatGPT.
+  - Sends would still need the review click.
+  - The open question is whether Sonance allows work mail to go to OpenAI (or Claude).
+  - Alternatives offered:
+    - speech-to-text on the PC plus Claude;
+    - fixed voice commands with Windows speech, entirely on the PC.
+
+### Waiting on a restart
+- Nothing. The 3:27 PM restart loaded `257545c`, with no errors in the log since and both docks back. The tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] Watch whether any wanted email stops alerting (one that is meant for him but doesn't use his name). The fix is to add names to `followups.mention_names`, add the sender to urgent people, or set `outlook.alerts_require_mention: false`.
+- [ ] From the second session: check the new Today with real data, and share the demo page if he wants.
+
 ## 2026-10-28, second session (about 11:30 AM - 2:50 PM local)
 
 **Summary:** Built a shareable CC demo page in the Sonance skin. Today is now a one-screen overview: no tabs, laid out for the screen size. Empty follow-up groups are hidden. Joe restarted at 2:46 PM after the last code commit, so everything is loaded and checked in the log.
