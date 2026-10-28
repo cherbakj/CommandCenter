@@ -2,6 +2,49 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-28, second session (about 11:30 AM - 2:50 PM local)
+
+**Summary:** Built a shareable CC demo page in the Sonance skin. Today is now a one-screen overview: no tabs, laid out for the screen size. Empty follow-up groups are hidden. Joe restarted at 2:46 PM after the last code commit, so everything is loaded and checked in the log.
+
+### Done
+- **Demo artifact** (not in the repo): https://claude.ai/artifact/JeSJGvmLKRc6Ukuukxuu4t, private until Joe shares it.
+  - A clickable mock of CC in the Sonance / Pulse skin, with sample data only. No real mail, chats, tickets or server names.
+  - Covers: Today (Block time, Teams Recent DMs), the Alerts table, Teams with the hideable list, docked VS Code / SSMS, and short notes on features and privacy.
+  - The source is in the session scratchpad only, so a later change means rebuilding it from the published page (Artifact read).
+- `2446ebc` **Follow-ups:** groups with nothing in them are hidden (no "0" headings). With nothing at all, the card says "No follow-ups."
+- `d0427c4` **Today redesign:** every card shows at once instead of the Agenda / Tasks / Follow-ups tabs.
+  - Cards: Needs you (follow-ups), Schedule, Tasks, Teams Recent DMs and the hour grid.
+  - Columns follow the pane width:
+    - 1 column under 44rem;
+    - 2 columns at 44-72rem (the laptop's split COMMS pane);
+    - 3 columns at 72rem and up, where the hour grid gets its own column.
+  - Detail follows each card's width:
+    - narrow cards are summaries: one line a row, the main buttons only, and the first 3 rows of each follow-up group plus "N more" (Urgent always shows all);
+    - wider cards add location, organizer, due text, project and the weather detail.
+  - Other changes:
+    - a slim clock / weather strip, with the stat tiles as one-line chips;
+    - task Snooze / Open moved into a ⋯ menu;
+    - the hour grid fetches nothing while it's hidden;
+    - `CC.todayTab(name)` and the tiles now scroll to a card.
+  - Tested on a scratch copy at 560 / 800 / 1280×720 / 1920 split and single / 2560 split and single / 3840, in both skins. There was no sideways scroll at any size, and no page errors.
+
+### Decisions
+- **Today layout:** Joe chose "everything at once", with the meeting list as the Schedule and the hour grid only as a third column on a wide pane. He turned down:
+  - the hour grid as the Schedule;
+  - keeping the tabs and only tightening the top.
+- **Screen sizes:** Joe wants Today to suit the laptop (1920×1080 at 100%) and bigger screens: summaries or short text when small, more detail when large.
+- **Demo page:** the Sonance skin and sample data only.
+
+### Waiting on a restart
+- Nothing. Joe's 2:46 PM restart loaded `2446ebc` and `d0427c4`, and SSMS and VS Code docked again. The tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] Look at the new Today with real mail and calendar on the laptop, and say what feels cramped or sparse. It was only tested with sample data.
+- [ ] Share the demo page from its Share menu if he wants others to see it. It's private until then.
+
+### Known issues
+- Every restart logs "VS Code dock: check failed (ObjectDisposedException)" once, while the window closes. It has done so since 10/26 and it's harmless: the windows dock again. Fix it only if it starts to matter.
+
 ## 2026-10-28 (about 8:35 AM - 11:30 AM local)
 
 **Summary:** Fixed the morning freeze (a deadlock when a second launch or the tray showed CC) and the misplaced native views on Joe's 150% displays. Then a run of UI changes: Alerts as an aligned table, Close that always ends the process, block time and Teams DMs on Today, an SSMS-only SQL tab, SSMS re-docking after restarts and a hideable Teams list. CC now has a private GitHub backup, pushed by `close-session`. Everything is committed and loaded: Joe restarted at 10:54 after the last commit, and the restart was verified in the log.
