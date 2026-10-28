@@ -434,141 +434,151 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 .flow li { background: var(--sep); }
 
 /* ---- today layout ----
-   The tabbed panel (Today's Agenda / Tasks / Follow-ups) is the main thing and gets the room. Clock + weather (one
-   compact panel) and the stats are a strip on top; today's calendar (daycal.js) sits beside the tabbed panel on a
-   wide pane and under it on a narrow one. The layout follows the width of the PANE (container queries), so it works in the split
-   view and in single-pane mode alike. */
+   The day at a glance: a slim strip on top (clock + weather, the count tiles) and cards that all show at once:
+   Needs you (follow-ups), Schedule (meetings and open time), Tasks, Teams recent DMs and, on a wide pane, the
+   hour-grid calendar. The columns follow the width of the PANE (container queries), so the split view, single-pane
+   mode, a laptop and a big screen each get their own arrangement:
+     under 44rem  one column, the page scrolls
+     44-72rem     two columns: Needs you | Schedule, then Teams | Tasks (a laptop's split COMMS pane)
+     72rem+       three: the hour grid gets a column of its own
+   How much a row shows follows the width of its OWN card: a narrow card gives a summary (one line a row, the first
+   3 of each follow-up group, the main button), a wide one the detail (where, who, previews, every button). */
 .today-layout {
-  display: grid; gap: var(--gap);
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "strip" "work" "teams" "day";
+  display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "strip" "needs" "sched" "teams" "tasks";
 }
 .a-strip { grid-area: strip; display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); min-width: 0; align-items: stretch; }
-.a-work { grid-area: work; } .a-day { grid-area: day; }
-/* Recent Teams DMs under the main panel: the Teams tab's rows (teams.css), at most a few, scrolling inside. */
-.a-teams { grid-area: teams; padding: .55rem .9rem .5rem; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-.a-teams .panel-head { gap: .5rem; margin-bottom: .2rem; }
-#today-teams-list { container: teamsrecent / inline-size; overflow-y: auto; max-height: 15rem; padding-bottom: 0; }
-/* Short window: the page scrolls, and a long tab scrolls inside the panel, at most about one screen tall. */
-.tw-panel { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; max-height: max(20rem, calc(100dvh - var(--header-h) - 9rem)); }
-.tw-panel[hidden], .tw-tools[hidden], .fu-rows[hidden], .fu-note[hidden], .tw-urgent[hidden] { display: none; }
+.a-needs { grid-area: needs; } .a-sched { grid-area: sched; } .a-tasks-c { grid-area: tasks; } .a-teams { grid-area: teams; }
+.a-day { grid-area: day; }
+.today-layout > .a-day { display: none; }  /* the Schedule card covers it until there's a column for it */
 
-/* clock + weather: one panel, side by side when it has the width, stacked when it doesn't */
-.a-now { container: now / inline-size; padding: .6rem .9rem .65rem; justify-content: center; }
-.now-in { display: grid; grid-template-columns: minmax(0, 1fr); gap: .55rem; }
-@container now (min-width: 27rem) {
-  .now-in { grid-template-columns: auto minmax(0, 1fr); column-gap: 1rem; align-items: center; }
-  .now-in .a-weather { border-left: 1px solid var(--line); padding-left: 1rem; }
+/* Cards: a one-row head (label, count, tools on the right) and a body that scrolls inside the card. */
+.t-card { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: .6rem .8rem .55rem; }
+.t-head, .a-day > .panel-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: .35rem .45rem; margin: 0 0 .4rem; min-height: 1.9rem;
+  container: thead / inline-size;
 }
-.a-clock { min-width: 0; }
-.a-clock .clock { font-size: 2.15rem; margin: .25rem 0 .15rem; }
-.a-clock .clock .sec { font-size: .95rem; margin-left: .3rem; }
-.a-clock .clock .ampm { font-size: .78rem; margin-left: .4rem; }
-.a-clock .date-line { font-size: .74rem; letter-spacing: .08em; white-space: nowrap; }
-.a-clock .xp { margin-top: .45rem; min-width: 11rem; }
-.a-clock .xp-head { font-size: .6rem; margin-bottom: .22rem; gap: .5rem; }
-.a-clock .xp-bar { height: .36rem; }
-.a-clock .focus-line { font-size: .7rem; margin-top: .3rem; }
-.a-clock .focus-line:empty { display: none; }
-.a-weather { container: weather / inline-size; min-width: 0; }
-.a-weather .weather-main { margin: .3rem 0 0; gap: .65rem; flex-wrap: wrap; row-gap: .4rem; }
-.a-weather .w-icon { font-size: 1.95rem; }
-.a-weather .w-temp { font-size: 1.95rem; }
-.a-weather .w-temp small { font-size: .85rem; }
-.a-weather .w-info { min-width: 0; flex: 1 1 9rem; }
-.a-weather .w-desc { font-size: .8rem; }
-.a-weather .w-loc { font-size: .7rem; }
-.a-weather .w-loc span { white-space: nowrap; }
-/* Rain / humidity / wind and the hourly strip only where the weather half has the width. */
-.a-weather .w-meters, .a-weather .hours { display: none; }
-@container weather (min-width: 25rem) {
-  .a-weather .w-meters { display: grid; flex: 1 1 100%; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .25rem .7rem; }
-  .a-weather .meter-head { font-size: .6rem; letter-spacing: .05em; gap: .3rem; }
-  .a-weather .meter-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .a-weather .meter-head b { white-space: nowrap; }
+.t-head .chip:empty, .tw-urgent[hidden] { display: none; }
+.t-tools { display: flex; align-items: center; gap: .35rem; margin-left: auto; }
+.t-tools .slot { display: contents; }  /* module buttons in a slot get the row's gap */
+@container thead (max-width: 30rem) { .t-word { display: none; } }  /* "↻ Rescan" -> ↻, "＋ Block time" -> ＋ */
+.t-body { min-height: 0; overflow-y: auto; max-height: 24rem; }
+.tw-urgent {
+  font: 700 .62rem/1.5 var(--font-ui); letter-spacing: .05em; text-transform: uppercase; padding: .02rem .45rem; border-radius: var(--r-pill);
+  color: #fff; background: #c8102e; border: 1px solid var(--red); box-shadow: 0 0 .5rem rgb(var(--red-rgb) / .5); text-shadow: none;
 }
-@container weather (min-width: 36rem) {
-  .a-weather .weather-main { flex-wrap: nowrap; }
-  .a-weather .w-meters { flex: 1 1 auto; min-width: 13rem; }
-}
-@container weather (min-width: 46rem) {
-  .a-weather .hours { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .2rem; padding-top: .3rem; margin-top: .4rem; }
-  .a-weather .hour { font-size: .64rem; line-height: 1.25; }
-  .a-weather .hour .hi { font-size: .95rem; margin: 0; }
-  .a-weather .hour b { font-size: .78rem; }
-  .a-weather .hour .rain { font-size: .6rem; white-space: nowrap; }
-}
-.today-layout .a-stats { grid-template-columns: repeat(auto-fill, minmax(8.2rem, 1fr)); gap: .55rem; align-content: start; }
-.a-stats .stat { padding: .5rem .75rem .55rem; }
-.a-stats .stat .n { font-size: 1.45rem; }
-.a-stats .stat .l { font-size: .64rem; margin-top: .28rem; letter-spacing: .06em; }
-/* Narrower pane (e.g. the split COMMS pane): smaller tiles, so the tabbed panel keeps the height. */
-@container pane (max-width: 71.99rem) {
-  .a-stats .stat { padding: .36rem .6rem .4rem; }
-  .a-stats .stat .n { font-size: 1.2rem; }
-  .a-stats .stat .l { font-size: .58rem; margin-top: .18rem; }
-  .a-stats .stat .sub { font-size: .62rem; margin-top: .1rem; }
-}
+.fu-rows[hidden], .fu-note[hidden] { display: none; }
+#today-teams-list { container: teamsrecent / inline-size; padding-bottom: 0; }
 
+@container pane (min-width: 44rem) {
+  .today-layout { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); grid-template-areas: "strip strip" "needs sched" "teams tasks"; }
+}
 @container pane (min-width: 60rem) {
   .a-strip { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
 }
 @container pane (min-width: 72rem) {
   .a-strip { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.6fr); }
-  .today-layout { grid-template-columns: minmax(0, 2.1fr) minmax(21rem, 1fr); grid-template-areas: "strip strip" "work day" "teams day"; }
+  .today-layout {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(17rem, .8fr);
+    grid-template-areas: "strip strip strip" "needs sched day" "teams tasks day";
+  }
+  .today-layout > .a-day { display: flex; }
 }
-/* Tall enough: Today fills the pane exactly and each panel scrolls inside itself (no pane scroll). */
-@media (min-height: 900px) {
-  @container pane (min-width: 46rem) {
+@container pane (min-width: 110rem) {
+  .today-layout { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(20rem, .85fr); }
+}
+/* Tall enough: Today fills the pane and each card scrolls inside itself (no pane scroll). The second row (Teams,
+   Tasks) takes what it needs, up to 40%; Needs you and Schedule get the rest. */
+@media (min-height: 600px) {
+  @container pane (min-width: 44rem) {
     #tab-today.active { height: 100%; }
-    .today-layout { height: 100%; min-height: 34rem; grid-template-rows: auto minmax(0, 1fr) auto minmax(15rem, .55fr); }
-    .a-work, .a-day { overflow: hidden; min-height: 0; }
-    .tw-panel { flex: 1; max-height: none; }
+    .today-layout { height: 100%; min-height: 30rem; grid-template-rows: auto minmax(0, 1fr) fit-content(40%); }
+    .t-body { flex: 1; max-height: none; }
     .a-day .dc-scroll { flex: 1; max-height: none; }
   }
-  @container pane (min-width: 72rem) {
-    .today-layout { grid-template-rows: auto minmax(0, 1fr) auto; }
+}
+/* A short window (a laptop at 125-150% scaling): the second row gets less, so Needs you keeps more rows. */
+@media (min-height: 600px) and (max-height: 820px) {
+  @container pane (min-width: 44rem) {
+    .today-layout { grid-template-rows: auto minmax(0, 1fr) fit-content(32%); }
   }
 }
 
-/* ---- Today's main panel: tabs ---- */
-.a-work { padding: .7rem .9rem .75rem; }
-.tw-head { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem .5rem; margin-bottom: .55rem; container: twhead / inline-size; }
-.tw-tabs {
-  display: inline-flex; gap: .2rem; padding: .2rem; max-width: 100%; overflow-x: auto; scrollbar-width: none;
-  border-radius: var(--r-pill); border: 1px solid var(--line); background: rgb(255 255 255 / .035); box-shadow: var(--hi);
+/* clock + weather: one slim panel, side by side when it has the width, stacked when it doesn't */
+.a-now { container: now / inline-size; padding: .45rem .8rem .5rem; justify-content: center; }
+.now-in { display: grid; grid-template-columns: minmax(0, 1fr); gap: .45rem; }
+@container now (min-width: 27rem) {
+  .now-in { grid-template-columns: auto minmax(0, 1fr); column-gap: .9rem; align-items: center; }
+  .now-in .a-weather { border-left: 1px solid var(--line); padding-left: .9rem; }
 }
-.tw-tabs [role=tab] {
-  display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .9rem; font: 600 .9rem var(--font-ui);
-  color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: var(--r-pill); box-shadow: none;
+/* The clock: time on the left; date, workday bar and focus line beside it. */
+.a-clock { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: .75rem; align-items: center; }
+.a-clock > .panel-label { display: none; }
+.a-clock .clock { grid-row: span 2; font-size: 1.75rem; margin: 0; }
+.a-clock .clock .sec { font-size: .8rem; margin-left: .25rem; }
+.a-clock .clock .ampm { font-size: .7rem; margin-left: .3rem; }
+.a-clock .date-line { font-size: .7rem; letter-spacing: .08em; white-space: nowrap; }
+.a-clock .xp { margin-top: .25rem; min-width: 9rem; }
+.a-clock .xp-head { font-size: .58rem; margin-bottom: .18rem; gap: .5rem; }
+.a-clock .xp-bar { height: .3rem; }
+.a-clock .focus-line { grid-column: 1 / -1; font-size: .7rem; margin-top: .25rem; }
+.a-clock .focus-line:empty { display: none; }
+.a-weather { container: weather / inline-size; min-width: 0; }
+.a-weather .weather-head .panel-label { font-size: .62rem; }
+.a-weather .weather-main { margin: .15rem 0 0; gap: .55rem; flex-wrap: wrap; row-gap: .3rem; }
+.a-weather .w-icon { font-size: 1.5rem; }
+.a-weather .w-temp { font-size: 1.5rem; }
+.a-weather .w-temp small { font-size: .75rem; }
+.a-weather .w-info { min-width: 0; flex: 1 1 9rem; }
+.a-weather .w-desc { font-size: .78rem; }
+.a-weather .w-loc { font-size: .68rem; }
+.a-weather .w-loc span { white-space: nowrap; }
+/* More weather where there's room: rain / humidity / wind, then the hourly strip on a big screen. */
+.a-weather .w-meters, .a-weather .hours { display: none; }
+@container weather (min-width: 30rem) {
+  .a-weather .weather-main { flex-wrap: nowrap; }
+  .a-weather .w-meters { display: grid; flex: 1 1 auto; min-width: 12rem; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .25rem .7rem; }
+  .a-weather .meter-head { font-size: .6rem; letter-spacing: .05em; gap: .3rem; }
+  .a-weather .meter-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .a-weather .meter-head b { white-space: nowrap; }
 }
-.tw-tabs [role=tab]:hover { color: var(--text); background: rgb(255 255 255 / .06); border-color: transparent; box-shadow: none; }
-.tw-tabs [role=tab][aria-selected=true] {
-  color: var(--accent); background: rgb(var(--accent-rgb) / .14); border-color: rgb(var(--accent-rgb) / .55);
-  text-shadow: 0 0 .7rem rgb(var(--accent-rgb) / .4); box-shadow: 0 0 1rem rgb(var(--accent-rgb) / .16);
+@container weather (min-width: 50rem) {
+  .a-weather .hours { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .2rem; padding-top: .3rem; margin-top: .35rem; }
+  .a-weather .hour { font-size: .64rem; line-height: 1.25; }
+  .a-weather .hour .hi { font-size: .95rem; margin: 0; }
+  .a-weather .hour b { font-size: .78rem; }
+  .a-weather .hour .rain { font-size: .6rem; white-space: nowrap; }
 }
-.tw-tabs [role=tab]:focus-visible { outline-offset: 0; }
-.tw-tabs .chip:empty { display: none; }
-.tw-tabs [role=tab][aria-selected=true] .chip { color: var(--text); }
-.tw-urgent {
-  font: 700 .62rem/1.5 var(--font-ui); letter-spacing: .05em; text-transform: uppercase; padding: .02rem .45rem; border-radius: var(--r-pill);
-  color: #fff; background: #c8102e; border: 1px solid var(--red); box-shadow: 0 0 .5rem rgb(var(--red-rgb) / .5); text-shadow: none;
+/* The count tiles are one-line chips here: figure, then the label (two lines at most). The tile's extra line
+   (.sub, e.g. this week's off-hours) shows only on a wide pane. */
+.today-layout .a-stats { grid-template-columns: repeat(auto-fill, minmax(7.2rem, 1fr)); gap: .45rem; align-content: center; }
+.today-layout .stat { display: flex; align-items: center; gap: .55rem; padding: .32rem .6rem .34rem .75rem; min-width: 0; }
+.today-layout .stat .n { font-size: 1.2rem; flex: none; }
+.today-layout .stat .l {
+  font-size: .6rem; margin: 0; letter-spacing: .05em; line-height: 1.2; min-width: 0;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-.tw-tools { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem; margin-left: auto; }
-.tw-tools .slot { display: contents; }  /* module buttons in a slot get the row's gap */
-/* A narrow head (split COMMS pane): tighter tabs, so the tools still fit beside them. */
-@container twhead (max-width: 54rem) {
-  .tw-tabs [role=tab] { padding: .38rem .6rem; gap: .35rem; font-size: .86rem; }
-  .tw-long { display: none; }  /* "Today's Agenda" -> "Agenda" */
+.today-layout .stat .sub { display: none; font-size: .62rem; margin: 0 0 0 auto; white-space: nowrap; }
+@container pane (min-width: 72rem) {
+  .today-layout .stat .sub { display: block; }
 }
-@container twhead (max-width: 44rem) {
-  .tw-word { display: none; }  /* Rescan -> ↻ */
-  .tw-tabs [role=tab] { padding-inline: .5rem; }
-  .tw-tabs { gap: .1rem; }
-  .tw-tools { gap: .3rem; }
+
+/* Meeting and task rows keep their buttons on the right at every width (the generic narrow-list rule would drop
+   them to a line of their own). A narrow card gives a summary: one line a row, only the main buttons. */
+#agenda li, #tasks li { flex-wrap: nowrap; align-items: center; }
+#agenda li > .actions, #tasks li > .actions { flex-basis: auto; flex-wrap: nowrap; padding-left: 0; }
+@container (max-width: 30rem) {
+  #agenda li, #tasks li { padding: .4rem .55rem; gap: .55rem; }
+  #agenda .title, #tasks .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .9rem; }
+  #agenda .src-line, #agenda .slot-hint, #agenda .time-col .muted, #tasks .grow > .muted, .m-open { display: none; }
+  #agenda .time-col { min-width: 3.6rem; font-size: .8rem; }
+  #agenda li.slot { margin: .2rem 0; }
+  #tasks button.prio-pill { min-width: 0; padding-inline: .4rem; }
+  #tasks .title .tag { display: none; }
+  #tasks .title .tag.overdue, #tasks .title .tag.today { display: inline; }
 }
-/* While a task is dragged: the agenda tab says "hover here", and opens. */
-body.drag-task #tw-tab-agenda[aria-selected=false] { color: var(--accent); border: 1px dashed var(--accent); background: rgb(var(--accent-rgb) / .08); }
+/* While a task is dragged, the Schedule card says where to drop it. */
+body.drag-task .a-sched { border-color: rgb(var(--accent-rgb) / .6); }
 
 /* ---- task priority ---- */
 button.prio-pill {
@@ -725,7 +735,12 @@ button.fu-more { font-size: .9rem; line-height: 1; padding: .14rem .45rem; }
     row-gap: .1rem; column-gap: .5rem; padding-block: .3rem;
   }
   .fu-src { grid-area: src; } .fu-who { grid-area: who; } .fu-subj { grid-area: subj; } .fu-age { grid-area: age; } .fu-acts { grid-area: acts; }
+  /* A summary: the first 3 rows of a group (FU_PEEK in app.js), then "N more". */
+  .fu-rows:not(.all) > li.fu-row:nth-child(n+4) { display: none; }
+  .fu-rows:not(.all) > li.fu-peek-more { display: block; }
 }
+.list li.fu-peek-more { display: none; padding: .1rem .5rem .3rem; background: none; }
+.fu-peek-more button { font-size: .74rem; padding: .12rem .6rem; }
 
 /* ---- mail / sql / teams (sized by the pane, not the window) ---- */
 .split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }

@@ -3,7 +3,8 @@
 // their own colors, and personal entries (those two only while the personal vault is unlocked and Privacy mode is
 // off; the server leaves them out otherwise). Overlapping events share the width; a line marks the current time.
 // Fetched with Today's refreshes (at most once a minute) and when the day or the privacy state changes; the grid is
-// redrawn every minute from what it has. Text goes in as text only (CC.el).
+// redrawn every minute from what it has. It shows only on a wide pane (style.css); while it isn't showing nothing is
+// fetched, and it catches up when it shows. Text goes in as text only (CC.el).
 (() => {
   const CC = window.CC;
   if (!CC) return;
@@ -21,7 +22,7 @@
   const hourLabel = (h) => new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: "numeric" });
 
   let panel, dateChip, note, allDay, scroller, grid;
-  let data = null, fetchedAt = 0, fetchedDay = "", seq = 0, scrolled = false;
+  let data = null, fetchedAt = 0, fetchedDay = "", seq = 0, scrolled = false, missed = false;
 
   // ---- events: one shape for all sources ------------------------------------------------------------
   function events(day) {
@@ -164,6 +165,8 @@
   async function load(force = false) {
     const today = isoDay(new Date());
     if (!panel || (!force && fetchedDay === today && Date.now() - fetchedAt < MIN_FETCH_MS)) return;
+    if (!panel.offsetWidth) { missed = true; return; }  // not showing (narrow pane, another tab): fetched when it shows
+    missed = false;
     const my = ++seq;
     fetchedAt = Date.now();
     fetchedDay = today;
@@ -193,6 +196,7 @@
       note, allDay, scroller);
     render();
     load(true);
+    new ResizeObserver(() => { if (missed && panel.offsetWidth) load(true); }).observe(panel);
     // Each minute: move the now line and dim what's over; a new day fetches again.
     setInterval(() => { isoDay(new Date()) !== fetchedDay ? load(true) : render(); }, 60000);
   }

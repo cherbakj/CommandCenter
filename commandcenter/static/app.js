@@ -1327,9 +1327,13 @@ function spotlight(selector, tries = 10) {
   setTimeout(() => nodes.forEach((n) => n.classList.remove("spotlight")), 2600);
 }
 
-// Opens collapsed follow-up sections so their rows can be shown.
+// Opens collapsed follow-up sections, all their rows, so they can be shown.
 function expandFollowups(...keys) {
-  for (const k of keys) document.querySelector(`.fu-toggle[aria-controls="fu-${k}"][aria-expanded="false"]`)?.click();
+  for (const k of keys) {
+    document.querySelector(`.fu-toggle[aria-controls="fu-${k}"][aria-expanded="false"]`)?.click();
+    fuShowAll.add(k);
+    $(`#fu-${k}`)?.classList.add("all");
+  }
 }
 
 function renderStats(d) {
@@ -1339,7 +1343,7 @@ function renderStats(d) {
   const due = d.tasks.items.filter((t) => t.due && t.due <= today).length;
   const { total: fu, urgent, needs } = followupCounts(d);
   const go = (tab, selector, ...sections) => () => {
-    selectTodayTab(tab, { focus: true });
+    showTodayCard(tab);
     expandFollowups(...sections);
     spotlight(selector);
   };
@@ -1370,7 +1374,7 @@ function refreshStats() { if (todayData) renderStats(todayData); }
 
 // The stat tiles sit in balanced rows: all on one row if they fit, else two even rows (3+3, 4+3), else
 // three, never a lone tile on a row of its own.
-const STAT_MIN_REM = 8.2;
+const STAT_MIN_REM = 7.2;  // style.css .today-layout .a-stats
 function balanceStats() {
   const box = $("#stats");
   const n = box.children.length;
@@ -1445,7 +1449,7 @@ function renderAgenda(agenda) {
         m.join_url && end > now && linkButton(m.join_url, "Join", "small primary"),
         end > now && el("button", { class: "small alt", title: "Attendees, recent mail and notes", onclick: () => prepDialog(m.id, m) }, "Prep"),
         meetingActions(m, "agenda"),
-        el("button", { class: "small", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open"))) };
+        el("button", { class: "small m-open", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open"))) };
   });
   // Ties go to the open slot first: a slot always ends where the next meeting starts.
   rows.push(...freeSlots(agenda, now).map((s) => ({ at: s.start, slot: true, node: slotRow(s) })));
@@ -1489,7 +1493,7 @@ async function setTaskPriority(task, priority) {
     if (!todayData) return;
     sortTasks(todayData.tasks.items);
     renderTasks(todayData.tasks);
-    updateTodayTabs(todayData);
+    updateTodayCounts(todayData);
     requestAnimationFrame(() => $(`#tasks li[data-key="${CSS.escape(taskKey(task))}"] .prio-pill`)?.focus());
   };
   task.priority = priority;
@@ -1517,7 +1521,7 @@ function renderTasks(t) {
       class: `task ${task.due && task.due < today ? "overdue" : task.due === today ? "due-today" : ""} prio-${PRIO[task.priority] ? task.priority : "normal"}`,
       "data-key": taskKey(task),
       draggable: "true",
-      title: "Drag onto an open slot in the agenda to block time for it (hover Today's Agenda to switch to it)",
+      title: "Drag onto an open slot in the Schedule to block time for it",
       ondragstart: (e) => {
         dragTask = task;
         e.dataTransfer.effectAllowed = "copy";
@@ -1533,9 +1537,12 @@ function renderTasks(t) {
       el("div", { class: "muted" }, dueText(task.due), task.project ? ` · ${task.project}` : "")),
     el("div", { class: "actions" },
       el("button", { class: "small", title: "Block time on your calendar for this", onclick: () => scheduleDialog(task) }, "Schedule"),
-      el("button", { class: "small subtle", onclick: () => snoozeDialog({ id: task.id, subject: task.subject, who: task.source === "asana" ? "Asana" : "Outlook", kind: "task" }) }, "Snooze"),
-      task.url ? linkButton(task.url, "Open", "small subtle")
-               : el("button", { class: "small subtle", onclick: () => guarded(() => api("/api/outlook/open", { id: task.id })) }, "Open")),
+      // Snooze and Open in ⋯, so the title keeps the row's width in a narrow Tasks card.
+      menuButton("⋯", `More actions: ${task.subject}`, () => [
+        el("button", { type: "button", onclick: () => snoozeDialog({ id: task.id, subject: task.subject, who: task.source === "asana" ? "Asana" : "Outlook", kind: "task" }) }, "Snooze"),
+        task.url ? linkButton(task.url, task.source === "asana" ? "Open in Asana" : "Open", "")
+                 : el("button", { type: "button", onclick: () => guarded(() => api("/api/outlook/open", { id: task.id })) }, "Open in Outlook")],
+        "icon subtle fu-more")),
   )), "No open tasks. Inbox zero energy.");
 }
 
@@ -1697,11 +1704,19 @@ function ago(iso) {
 }
 
 // A group with nothing in it isn't shown (no "0" headings); renderFollowups says when there's nothing at all.
+// In a narrow card a group shows its first FU_PEEK rows and "N more" (style.css; Urgent always shows them all);
+// "N more" opens the whole group until a reload.
+const FU_PEEK = 3;
+const fuShowAll = new Set();
 function fuSection(key, title, items, row, { note, hot = false, urgent = false } = {}) {
   if (!items?.length) return null;
   const id = `fu-${key}`;
   const collapsed = fuCollapsed.has(key);
-  const list = el("ul", { class: "list fu-rows", id, hidden: collapsed }, items.map(row));
+  const list = el("ul", { class: `list fu-rows${urgent || fuShowAll.has(key) ? " all" : ""}`, id, hidden: collapsed }, items.map(row));
+  if (items.length > FU_PEEK) {
+    list.append(el("li", { class: "fu-peek-more" }, el("button", { type: "button", class: "small subtle",
+      onclick: () => { fuShowAll.add(key); list.classList.add("all"); } }, `${items.length - FU_PEEK} more`)));
+  }
   const noteEl = note ? el("div", { class: "fu-note", hidden: collapsed }, note) : null;
   const label = [el("span", { class: "fu-caret", "aria-hidden": "true" }), el("span", { class: "fu-sec-title" }, title), el("span", { class: "chip" }, items.length)];
   const toggle = (e) => {
@@ -1960,9 +1975,9 @@ function asanaDialog() {
   token.focus();
 }
 
-// In a narrow Today head the word is hidden (style.css .tw-word) and the button is just ↻; the name stays for hover and screen readers.
+// In a narrow card head the word is hidden (style.css .t-word) and the button is just ↻; the name stays for hover and screen readers.
 function rescanLabel(btn, word) {
-  btn.replaceChildren("↻", el("span", { class: "tw-word" }, ` ${word}`));
+  btn.replaceChildren("↻", el("span", { class: "t-word" }, ` ${word}`));
   btn.title = word; btn.setAttribute("aria-label", word);
 }
 
@@ -1978,7 +1993,7 @@ loaders.today = (refresh = false) => guarded(async () => {
     renderFollowups(todayData.followups);
     renderStats(todayData);
     renderSnoozedButton(todayData);
-    updateTodayTabs(todayData);
+    updateTodayCounts(todayData);
     // Feature modules (static/<module>.js) can react to fresh Today data without editing this file.
     document.dispatchEvent(new CustomEvent("cc:today", { detail: todayData }));
   } finally {
@@ -2054,36 +2069,23 @@ document.addEventListener("scroll", (e) => { if (menuOpen && !menuOpen.menu.cont
 window.addEventListener("resize", () => closeMenu());
 
 // The Follow-ups lists (urgent people, important senders, snoozed, muted) sit behind one "Manage" menu so the
-// tools stay on the tabs' row; each item clicks its button in #fu-manage, which keeps its own label and handler.
+// Needs you card's head stays one row; each item clicks its button in #fu-manage, which keeps its own label and handler.
 $("#today-refresh").before(menuButton("Manage ▾", "Manage follow-up lists",
   () => [...$("#fu-manage").querySelectorAll("button")].map((b) =>
     el("button", { type: "button", title: b.title, onclick: () => b.click() }, b.textContent)), "small subtle"));
 
-// ---- Today's main panel: Today's Agenda / Tasks / Follow-ups tabs ------------------------------------------
-// ARIA tabs (arrow keys, Home / End; the tools next to them follow the open tab). The tab last picked is
-// remembered per viewer (cc.today.tab); with nothing remembered yet, Today opens on Follow-ups when something is
-// urgent, else on the agenda. Urgent follow-ups always show as a red count on the Follow-ups tab.
-const TW = ["agenda", "tasks", "follow"];
-let twPicked = TW.includes(store.get("cc.today.tab")) ? store.get("cc.today.tab") : null;  // remembered choice
-let twTab = twPicked || "agenda";  // the tab showing
-let twAuto = false;  // the first-data default was applied
+// ---- Today's cards: Needs you / Schedule / Tasks ------------------------------------------------------------
+// All show at once (they were tabs until 2026-10-28; the old remembered tab, cc.today.tab, is cleared). A stat tile
+// or CC.todayTab(name) brings a card into view.
+const TODAY_CARDS = { agenda: "#today-sched", tasks: "#today-tasks", follow: "#today-needs" };
+store.set("cc.today.tab", null);
 
-function selectTodayTab(name, { save = true, focus = false } = {}) {
-  if (!TW.includes(name)) return;
-  twTab = name;
-  if (save) { twPicked = name; store.set("cc.today.tab", name); }
-  for (const t of TW) {
-    const on = t === name, tab = $(`#tw-tab-${t}`);
-    tab.setAttribute("aria-selected", String(on));
-    tab.tabIndex = on ? 0 : -1;
-    $(`#tw-${t}`).hidden = !on;
-    document.querySelector(`.tw-tools[data-for="${t}"]`).hidden = !on;
-  }
+function showTodayCard(name) {
+  const card = TODAY_CARDS[name] && $(TODAY_CARDS[name]);
+  if (!card) return;
+  if (!$("#tab-today").classList.contains("active")) openTab("today");
   closeMenu();
-  if (focus) {
-    if (!$("#tab-today").classList.contains("active")) openTab("today");
-    $(`#tw-tab-${name}`).focus();
-  }
+  card.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
 }
 
 function setBadge(sel, n, text) {
@@ -2092,7 +2094,7 @@ function setBadge(sel, n, text) {
   b.textContent = n ? text : "";
 }
 
-function updateTodayTabs(d) {
+function updateTodayCounts(d) {
   const agenda = Array.isArray(d.agenda) ? d.agenda : [];
   $("#agenda-count").textContent = d.agenda?.error ? "!" : agenda.filter((m) => !m.lunch).length;
   const items = d.tasks?.items || [];
@@ -2102,29 +2104,7 @@ function updateTodayTabs(d) {
   const { total, urgent } = followupCounts(d);
   $("#follow-count").textContent = d.followups?.error ? "!" : total;
   setBadge("#follow-urgent", urgent, `${urgent} urgent`);
-  if (!twPicked && !twAuto) {
-    twAuto = true;
-    selectTodayTab(urgent ? "follow" : "agenda", { save: false });
-  }
 }
-
-$(".tw-tabs").addEventListener("click", (e) => { const b = e.target.closest("[role=tab]"); if (b) selectTodayTab(b.dataset.tw); });
-$(".tw-tabs").addEventListener("keydown", (e) => {
-  const i = TW.indexOf(e.target.closest("[role=tab]")?.dataset.tw || twTab);
-  const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TW.length - 1 }[e.key];
-  if (to === undefined) return;
-  e.preventDefault();
-  selectTodayTab(TW[(to + TW.length) % TW.length], { focus: true });
-});
-// Dragging a task: hovering the Today's Agenda tab opens it, so the task can be dropped on an open slot.
-let twDragTimer = 0;
-$("#tw-tab-agenda").addEventListener("dragenter", () => {
-  if (!dragTask || twTab === "agenda") return;
-  clearTimeout(twDragTimer);
-  twDragTimer = setTimeout(() => { if (dragTask) selectTodayTab("agenda", { save: false }); }, 300);
-});
-$("#tw-tab-agenda").addEventListener("dragleave", () => clearTimeout(twDragTimer));
-selectTodayTab(twTab, { save: false });
 
 $("#new-task").addEventListener("click", () => newTaskDialog());
 $("#asana-btn").addEventListener("click", asanaDialog);
@@ -2638,7 +2618,7 @@ window.CC = {
   statTile,
   refreshStats,
   // Today's main panel: "agenda" | "tasks" | "follow".
-  todayTab(name) { selectTodayTab(name, { focus: true }); },
+  todayTab(name) { showTodayCard(name); },
   wideDialog(...content) { $("#dialog").classList.add("wide"); showDialog(...content); },
   showMail(id) { openTab("mail"); showMail(id); },
   registerAlertAction(type, fn) {  // the built-in types can't be replaced

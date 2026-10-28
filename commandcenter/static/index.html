@@ -76,26 +76,13 @@
           </div>
           <div class="a-stats" id="stats"></div>
         </div>
-        <!-- the main panel: Today's Agenda / Tasks / Follow-ups (app.js todayTabs) -->
-        <div class="panel a-work" id="today-work">
-          <div class="tw-head">
-            <div class="tw-tabs" role="tablist" aria-label="Today">
-              <button type="button" role="tab" id="tw-tab-agenda" data-tw="agenda" aria-controls="tw-agenda" aria-selected="true">
-                <span class="tw-name"><span class="tw-long">Today's </span>Agenda</span><span id="agenda-count" class="chip"></span></button>
-              <button type="button" role="tab" id="tw-tab-tasks" data-tw="tasks" aria-controls="tw-tasks" aria-selected="false" tabindex="-1">
-                <span class="tw-name">Tasks</span><span id="tasks-count" class="chip"></span><span id="tasks-high" class="tw-urgent" hidden></span></button>
-              <button type="button" role="tab" id="tw-tab-follow" data-tw="follow" aria-controls="tw-follow" aria-selected="false" tabindex="-1">
-                <span class="tw-name">Follow-ups</span><span id="follow-count" class="chip"></span><span id="follow-urgent" class="tw-urgent" hidden></span></button>
-            </div>
-            <div class="tw-tools" data-for="agenda">
-              <span id="agenda-tools-slot" class="slot"></span>
-              <button id="block-time" type="button" class="small primary" title="Block time on your Outlook calendar">＋ Block time</button>
-            </div>
-            <div class="tw-tools" data-for="tasks" hidden>
-              <button id="asana-btn" class="small"></button>
-              <button id="new-task" class="small primary">+ New task</button>
-            </div>
-            <div class="tw-tools" data-for="follow" hidden>
+        <!-- The day at a glance: every card shows at once (no tabs); how many columns and how much detail each row
+             shows follow the pane's size (style.css "today layout"). -->
+        <!-- Needs you: the follow-ups, every group -->
+        <div class="panel t-card a-needs" id="today-needs" role="region" aria-labelledby="t-needs-label">
+          <div class="t-head">
+            <span class="panel-label" id="t-needs-label">NEEDS YOU</span><span id="follow-count" class="chip"></span><span id="follow-urgent" class="tw-urgent" hidden></span>
+            <span class="t-tools">
               <span id="followups-slot" class="slot"></span>
               <!-- the lists behind "Manage ▾" (app.js); modules add theirs here too (important.js) -->
               <span id="fu-manage" hidden>
@@ -103,31 +90,46 @@
                 <button id="snoozed-btn" class="small subtle">Snoozed (0)</button>
                 <button id="muted-btn" class="small subtle">Muted senders</button>
               </span>
-              <button id="today-refresh" class="small" title="Rescan" aria-label="Rescan">↻<span class="tw-word"> Rescan</span></button>
-            </div>
+              <button id="today-refresh" class="small" title="Rescan" aria-label="Rescan">↻<span class="t-word"> Rescan</span></button>
+            </span>
           </div>
-          <div class="tw-panel a-agenda" role="tabpanel" id="tw-agenda" aria-labelledby="tw-tab-agenda">
-            <ul id="agenda" class="list"></ul>
+          <div class="t-body a-follow" id="tw-follow"><div id="followups" class="followups"></div></div>
+        </div>
+        <!-- Schedule: meetings and the open time between them (drop a task on a slot to block time) -->
+        <div class="panel t-card a-sched" id="today-sched" role="region" aria-labelledby="t-sched-label">
+          <div class="t-head">
+            <span class="panel-label" id="t-sched-label">SCHEDULE</span><span id="agenda-count" class="chip"></span>
+            <span class="t-tools">
+              <span id="agenda-tools-slot" class="slot"></span>
+              <button id="block-time" type="button" class="small primary" title="Block time on your Outlook calendar">＋<span class="t-word"> Block time</span></button>
+            </span>
           </div>
-          <div class="tw-panel a-tasks" role="tabpanel" id="tw-tasks" aria-labelledby="tw-tab-tasks" hidden>
+          <div class="t-body a-agenda" id="tw-agenda"><ul id="agenda" class="list"></ul></div>
+        </div>
+        <!-- Tasks: Outlook / To Do and Asana -->
+        <div class="panel t-card a-tasks-c" id="today-tasks" role="region" aria-labelledby="t-tasks-label">
+          <div class="t-head">
+            <span class="panel-label" id="t-tasks-label">TASKS</span><span id="tasks-count" class="chip"></span><span id="tasks-high" class="tw-urgent" hidden></span>
+            <span class="t-tools">
+              <button id="asana-btn" class="small"></button>
+              <button id="new-task" class="small primary">+<span class="t-word"> New task</span></button>
+            </span>
+          </div>
+          <div class="t-body a-tasks" id="tw-tasks">
             <div id="tasks-note" class="muted"></div>
             <ul id="tasks" class="list"></ul>
           </div>
-          <div class="tw-panel a-follow" role="tabpanel" id="tw-follow" aria-labelledby="tw-tab-follow" hidden>
-            <div id="followups" class="followups"></div>
-          </div>
         </div>
         <!-- Recent Teams DMs and mentions from the background read; a row opens that chat in the Teams tab (app.js "teams") -->
-        <div class="panel a-teams" id="today-teams" role="region" aria-labelledby="today-teams-label">
-          <div class="panel-head">
+        <div class="panel t-card a-teams" id="today-teams" role="region" aria-labelledby="today-teams-label">
+          <div class="t-head">
             <span class="panel-label" id="today-teams-label">TEAMS · RECENT DMS</span><span id="today-teams-count" class="chip" hidden></span>
-            <span class="spacer"></span>
-            <button id="today-teams-all" type="button" class="small subtle">Teams ›</button>
+            <span class="t-tools"><button id="today-teams-all" type="button" class="small subtle">Teams ›</button></span>
           </div>
-          <ul id="today-teams-list" class="list fu-rows"></ul>
+          <div class="t-body"><ul id="today-teams-list" class="list fu-rows"></ul></div>
         </div>
-        <!-- today's calendar: a time grid of the day (daycal.js) -->
-        <div class="panel a-day" id="today-day" role="region" aria-label="Today's calendar"></div>
+        <!-- today's calendar: a time grid of the day (daycal.js); only on a wide pane, where it has its own column -->
+        <div class="panel t-card a-day" id="today-day" role="region" aria-label="Today's calendar"></div>
       </div>
     </section>
     <!-- ALERTS -->

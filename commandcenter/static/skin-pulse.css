@@ -118,6 +118,10 @@
 :root[data-skin="pulse"] .stat .sub { font-family: var(--font-ui); color: var(--muted); }
 :root[data-skin="pulse"] .stat.alarm { border-color: var(--red); box-shadow: none; }
 :root[data-skin="pulse"] .stat.alarm .n { color: var(--red); }
+/* Today's count tiles are one-line chips (style.css): figure first, label beside it. */
+:root[data-skin="pulse"] .today-layout .stat { flex-direction: row; align-items: center; }
+:root[data-skin="pulse"] .today-layout .stat .l { order: 0; margin: 0; }
+:root[data-skin="pulse"] .today-layout .stat .n { margin-top: 0; }
 :root[data-skin="pulse"] .big-number { font: 700 2.6rem/1 var(--font-ui); color: var(--text); }
 
 :root[data-skin="pulse"] .clock, :root[data-skin="pulse"] .w-temp { font-family: var(--font-ui); font-weight: 700; color: var(--text); }
@@ -163,21 +167,12 @@
 :root[data-skin="pulse"] #palette-input, :root[data-skin="pulse"] #palette-input:focus { background: transparent; border: 0; border-bottom: 1px solid var(--line); }
 
 /* ---- tabs and segmented controls ---- */
-/* Today's tabs: Pulse .trends-tabs (a rule under the strip, the active tab underlined in blue). */
-:root[data-skin="pulse"] .tw-tabs { padding: 0; gap: 2px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; box-shadow: none; }
-:root[data-skin="pulse"] .tw-tabs [role=tab] {
-  font: 600 .82rem var(--font-ui); color: var(--muted); border: 0; border-bottom: 2px solid transparent; border-radius: 0;
-  margin-bottom: -1px; padding: .45rem .9rem;
-}
-:root[data-skin="pulse"] .tw-tabs [role=tab]:hover { color: var(--text); background: none; }
-:root[data-skin="pulse"] .tw-tabs [role=tab][aria-selected=true] { color: var(--accent); background: none; border-bottom-color: var(--accent); box-shadow: none; }
 /* Two-way switches: Pulse .inv-pane-tabs (a pill track, the chosen side filled blue). */
 :root[data-skin="pulse"] .seg { background: var(--bg); border-color: var(--line); }
 :root[data-skin="pulse"] .seg button, :root[data-skin="pulse"] .seg-btn { border: 0; color: var(--muted); font-weight: 600; }
 :root[data-skin="pulse"] .seg button:hover, :root[data-skin="pulse"] .seg-btn:hover:not(.on) { color: var(--text); background: none; }
 :root[data-skin="pulse"] .seg button[aria-pressed="true"], :root[data-skin="pulse"] .seg-btn.on { background: var(--accent); color: var(--bg); }
 :root[data-skin="pulse"] .chip { color: var(--muted); background: var(--pl-glass); border-color: var(--line); font-weight: 600; }
-:root[data-skin="pulse"] .tw-tabs [role=tab][aria-selected=true] .chip { color: var(--accent); border-color: rgb(var(--accent-rgb) / .5); }
 
 /* ---- lists ---- */
 :root[data-skin="pulse"] .list li { border-radius: .5rem; }
