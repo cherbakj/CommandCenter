@@ -210,4 +210,4 @@ Appearance (skin, colors, text size, density, effects: glow, frosted glass, back
 `tools/repo-guard/` holds local-only git hooks, installed in `C:\Sonance\internal\Pulse\pulse-nextjs\.git\hooks` (which covers its worktrees).
 They block commits and pushes that would carry Command Center details (paths, names, cookie and keyring names), JWTs or private keys,
 or local-only files (`.env`, `.vscode/`, `.claude/settings.local.json`, `*.dpapi`). Hooks live in `.git` and are never pushed.
-Command Center's own repo has no remote. To guard another repo, copy `guard.sh` to `<repo>/.git/hooks/command-center-guard.sh` along with `pre-commit` and `pre-push`.
+Command Center's own repo is backed up to a **private** GitHub repo, `origin` = github.com/cherbakj/CommandCenter (added 2026-10-28; the app still runs only on this PC). `data/`, `config.yaml` and `.venv/` are git-ignored, so no data, settings or secrets go there; the code and docs do name Sonance internals (server names, the Supabase project id). No repo-guard hooks are installed in it. To guard another repo, copy `guard.sh` to `<repo>/.git/hooks/command-center-guard.sh` along with `pre-commit` and `pre-push`.
