@@ -512,18 +512,18 @@ function alertRow(a) {
     api("/api/alerts/read", { id: a.id }).then(refresh).catch(() => { a.read = 0; });
   };
   const actions = el("div", { class: "al-acts" }, alertAction(a),
-    a.read ? el("span", { class: "al-done-slot", "aria-hidden": "true" })  // keeps the buttons in line with unread rows'
-      : el("button", { class: "small subtle alert-done", title: "Mark read", "aria-label": `Mark "${a.title}" read`,
-        onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); loaders.alerts(); }) }, "✓"));
+    !a.read && el("button", { class: "small subtle alert-done", title: "Mark read", "aria-label": `Mark "${a.title}" read`,
+      onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); loaders.alerts(); }) }, "✓"));
   actions.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.classList.contains("alert-done")) markRead(); });
   const kind = alertSource(a);
   const row = el("li", { class: `alert-row prio-${a.priority} ${a.read ? "" : "unread"}` },
+    // In column order: the wide layout places them in the list's shared columns one after another
     el("span", { class: `prio ${a.priority}`, title: `${a.priority === "high" ? "High" : a.priority === "low" ? "Low" : "Normal"} priority` }),
+    el("span", { class: "al-time", title: new Date(a.ts).toLocaleString() }, timeOf(a.ts)),
     el("span", { class: "al-src" }, el("span", { class: `src src-${kind}`, title: SOURCES[kind]?.[1] || "Command Center" }, a.source)),
     el("div", { class: "al-main" },
       el("div", { class: "al-title", title: a.title }, a.title),
       a.body && el("div", { class: "al-body", title: a.body }, a.body)),
-    el("span", { class: "al-time", title: new Date(a.ts).toLocaleString() }, timeOf(a.ts)),
     actions);
   return row;
 }
@@ -571,6 +571,9 @@ function renderAlerts() {
     items.push(alertRow(a));
   }
   const what = alertsState.kind ? `${ALERT_KINDS.find(([key]) => key === alertsState.kind)[1]} alerts` : "alerts";
+  // Column headings over the table (hidden in a narrow pane, where rows stack)
+  if (items.length) items.unshift(el("li", { class: "al-cols", "aria-hidden": "true" }, el("span"), el("span", {}, "Time"),
+    el("span", {}, "Source"), el("span", {}, "Alert"), el("span", {}, "Action")));
   fill($("#alerts-list"), items, alertsState.filter === "unread" ? `No unread ${what}` : `No ${what} yet`);
 }
 

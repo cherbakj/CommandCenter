@@ -370,29 +370,39 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 
 /* Alert rows keep their buttons in a right-hand column (the ✓ never drops to a line of its own) and an
    unread row is tinted edge to edge. */
-/* ---- Alerts tab: All | Unread and sources on top; the list fills the tab, by day (sticky day headers). A row reads
-   like a log: priority rail, time, source, title (body under it), actions. Narrow pane: source and time on top. ---- */
+/* ---- Alerts tab: All | Unread and kinds on top; the list fills the tab, by day (sticky day headers). The list is one
+   grid and every row a subgrid of it, so the columns line up down the whole list like a table: priority rail, time,
+   source, the alert (title, body under it), actions (each column as wide as its widest entry). Narrow pane: each row
+   stacks (source and time on top, actions under the text) and the column headings go. ---- */
 .alerts-toolbar { gap: .5rem; flex-wrap: wrap; }
 .alerts-sources { flex-wrap: wrap; }
 .alerts-sources[hidden] { display: none; }
 #tab-alerts.active { display: flex; flex-direction: column; height: 100%; min-height: 24rem; }
-#alerts-list { flex: 1; min-height: 0; max-height: none; overflow-y: auto; padding: .3rem; }
+#alerts-list {
+  flex: 1; min-height: 0; max-height: none; overflow-y: auto; padding: .3rem;
+  display: grid; grid-template-columns: max-content max-content max-content minmax(0, 1fr) max-content; column-gap: .9rem; align-content: start;
+}
+#alerts-list > li { grid-column: 1 / -1; }
+/* A subgrid row's side padding isn't counted in the shared columns (it ate the gap after the rail), so the row's
+   edges are margins on its first and last cells instead. */
+#alerts-list li.al-cols, #alerts-list li.alert-row { display: grid; grid-template-columns: subgrid; align-items: center; padding: .5rem 0; }
+#alerts-list li.al-cols > :first-child, #alerts-list li.alert-row > .prio { width: 3px; margin-left: .7rem; }
+#alerts-list li.al-cols > :last-child, #alerts-list li.alert-row > .al-acts { margin-right: .7rem; }
+#alerts-list li.al-cols {
+  padding-block: .2rem .1rem; background: none;
+  font: 700 .62rem var(--font-ui); letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+}
 #alerts-list li.al-group {
   position: sticky; top: -.3rem; z-index: 1; display: flex; align-items: center; gap: .5rem;
   padding: .7rem .7rem .35rem; border-radius: 0; background: var(--panel-solid);
   font: 700 .66rem var(--font-display); letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
 }
 .al-group-unread { margin-left: auto; font: 600 .74rem var(--font-ui); letter-spacing: 0; text-transform: none; color: var(--muted); }
-#alerts-list li.alert-row {
-  display: grid; grid-template-columns: 3px 4.6rem 6.4rem minmax(0, 1fr) auto; grid-template-areas: "rail time src main acts";
-  gap: .2rem .8rem; align-items: center; padding: .5rem .7rem;
-}
 #alerts-list li.alert-row:hover { background-color: rgb(255 255 255 / .045); }
 #alerts-list li.alert-row.unread { background: var(--sep), linear-gradient(90deg, rgb(var(--accent-rgb) / .07), transparent 80%); }
-.alert-row .prio { grid-area: rail; }
-.al-time { grid-area: time; font: 600 .76rem var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.al-src { grid-area: src; min-width: 0; } .al-src .src { margin: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.al-main { grid-area: main; min-width: 0; }
+.al-time { font: 600 .76rem var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.al-src { min-width: 0; } .al-src .src { margin: 0; }
+.al-main { min-width: 0; }
 .al-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 .94rem var(--font-body); color: var(--text); }
 .alert-row.unread .al-title { color: #fff; font-weight: 650; }
 .alert-row.unread .al-title::before {
@@ -401,16 +411,21 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 }
 .alert-row.unread.prio-high .al-title::before { background: var(--red); box-shadow: 0 0 .35rem rgb(var(--red-rgb) / .7); }
 .al-body { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: .1rem; font: .84rem var(--font-ui); color: var(--muted); }
-.al-acts { grid-area: acts; display: flex; gap: .3rem; align-items: center; justify-content: flex-end; }
+.al-acts { display: flex; gap: .3rem; align-items: center; }
 .al-acts button.small { padding: .18rem .55rem; font-size: .74rem; }
-.al-acts .alert-done, .al-done-slot { width: 2rem; flex-shrink: 0; }
-.al-acts .alert-done { padding-inline: 0; opacity: 0; transition: opacity .12s; }
+.al-acts .alert-done { width: 2rem; padding-inline: 0; opacity: 0; transition: opacity .12s; }
 .alert-row:hover .alert-done, .alert-row:focus-within .alert-done { opacity: 1; }
 @container pane (max-width: 44rem) {
-  #alerts-list li.alert-row { grid-template-columns: 3px auto minmax(0, 1fr); grid-template-areas: "rail src time" "rail main main" "rail acts acts"; }
-  .al-time { text-align: right; }
-  .al-acts { justify-content: flex-start; flex-wrap: wrap; }
-  .al-done-slot { display: none; }
+  #alerts-list { display: block; }
+  #alerts-list li.al-cols { display: none; }
+  #alerts-list li.alert-row {
+    grid-template-columns: 3px auto minmax(0, 1fr); grid-template-areas: "rail src time" "rail main main" "rail acts acts"; gap: .2rem .8rem;
+    padding-inline: .7rem;
+  }
+  #alerts-list li.alert-row > .prio, #alerts-list li.alert-row > .al-acts { margin: 0; }
+  .alert-row .prio { grid-area: rail; } .al-src { grid-area: src; } .al-main { grid-area: main; } .al-acts { grid-area: acts; }
+  .al-time { grid-area: time; text-align: right; }
+  .al-acts { flex-wrap: wrap; }
   .al-acts:not(:has(button)) { display: none; }
 }
 
