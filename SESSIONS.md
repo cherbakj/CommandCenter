@@ -2,6 +2,64 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-27 (about 8:40 AM - 5:15 PM local)
+
+**Summary:** A long day of CC changes: a header Power menu, Teams fixes (signing in with the Windows work account, checks every minute, opening a chat in place), alerts that go away once answered, and a Pulse skin. The work ended on performance: CC's Teams reader no longer loads Teams from scratch every minute. Everything is committed and loaded (CC restarted at 1:52 PM); the tree is clean.
+
+### Done
+- `090822f` Header: a ⏻ Power menu replaces the ✕ close-to-tray button. It has Minimize, Windowed / Full screen, Restart and Close Command Center; Close is a real quit after a confirm and leaves docked VS Code / SSMS running. Lock gets a padlock.
+- `97544b2` Teams view signs in with the Windows work account (OS single sign-on). Before, Sign in did nothing, because Teams wanted a pop-up and the view sent it to the browser. Pulse keeps SSO off.
+- `7f1721f` After an update, the window never runs a cached older script. Before this, a stale app.js left `window.CC` undefined: no WORK tabs and no window buttons. `index.html` now stamps `/static/` links with `?v=<mtime>`, and `/static/` is sent with no-cache.
+- `a1bbec1` Teams checks run every `poll_minutes` from the start of one check to the next. They had been about every 80 s.
+- `b90d74d` Teams view: opening a chat while Teams is up changes only the `#/l/chat/…` part of the address, so the chat opens in about a second without reloading Teams.
+- `78264d3` The window is only ever open, minimized or closed. Alt+F4 minimizes, and the "Hide to tray" links are gone.
+- `2694381` Alerts go away once answered:
+  - A reply sent from CC deletes that email's alerts.
+  - Teams alerts are deleted once their chat is no longer unread.
+  - Pulse no longer alerts on "Waiting on reporter".
+- `81de205` Profile > Skin: **Pulse** (`static/skin-pulse.css`). It uses Pulse's dark-theme tokens, self-hosted Montserrat, Sonance Blue, underline tabs, KPI-card tiles and a flat look (glow, glass, motion and dot grid are off). Command Center stays the default skin.
+- `4a1fd03` Teams reader keeps its hidden Edge open between checks:
+  - Before, each check cold-booted Teams (about 20 s, bursts of 3–8 cores), every minute.
+  - It starts afresh every `teams.keep_open_minutes` (60), after a bad read and at sign-in; it closes on quit.
+  - Verified live after the 1:52 PM restart: one open, then a read every minute, using 0.004 cores over a minute and holding about 2 GB of memory.
+- PC load check (not CC code). The main load was two Pulse `next dev` servers (about 28 GB of RAM, about 2.6 cores) and a stuck `check-site-fingerprint.mjs`. Joe stopped them. RAM use went down to about 20 / 32 GB.
+- Gave Joe a list of what not to keep running:
+  - stop: dev servers and leftovers from old Claude sessions, Teams / Outlook / Pulse open in browser tabs, idle SSMS, VS Code windows for projects not in use;
+  - optional: the Teams app (needed for calls), the Claude desktop app, the Asana app;
+  - keep: Outlook desktop, CC.
+
+### Decisions
+- Teams view: OS single sign-on on (Joe's call). Pulse view stays off.
+- Window: open, minimized or closed only. Nothing hides to the tray.
+- No Pulse alert when a ticket moves to "Waiting on reporter". Coming back to Open still alerts.
+- Kept `teams.poll_minutes: 1`. After the reader fix each check is cheap. Setting `keep_open_minutes: 0` (frees about 2 GB but brings back the minute-by-minute cold boots) was advised against.
+
+### Waiting on a restart
+- Nothing. CC started at 1:52 PM, after the last commit (`4a1fd03`, 12:26 PM). The tree is clean and safe to restart.
+
+### Waiting on Joe
+- [ ] OK to stop two leftover test processes from Oct 24 (python PIDs 25240 and 16088, a few MB, harmless). Stopping them was refused by the permission check without his OK.
+- [ ] Optional: try Profile > Skin > Pulse and say what to adjust. A Pulse light skin was offered, not asked for.
+- [ ] Still open from earlier: watch for a personal reminder actually being "brought forward" (see Known issues); Toolkit → Connection → Test; SSMS AutoRecover on; sign in to the Pulse view; mark important senders; Google/iCloud calendar links; urgent people, Asana token; optionally move blocked-sender mail to Junk via Spam.
+
+### In flight / not finished
+- Nothing uncommitted. No agents and no test servers running. The scratch test copy and its data were deleted.
+
+### Known issues
+- Personal reminders fired today (10:00, 10:15, 10:30, 12:00) and showed in CC. Three found CC "already in front". The 10:00 one was "kept back (full-screen app)", which could be a false positive (CC is full screen itself); not looked into. "Brought forward" hasn't been seen live yet.
+- The Teams reader now holds about 2 GB at all times (the trade for the CPU saving).
+- `config.yaml` line 39: the comment on `teams.poll_minutes` still says each check loads Teams. `config.example.yaml` is updated.
+- Carried over:
+  - the start-up page always plays the puzzle;
+  - a force-kill or crash of CC closes docked VS Code / SSMS;
+  - the web VS Code terminal fails (0xC0000022);
+  - a hung docked SSMS or VS Code slows CC;
+  - the keyboard follows only a mouse click into docked VS Code.
+
+### Incidents
+- A throwaway test copy on port 8817 read Joe's real Outlook (read-only) for its Today tab during the skin check. Its screenshot, which showed real data, and its data folder were deleted, and the server was stopped. Nothing was written.
+- Performance check: read-only process and counter sampling only. No processes were stopped; Joe stopped the Pulse dev servers himself.
+
 ## 2026-10-26, third session (about 6:40 PM - 8:00 PM local)
 
 **Summary:** Joe had never seen a personal reminder: none had been saved, and the pop-up only ever showed inside CC's window. Due reminders now bring CC to the front (not while it's locked or the screen may be shared). Joe saved his reminders for tomorrow; the bring-to-front hasn't been seen firing live yet.
