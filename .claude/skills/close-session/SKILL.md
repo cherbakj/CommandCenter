@@ -1,6 +1,6 @@
 ---
 name: close-session
-description: Close a CC (Command Center) work session - log everything done this session to SESSIONS.md (changes, commits, decisions, in-flight work, what's waiting on a restart and on Joe), keep PROJECT.md current, and commit the log. Use when Joe says "close session", "end session", "wrap up", "log everything", or is done for the day.
+description: Close a CC (Command Center) work session - log everything done this session to SESSIONS.md (changes, commits, decisions, in-flight work, what's waiting on a restart and on Joe), keep PROJECT.md current, commit the log, and push the day's backup to the private GitHub repo. Use when Joe says "close session", "end session", "wrap up", "log everything", or is done for the day.
 ---
 
 # Close a CC session
@@ -56,5 +56,12 @@ Keep it factual and short: no transcripts, no tool output, no secrets, no email 
 ## 4. Commit
 Commit SESSIONS.md (and PROJECT.md if changed) **on its own**: `git add SESSIONS.md PROJECT.md` then commit with the paths named (`git commit -m "Session log: <date>" -- SESSIONS.md PROJECT.md`), so nobody's in-progress edits get swept in. If PROJECT.md has someone else's uncommitted edits in it, commit only SESSIONS.md and say so in the entry.
 
-## 5. Tell Joe
-In a few lines: what's logged, what's waiting on a restart (and whether it's safe now), and his to-dos.
+## 5. Back up to GitHub (every close)
+Joe wants each day's work backed up to the private GitHub repo `origin` (github.com/cherbakj/CommandCenter; the app itself stays local).
+- Only finished, committed work goes: never commit half-finished edits to get them into the backup (say what was left out).
+- Run exactly `git push origin main` (allowed in `.claude/settings.local.json`; any other push form will ask). Never force-push.
+- Check it landed: `git ls-remote origin main` must print the same hash as `git rev-parse HEAD`.
+- If the push is refused or fails (sign-in needed, network, rejected), don't retry another way: tell Joe to run `git push origin main` in `C:\Sonance\internal\CommandCenter`, and note it under "Waiting on Joe".
+
+## 6. Tell Joe
+In a few lines: what's logged, whether the backup reached GitHub (the hash), what's waiting on a restart (and whether it's safe now), and his to-dos.
