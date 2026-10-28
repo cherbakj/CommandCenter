@@ -2,6 +2,80 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-28 (about 8:35 AM - 11:30 AM local)
+
+**Summary:** Fixed the morning freeze (a deadlock when a second launch or the tray showed CC) and the misplaced native views on Joe's 150% displays. Then a run of UI changes: Alerts as an aligned table, Close that always ends the process, block time and Teams DMs on Today, an SSMS-only SQL tab, SSMS re-docking after restarts and a hideable Teams list. CC now has a private GitHub backup, pushed by `close-session`. Everything is committed and loaded: Joe restarted at 10:54 after the last commit, and the restart was verified in the log.
+
+### Done
+- `a930364` **Freeze fix.** CC hung (pythonw "not responding" on 10/25, 10/26, 10/27 and 10/28) whenever a second launch or the tray "Open" showed the already-running copy.
+  - Cause: `DesktopApp.show` set pywebview's `window.on_top` from the server thread. pythonnet keeps the GIL through a .NET property set, and `TopMost` waits on the UI thread, which was itself waiting for the GIL.
+  - Fix: bring the window forward with ctypes `SetWindowPos`, and run `/api/window/show` off the event loop.
+  - Diagnosed with a py-spy dump of the hung process. A stand-alone repro deadlocked every run on the old code; the new code passed 3 × 1000 rounds. PROJECT.md Constraints now has a "window from other threads" rule.
+- `064b350` **Native views at the real DPI.** The Pulse and Teams views and the docked VS Code / SSMS were drawn at 2/3 size on Joe's 4K monitors at 150%. WinForms' `DeviceDpi` stays 96; `overlay._geometry` now uses `GetDpiForWindow`. Verified live after the restart.
+- `ed69401`, `aa33866` **Alerts tab.**
+  - Layout: All | Unread, a kind filter (Mail / Teams / Calendar / Pulse / Other), both remembered; grouped by day with sticky headers.
+  - A table with column headings (Time · Source · Alert · Action): the list is one CSS grid and every row a subgrid, so the columns line up.
+  - Clear and Reload config moved into a ⋯ menu. The list fills the tab (it was capped at 60vh in split view).
+- `188d502` **⏻ is just Close** (confirm, then quit); its menu duplicated header buttons.
+  - Closing always ends the process: `desktop.exit_process` gives atexit hooks 10 s, then `os._exit`, and a 45 s watchdog runs from Close / Restart.
+  - Tested end to end on a desktop-mode scratch copy driven over CDP: a normal close was gone in 4.7 s, one with a stuck Outlook call in 25 s, and the old code was still running after 75 s.
+- `9c4d9a7`, `4e1693e` **Private GitHub backup.** `origin` = github.com/cherbakj/CommandCenter. Joe did the first push himself.
+  - `close-session` now pushes the day's commits with `git push origin main`, which is allowed in the git-ignored `.claude/settings.local.json`.
+  - CLAUDE.md and PROJECT.md updated.
+- `3965131` **Today.**
+  - **＋ Block time** (Agenda toolbar), **Block** on free slots and Ctrl+K add a busy Outlook appointment (existing `/api/calendar/block`). "Blocked" / "Lunch" titles are refused.
+  - No meeting notes on Today: no Notes button and no per-meeting Notes. The Calendar tab, Prep and Ctrl+K keep them.
+  - A **Teams · Recent DMs** panel under the main panel: the newest 6, served by `GET /api/teams/recent`, which skips Outlook. A row opens that chat in the Teams tab.
+  - Teams tab: Recent DMs and mentions is collapsible, collapsed by default and remembered.
+- `f961260` **SQL tab is the docked SSMS only.**
+  - Removed: the CC queries view, its switch, the `/api/sql*` routes and the palette's "Run query".
+  - The order lookup still works; its password is set via `run.cmd setpass main`.
+- `2b03ccf` **SSMS docked again after Restart / Close / Lock**, like VS Code.
+  - The docked window is recorded in sealed kv `ssms:dock`, and the next start re-docks it once unlocked. Undock clears it.
+  - Privacy & Data has a "Docked windows" entry (VS Code's record was missing too).
+  - Tested with a throwaway SSMS in a scratch copy, plus a stand-in window for the record logic. Verified live at the 10:54 restart (pid 43312 re-docked).
+- `220e219` **Teams tab:** ⟨ on the Teams bar hides the status / Recent column so Teams on the web gets the whole tab, and ⟩ List brings it back (remembered). Wide panes only.
+- `8599513` Docs: the launch sign-in is off in Joe's config.
+
+### Decisions
+- GitHub backup: private repo under cherbakj, everything tracked (SESSIONS.md included). Joe created the repo on the web rather than installing the GitHub CLI.
+- No launch sign-in: the Windows sign-in is enough. Lock still asks, and the personal vault keeps its passphrase.
+- Meeting notes: not on Today, and no "capture notes?" prompts. They stay available on the Calendar tab and in Ctrl+K.
+- SQL: Joe only ever docks SSMS, so the CC queries view is gone.
+- Teams tab: Recent collapsed by default; the list can be hidden.
+- Per-monitor DPI ("adapt to the screen it's on") wasn't built. Both of Joe's monitors are 150% and fine after the DPI fix; offered if he uses the laptop screen or another monitor with different scaling.
+
+### Settings changed (config.yaml, not in git)
+- `daily.meeting_notes_prompt: false`: no "capture notes?" alert after meetings.
+- `security.unlock_on_start: false`: no Windows Hello / password at launch.
+
+### Waiting on a restart
+- Nothing. The last commit was `220e219` (10:33); CC restarted at 10:43 and 10:54. The tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] Optional: try Profile > Skin > Pulse and say what to adjust.
+- [ ] Still open from earlier: Toolkit → Connection → Test; SSMS AutoRecover on; sign in to the Pulse view; mark important senders; Google/iCloud calendar links; urgent people, Asana token.
+- Done today: yesterday's leftover test processes are gone, and a personal reminder was seen "brought forward" live at 10:30.
+
+### In flight / not finished
+- Nothing uncommitted. No agents and no test servers running. The scratch copy lives in the session scratchpad (`cctest`, made-up data only).
+
+### Known issues
+- Windows Hello reports DeviceNotPresent on this PC, so Lock falls back to the Windows password.
+- The Today Teams panel and the Teams tab's Recent list stay empty until the first background Teams read after a start (names are memory-only).
+- Carried over:
+  - `config.yaml` line 39 comment on `teams.poll_minutes`;
+  - the start-up page always plays the puzzle;
+  - a force-kill or crash of CC still closes docked VS Code / SSMS;
+  - the web VS Code terminal fails (0xC0000022);
+  - a hung docked SSMS or VS Code slows CC;
+  - the keyboard follows only a mouse click into docked VS Code.
+
+### Incidents
+- Joe force-closed the hung CC this morning (the freeze above). Before he did, its stacks were dumped read-only with py-spy, installed in the scratchpad (not the venv).
+- Test windows appeared on Joe's screen: a small CC test copy several times, a pywebview repro window and a throwaway SSMS. Joe accidentally closed one CC test copy mid-test. No harm: the remaining check was done in code. Only processes the tests started were ended; Joe's CC and his SSMS (43312) were never touched.
+- The first GitHub push from a session was blocked by the permission check. Joe pushed himself, then allowed exactly `git push origin main` for `close-session`.
+
 ## 2026-10-27 (about 8:40 AM - 5:15 PM local)
 
 **Summary:** A long day of CC changes: a header Power menu, Teams fixes (signing in with the Windows work account, checks every minute, opening a chat in place), alerts that go away once answered, and a Pulse skin. The work ended on performance: CC's Teams reader no longer loads Teams from scratch every minute. Everything is committed and loaded (CC restarted at 1:52 PM); the tree is clean.
