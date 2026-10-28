@@ -493,6 +493,15 @@ function alertAction(a) {
   return null;
 }
 
+// The Alerts tab: All | Unread and a filter by kind on top (both remembered per viewer: cc.alerts.filter,
+// cc.alerts.kind), then the alerts grouped by day. A row is one line of facts: priority rail, time, source, title with
+// the body under it (one line each; the full text on hover), and its actions (✓ Mark read on hover / focus).
+const alertsState = { filter: store.get("cc.alerts.filter") === "unread" ? "unread" : "all", kind: store.get("cc.alerts.kind") || "", data: [] };
+// The filter's kinds, from each alert's source tag (alertSource): Outlook and the reminders about mail are Mail.
+const ALERT_KINDS = [["mail", "Mail", ["outlook", "sent"]], ["teams", "Teams", ["teams"]], ["calendar", "Calendar", ["calendar"]],
+  ["pulse", "Pulse", ["pulse"]], ["other", "Other", []]];
+const alertKind = (a) => (ALERT_KINDS.find(([, , tags]) => tags.includes(alertSource(a))) || ["other"])[0];
+
 // Opening what an alert points at (View mail, Open Pulse, Join, Prep, Open chat...) marks it read: it's been seen.
 function alertRow(a) {
   const markRead = () => {
@@ -502,31 +511,84 @@ function alertRow(a) {
     row.querySelector(".alert-done")?.remove();
     api("/api/alerts/read", { id: a.id }).then(refresh).catch(() => { a.read = 0; });
   };
-  const actions = el("div", { class: "actions" }, alertAction(a),
-    !a.read && el("button", { class: "small subtle alert-done", title: "Mark read", "aria-label": `Mark "${a.title}" read`,
-      onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); loaders.alerts(); }) }, "✓"));
+  const actions = el("div", { class: "al-acts" }, alertAction(a),
+    a.read ? el("span", { class: "al-done-slot", "aria-hidden": "true" })  // keeps the buttons in line with unread rows'
+      : el("button", { class: "small subtle alert-done", title: "Mark read", "aria-label": `Mark "${a.title}" read`,
+        onclick: () => guarded(async () => { await api("/api/alerts/read", { id: a.id }); refresh(); loaders.alerts(); }) }, "✓"));
   actions.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b && !b.classList.contains("alert-done")) markRead(); });
-  const row = el("li", { class: `alert-row ${a.read ? "" : "unread"}` },
-    el("span", { class: `prio ${a.priority}` }),
-    el("div", { class: "grow" },
-      el("div", { class: "title" }, a.title),
-      a.body && el("div", {}, a.body),
-      el("div", { class: "muted src-line" }, srcTag(alertSource(a), a.source), `${a.source} · ${when(a.ts)}`)),
+  const kind = alertSource(a);
+  const row = el("li", { class: `alert-row prio-${a.priority} ${a.read ? "" : "unread"}` },
+    el("span", { class: `prio ${a.priority}`, title: `${a.priority === "high" ? "High" : a.priority === "low" ? "Low" : "Normal"} priority` }),
+    el("span", { class: "al-src" }, el("span", { class: `src src-${kind}`, title: SOURCES[kind]?.[1] || "Command Center" }, a.source)),
+    el("div", { class: "al-main" },
+      el("div", { class: "al-title", title: a.title }, a.title),
+      a.body && el("div", { class: "al-body", title: a.body }, a.body)),
+    el("span", { class: "al-time", title: new Date(a.ts).toLocaleString() }, timeOf(a.ts)),
     actions);
   return row;
 }
 
+// "Today", "Yesterday", the weekday this week, else the date.
+function alertDay(d) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = Math.round((today - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+}
+
+function renderAlerts() {
+  const all = alertsState.data, unread = all.filter((a) => !a.read).length;
+  $("#alerts-f-all").setAttribute("aria-pressed", String(alertsState.filter !== "unread"));
+  $("#alerts-f-unread").setAttribute("aria-pressed", String(alertsState.filter === "unread"));
+  $("#alerts-unread-count").textContent = unread;
+  $("#alerts-unread-count").hidden = !unread;
+  $("#alerts-readall").disabled = !unread;
+  // Kind filter: the kinds in the feed (unread count when showing Unread); a remembered kind no longer there shows all.
+  const pool = all.filter((a) => alertsState.filter !== "unread" || !a.read);
+  const counts = new Map();
+  for (const a of all) counts.set(alertKind(a), 0);
+  for (const a of pool) counts.set(alertKind(a), counts.get(alertKind(a)) + 1);
+  if (alertsState.kind && !counts.has(alertsState.kind)) alertsState.kind = "";
+  const kindBtn = (key, label, n) => el("button", { type: "button", class: "small", "aria-pressed": String(alertsState.kind === key),
+    onclick: () => { alertsState.kind = key; store.set("cc.alerts.kind", key || null); renderAlerts(); } }, label, n > 0 && el("span", { class: "chip" }, n));
+  const kinds = ALERT_KINDS.filter(([key]) => counts.has(key));
+  $("#alerts-sources").replaceChildren(kindBtn("", "Everything"), ...kinds.map(([key, label]) => kindBtn(key, label, counts.get(key))));
+  $("#alerts-sources").hidden = kinds.length < 2;
+
+  const shown = pool.filter((a) => !alertsState.kind || alertKind(a) === alertsState.kind);
+  const items = [];
+  let day = null;
+  for (const a of shown) {
+    const label = alertDay(new Date(a.ts));
+    if (label !== day) {
+      day = label;
+      const group = shown.filter((b) => alertDay(new Date(b.ts)) === label), n = group.filter((b) => !b.read).length;
+      items.push(el("li", { class: "al-group", role: "presentation" }, el("span", {}, label), el("span", { class: "chip" }, group.length),
+        n > 0 && alertsState.filter !== "unread" && el("span", { class: "al-group-unread" }, `${n} unread`)));
+    }
+    items.push(alertRow(a));
+  }
+  const what = alertsState.kind ? `${ALERT_KINDS.find(([key]) => key === alertsState.kind)[1]} alerts` : "alerts";
+  fill($("#alerts-list"), items, alertsState.filter === "unread" ? `No unread ${what}` : `No ${what} yet`);
+}
+
 loaders.alerts = () => guarded(async () => {
-  const { alerts } = await api(`/api/alerts?unread_only=${$("#alerts-unread").checked}`);
-  fill($("#alerts-list"), alerts.map((a) => alertRow(a)), "No alerts yet");
+  alertsState.data = (await api("/api/alerts")).alerts;
+  renderAlerts();
 });
 
-$("#alerts-unread").addEventListener("change", loaders.alerts);
-$("#alerts-readall").addEventListener("click", () => guarded(async () => { await api("/api/alerts/read", {}); refresh(); }));
-$("#alerts-clear").addEventListener("click", () => guarded(async () => {
-  if (await confirmDialog("Clear alerts", "Delete all alerts from the feed?", "Clear")) { await api("/api/alerts/clear", {}); refresh(); }
-}));
-$("#reload").addEventListener("click", () => guarded(async () => { await api("/api/reload", {}); showMessage("Reloaded", "config.yaml was reloaded."); }));
+const setAlertsFilter = (f) => { alertsState.filter = f; store.set("cc.alerts.filter", f === "unread" ? f : null); renderAlerts(); };
+$("#alerts-f-all").addEventListener("click", () => setAlertsFilter("all"));
+$("#alerts-f-unread").addEventListener("click", () => setAlertsFilter("unread"));
+$("#alerts-readall").addEventListener("click", () => guarded(async () => { await api("/api/alerts/read", {}); refresh(); loaders.alerts(); }));
+$("#alerts-readall").after(menuButton("⋯", "More alert actions", () => [
+  el("button", { type: "button", onclick: () => guarded(async () => {
+    if (await confirmDialog("Clear alerts", "Delete all alerts from the feed?", "Clear")) { await api("/api/alerts/clear", {}); refresh(); loaders.alerts(); }
+  }) }, "Clear all alerts…"),
+  el("button", { type: "button", onclick: () => guarded(async () => { await api("/api/reload", {}); showMessage("Reloaded", "config.yaml was reloaded."); }) }, "Reload config"),
+], "small subtle"));
 
 // ---- mail --------------------------------------------------------------------
 

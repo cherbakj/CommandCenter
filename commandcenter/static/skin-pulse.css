@@ -183,7 +183,7 @@
 :root[data-skin="pulse"] .list li { border-radius: .5rem; }
 :root[data-skin="pulse"] .list li.unread, :root[data-skin="pulse"] #mail-list li.mail-row.unread { background: var(--sep), rgb(var(--accent-rgb) / .06); }
 :root[data-skin="pulse"] .list li.clickable:hover, :root[data-skin="pulse"] .list li.fu-row:hover { background-color: var(--pl-glass-hover); }
-:root[data-skin="pulse"] .list li.alert-row.unread { background: rgb(var(--accent-rgb) / .07); box-shadow: inset 3px 0 0 var(--accent); }
+:root[data-skin="pulse"] #alerts-list li.alert-row.unread { background: var(--sep), rgb(var(--accent-rgb) / .07); }
 :root[data-skin="pulse"] .title, :root[data-skin="pulse"] .list li.task.prio-high .title { color: var(--text); }
 :root[data-skin="pulse"] .fu-sec-h { background: var(--panel); border-bottom-color: var(--line); }
 :root[data-skin="pulse"] .fu-toggle { font: 700 .7rem var(--font-ui); letter-spacing: .1em; }

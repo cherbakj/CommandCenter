@@ -122,14 +122,17 @@
     </section>
     <!-- ALERTS -->
     <section id="tab-alerts" class="tab">
-      <div class="toolbar">
-        <label><input type="checkbox" id="alerts-unread"> Unread only</label>
+      <!-- All | Unread, a filter by kind, Mark all read and ⋯ (Clear, Reload config); the list by day (app.js "alerts") -->
+      <div class="toolbar alerts-toolbar">
+        <div id="alerts-filter" class="seg" role="group" aria-label="Show">
+          <button id="alerts-f-all" type="button" class="small" aria-pressed="true">All</button>
+          <button id="alerts-f-unread" type="button" class="small" aria-pressed="false">Unread <span id="alerts-unread-count" class="chip" hidden></span></button>
+        </div>
+        <div id="alerts-sources" class="seg alerts-sources" role="group" aria-label="Kind" hidden></div>
         <span class="spacer"></span>
-        <button id="alerts-readall">Mark all read</button>
-        <button id="alerts-clear" class="subtle">Clear</button>
-        <button id="reload" class="subtle">Reload config</button>
+        <button id="alerts-readall" type="button" class="small">✓ Mark all read</button>
       </div>
-      <ul id="alerts-list" class="list panel-list flow"></ul>
+      <ul id="alerts-list" class="list panel-list"></ul>
     </section>
 
     <!-- MAIL -->
