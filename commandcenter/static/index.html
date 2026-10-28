@@ -220,24 +220,7 @@
       <div class="pane-body" id="pane-work-body">
     <!-- SQL -->
     <section id="tab-sql" class="tab">
-      <div class="sql-grid">
-        <div class="panel">
-          <div class="panel-label">SAVED QUERIES</div>
-          <select id="sql-query"></select>
-          <div id="sql-params"></div>
-          <button id="sql-run" class="primary">▶ Run</button>
-          <div class="panel-label gap">CONNECTIONS</div>
-          <div id="sql-conns"></div>
-          <div class="panel-label gap">BROWSE TABLES</div>
-          <select id="sql-browse-conn"></select>
-          <input id="sql-filter" placeholder="Filter tables…">
-          <ul id="sql-tables" class="list compact"></ul>
-        </div>
-        <div class="panel results">
-          <div id="sql-meta" class="muted">Run a saved query, test a connection, or pick a table to preview its rows.</div>
-          <div class="table-wrap"><table id="sql-table"></table></div>
-        </div>
-      </div>
+      <!-- the docked SSMS: its bar and stage are built by ssms.js -->
     </section>
     <!-- WEBSITES -->
     <section id="tab-websites" class="tab">

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import alerts, config, db, orders, security, today
 from . import profile as user_profile
-from .connectors import asana, outlook, sql, teams, web
+from .connectors import asana, outlook, teams, web
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -673,43 +673,9 @@ async def website_login(name: str = Body(..., embed=True)):
     return {"ok": True}
 
 
-# ---- sql ---------------------------------------------------------------------
-
-@app.get("/api/sql")
-async def sql_info():
-    conns = []
-    for c in sql.connections():
-        conns.append({k: c.get(k) for k in ("name", "server", "database", "username", "auth")}
-                     | {"password_saved": await asyncio.to_thread(sql.has_password, c["name"])})
-    return {"connections": conns, "queries": [{k: q.get(k) for k in ("name", "connection", "params", "description")}
-                                              for q in sql.queries()]}
-
-
-@app.post("/api/sql/password")
-async def sql_password(connection: str = Body(...), password: str = Body(...)):
-    await asyncio.to_thread(sql.set_password, connection, password)
-    return {"ok": True}
-
-
-@app.post("/api/sql/test")
-async def sql_test(connection: str = Body(..., embed=True)):
-    return await asyncio.to_thread(sql.test, connection)
-
-
-@app.post("/api/sql/run")
-async def sql_run(query: str = Body(...), params: list = Body([])):
-    return await asyncio.to_thread(sql.run_saved, query, params)
-
-
-@app.get("/api/sql/tables")
-async def sql_tables(connection: str):
-    return {"tables": await asyncio.to_thread(sql.tables, connection)}
-
-
-@app.get("/api/sql/preview")
-async def sql_preview(connection: str, table: str):
-    return await asyncio.to_thread(sql.preview, connection, table)
-
+# (The SQL tab is the docked SSMS only, Joe's call 2026-10-28: the old "CC queries" view and its /api/sql routes
+#  (saved queries, connections, table browser) are gone. The order lookup (orders.py) still uses connectors/sql.py;
+#  a SQL password is set with `run.cmd setpass <connection>`.)
 
 # ---- projects (Claude Code) ------------------------------------------------------
 

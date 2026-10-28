@@ -805,9 +805,6 @@ li.mail-row.unread .mr-time { color: var(--accent-2); font-weight: 600; }
 }
 @container pane (min-width: 100rem) { .mail-split { grid-template-columns: minmax(30rem, 1fr) minmax(0, 2fr); } }
 @container pane (max-width: 40rem) { .mail-word { display: none; } }
-.sql-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }
-@container pane (min-width: 46rem) { .sql-grid { grid-template-columns: minmax(16rem, 21rem) minmax(0, 1fr); } }
-#sql-tables { max-height: 19rem; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-card); padding: .2rem; }
 .table-wrap { overflow: auto; max-height: calc(100vh - var(--header-h) - 12rem); margin-top: .6rem; border-radius: var(--r-card); }
 table { border-collapse: collapse; font: .82rem var(--font-mono); font-variant-numeric: tabular-nums; }
 th, td { border: 1px solid var(--line-soft); padding: .38rem .65rem; text-align: left; white-space: nowrap; max-width: 25rem; overflow: hidden; text-overflow: ellipsis; }

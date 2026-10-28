@@ -2,7 +2,7 @@
 .ss-bar { display: flex; align-items: center; gap: .45rem; margin-bottom: .55rem; min-width: 0; }
 .ss-bar > * { flex: none; }
 .ss-bar .spacer { flex: 1; }
-.ss-seg { display: flex; gap: 2px; margin-right: .3rem; }
+.ss-bar > .ss-label { margin: 0 .3rem 0 0; }
 .ss-bar > .ss-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .86rem var(--font-ui); color: var(--text); }
 .ss-bar > .ss-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .8rem var(--font-ui); color: var(--amber); }
 .ss-bar > .ss-note.err { color: var(--red); }
@@ -11,4 +11,3 @@
 .ss-hole { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; }
 .ss-card { max-width: 44rem; margin: 2rem; }
 .ss-card .row { flex-wrap: wrap; gap: .5rem; }
-.sql-grid[hidden] { display: none; }

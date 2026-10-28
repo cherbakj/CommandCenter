@@ -913,9 +913,7 @@ async function orderDialog(number) {
   if (info.problem) {
     showDialog(el("h3", {}, `Order ${number}`),
       el("p", {}, "Order lookup isn't set up yet."), el("p", { class: "setup" }, info.problem),
-      el("div", { class: "row" },
-        el("button", { type: "button", class: "primary", onclick: () => { d.close(); CC.sqlShow?.("queries"); openTab("sql"); } }, "Go to SQL tab"),
-        el("button", {}, "Close")));
+      el("div", { class: "row" }, el("button", {}, "Close")));
     return;
   }
   try {
@@ -1158,77 +1156,6 @@ async function loginSite(m) {
   guarded(() => api("/api/websites/login", { name: m.name }));
 }
 $("#web-refresh").addEventListener("click", loaders.websites);
-
-// ---- sql ---------------------------------------------------------------------
-
-let sqlInfo = { connections: [], queries: [] };
-let allTables = [];
-
-function renderResult(r, label) {
-  $("#sql-meta").textContent = `${label} · ${r.rows.length} row(s)${r.truncated ? " (first 1000)" : ""} · ${r.seconds}s`;
-  $("#sql-table").replaceChildren(
-    el("thead", {}, el("tr", {}, r.columns.map((c) => el("th", {}, c)))),
-    el("tbody", {}, r.rows.map((row) => el("tr", {}, row.map((v) => el("td", { title: v ?? "" }, v ?? "NULL"))))));
-}
-
-function renderParams() {
-  const q = sqlInfo.queries.find((x) => x.name === $("#sql-query").value);
-  $("#sql-params").replaceChildren(
-    ...(q?.description ? [el("div", { class: "muted", style: "margin-bottom:6px" }, q.description)] : []),
-    ...(q?.params || []).map((p) => el("input", { placeholder: p, "data-param": "1", onkeydown: (e) => e.key === "Enter" && $("#sql-run").click() })));
-}
-
-loaders.sql = () => guarded(async () => {
-  sqlInfo = await api("/api/sql");
-  $("#sql-query").replaceChildren(...sqlInfo.queries.map((q) => el("option", { value: q.name }, q.name)));
-  $("#sql-browse-conn").replaceChildren(el("option", { value: "" }, "Choose a connection…"),
-    ...sqlInfo.connections.map((c) => el("option", { value: c.name }, c.name)));
-  renderParams();
-  $("#sql-conns").replaceChildren(...sqlInfo.connections.map((c) => el("div", { class: "card" },
-    el("div", { class: "title" }, c.name),
-    el("div", { class: "muted" }, `${c.server} / ${c.database} · ${c.auth === "windows" ? "Windows login" : c.username}`),
-    el("div", { class: c.password_saved ? "good" : "err" }, c.password_saved ? "Password saved" : "No password saved"),
-    el("div", { class: "actions", style: "margin-top:6px" },
-      c.auth !== "windows" && el("button", { class: "small", onclick: () => passwordDialog(c) }, "Set password"),
-      el("button", { class: "small", onclick: () => guarded(async () => renderResult(await api("/api/sql/test", { connection: c.name }), `Connection test: ${c.name}`)) }, "Test")))));
-});
-
-function passwordDialog(c) {
-  const input = el("input", { type: "password", placeholder: "Password", autocomplete: "off" });
-  showDialog(el("h3", {}, `Password for ${c.name} (${c.username})`),
-    el("p", { class: "muted" }, "Stored in Windows Credential Manager, not in any file."), input,
-    el("div", { class: "row" }, el("button", { value: "cancel" }, "Cancel"),
-      el("button", { type: "button", class: "primary", onclick: () => guarded(async () => {
-        await api("/api/sql/password", { connection: c.name, password: input.value });
-        $("#dialog").close(); loaders.sql();
-      }) }, "Save")));
-  input.focus();
-}
-
-$("#sql-query").addEventListener("change", renderParams);
-$("#sql-run").addEventListener("click", () => guarded(async () => {
-  const name = $("#sql-query").value;
-  if (!name) return;
-  const params = [...document.querySelectorAll("#sql-params [data-param]")].map((i) => i.value);
-  $("#sql-meta").textContent = "Running…";
-  renderResult(await api("/api/sql/run", { query: name, params }), name);
-}));
-
-function renderTables() {
-  const f = $("#sql-filter").value.toLowerCase();
-  const conn = $("#sql-browse-conn").value;
-  fill($("#sql-tables"), allTables.filter((t) => t.toLowerCase().includes(f)).slice(0, 300).map((t) =>
-    el("li", { class: "clickable", onclick: () => guarded(async () => {
-      $("#sql-meta").textContent = "Loading…";
-      renderResult(await api(`/api/sql/preview?connection=${encodeURIComponent(conn)}&table=${encodeURIComponent(t)}`), `Top 100 from ${t}`);
-    }) }, t)), conn ? "No tables" : "Choose a connection");
-}
-$("#sql-browse-conn").addEventListener("change", () => guarded(async () => {
-  const conn = $("#sql-browse-conn").value;
-  allTables = conn ? (await api(`/api/sql/tables?connection=${encodeURIComponent(conn)}`)).tables : [];
-  renderTables();
-}));
-$("#sql-filter").addEventListener("input", renderTables);
 
 // ---- today -------------------------------------------------------------------
 
@@ -2492,7 +2419,6 @@ function paletteSources() {
       add("Follow-ups", m.subject, m.sender_name, () => { openTab("mail"); showMail(m.id); });
     }
   }
-  for (const q of sqlInfo.queries || []) add("SQL", `Run query: ${q.name}`, q.connection, () => { CC.sqlShow?.("queries"); openTab("sql"); $("#sql-query").value = q.name; renderParams(); });
   for (const m of pal.mail) add("Mail", m.subject, `${m.folder === "Sent" ? "to " + m.to : m.sender_name} · ${when(m.received)}`, () => { openTab("mail"); showMail(m.id); });
   return out;
 }
@@ -2548,7 +2474,6 @@ function openPalette() {
   pal.active = 0; pal.mail = []; pal.searching = false; pal.seq++;
   renderPalette();
   $("#palette-input").focus();
-  if (!sqlInfo.queries?.length) api("/api/sql").then((d) => { sqlInfo = d; renderPalette(); }).catch(() => {});
 }
 function closePalette() { $("#palette").classList.remove("open"); }
 function runPalette(i) {
