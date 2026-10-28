@@ -30,6 +30,24 @@
     renderBar();
     nativeStage?.schedule();
   }
+  // Wide pane: the list (status, Recent, Send) can be hidden to the left so Teams on the web gets the whole tab;
+  // remembered per viewer (localStorage cc.teams.sideHidden). Narrow panes use the Chats | Teams web switch instead.
+  const SIDE_KEY = "cc.teams.sideHidden";
+  let sideHidden = false;
+  try { sideHidden = localStorage.getItem(SIDE_KEY) === "1"; } catch { /* storage blocked */ }
+  function setSideHidden(hide) {
+    sideHidden = !!hide;
+    try { sideHidden ? localStorage.setItem(SIDE_KEY, "1") : localStorage.removeItem(SIDE_KEY); } catch { /* storage blocked */ }
+    section.classList.toggle("side-hidden", sideHidden);
+    renderBar();
+    nativeStage?.schedule();
+  }
+  section.classList.toggle("side-hidden", sideHidden);
+  const sideToggle = () => el("button", {
+    type: "button", class: "small subtle tv-side-toggle", "aria-pressed": String(!sideHidden),
+    title: sideHidden ? "Show the Teams status and Recent DMs list" : "Hide the list: Teams on the web uses the whole tab",
+    "aria-label": sideHidden ? "Show the Teams list" : "Hide the Teams list", onclick: () => setSideHidden(!sideHidden),
+  }, sideHidden ? "⟩ List" : "⟨");
   const modeSwitch = () => el("div", { class: "tv-switch", role: "group", "aria-label": "Teams view" },
     [["list", "Chats"], ["web", "Teams web"]].map(([m, label]) => el("button", {
       type: "button", class: `small ${section.dataset.view === m ? "primary" : "subtle"}`, "aria-pressed": String(section.dataset.view === m),
@@ -63,7 +81,7 @@
     const note = (v.failed && v.note) || (v.note && now - (v.note_at || 0) < 15 ? v.note : null) ||
       (v.outside && now - v.outside.at < 15 ? `Opened ${v.outside.host} in your browser` : null) || st.error;
     const call = v.call_hint_at && now - v.call_hint_at < 60;
-    bar.replaceChildren(...[modeSwitch(),
+    bar.replaceChildren(...[sideToggle(), modeSwitch(),
       el("button", { type: "button", class: "small subtle", title: "Back", "aria-label": "Back", disabled: !v.can_back, onclick: () => act("back") }, "←"),
       el("button", { type: "button", class: "small subtle", title: "Reload", "aria-label": "Reload", onclick: () => act("reload") }, "↻"),
       el("button", { type: "button", class: "small subtle", title: "Teams home (chats)", "aria-label": "Teams home", onclick: () => act("home") }, "⌂"),

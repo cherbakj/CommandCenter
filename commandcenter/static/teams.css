@@ -70,6 +70,10 @@
 .tv-wait { font: 700 2.4rem var(--font-display); letter-spacing: .3em; color: rgb(179 166 255 / .14); user-select: none; }
 .tv-switch { display: none; gap: 2px; }
 
+/* Wide pane, list hidden (⟨ on the bar; teamsview.js): Teams on the web takes the whole tab. */
+#tab-teams.side-hidden:not(.tv-none) .teams-layout { grid-template-columns: minmax(0, 1fr); }
+#tab-teams.side-hidden:not(.tv-none) .teams-side { display: none; }
+.tv-bar > .tv-side-toggle { font-weight: 700; }
 #tab-teams.tv-none .teams-layout { grid-template-columns: minmax(0, 1fr); }
 #tab-teams.tv-none .teams-web { display: none; }
 @container pane (max-width: 62rem) {
@@ -77,6 +81,8 @@
   .tv-switch { display: flex; }
   #tab-teams[data-view="web"]:not(.tv-none) .teams-side { display: none; }
   #tab-teams[data-view="list"] .teams-web { display: none; }
+  .tv-bar > .tv-side-toggle { display: none; }
+  #tab-teams.side-hidden[data-view="list"] .teams-side { display: flex; }
 }
 .tv-side-switch { display: contents; }
 .list li.teams-row.teams-open { cursor: pointer; }
