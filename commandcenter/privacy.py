@@ -198,7 +198,7 @@ def inventory() -> list[dict]:
 
     conns = _try(sqlc.connections, []) or []
     with_pw = sum(1 for c in conns if _try(lambda c=c: sqlc.has_password(c.get("name")), False))
-    add("sql", "SQL tab", "Work", "SQL Server connections from config.yaml, read with saved queries.",
+    add("sql", "SQL Server (order lookup)", "Work", "SQL Server connections from config.yaml, read by the order lookup's saved query.",
         "Passwords in Windows Credential Manager (SQL logins only); results stay in memory.",
         "Credential Manager (DPAPI)", "Results: not kept", connected=bool(with_pw) if conns else None,
         state=f"{len(conns)} connection(s), {with_pw} ready" if conns else "No connections configured")
@@ -245,6 +245,12 @@ def inventory() -> list[dict]:
         "VS Code settings, extensions and state in data\\vscode, including copies of desktop VS Code's extensions and "
         "settings (settings that look like passwords, tokens or keys are not copied).", "None (private data folder, owner-only ACL)",
         "Until deleted", connected=vs == "running", state=str(vs or "stopped").capitalize())
+
+    add("docked", "Docked windows (VS Code, SSMS)", "Work",
+        "Which VS Code and SSMS windows were docked when Command Center restarted, quit or locked, so it docks them again.",
+        "The window handles and process ids, and each VS Code window's project folder (kv vscode:dock, ssms:dock); "
+        "nothing from inside the windows.", dpapi,
+        "Until the next start docks them again; Undock forgets a window")
 
     mons = _try(web.monitors, []) or []
     if mons:

@@ -10,6 +10,10 @@ is the installed SSMS (ssms_path(): sql.ssms_path or the SSMS 20 default), which
 signature from Microsoft. SSMS is started with -S <server> -U <user> -nosplash from the Toolkit connection settings;
 a password is never put on its command line.
 
+Docked again after a Restart, Quit or Lock (like docked VS Code): the docked window is recorded in kv `ssms:dock`
+(window handle, process id; sealed) when Command Center restarts, quits or locks, and the next start docks it again
+once unlocked, if it's still the same SSMS main window. Undock forgets it. After a reboot or a crash the handle is gone.
+
 Never lose SSMS work: Undock, Lock (undocked and minimized; docked again after unlock), Quit, Restart, the window being
 destroyed (the panel's HandleDestroyed runs before its children are destroyed), Windows ending the session, and
 unhandled exceptions all put SSMS back as a normal top-level window with its own styles and placement. SSMS is never
@@ -38,7 +42,7 @@ import win32con
 import win32gui
 import win32process
 
-from . import config, security
+from . import config, db, security
 from .overlay import NativeOverlay
 
 log = logging.getLogger(__name__)
@@ -51,6 +55,7 @@ STRIP_STYLE = (win32con.WS_POPUP | win32con.WS_CAPTION | win32con.WS_THICKFRAME 
 STRIP_EXSTYLE = (win32con.WS_EX_APPWINDOW | win32con.WS_EX_WINDOWEDGE | win32con.WS_EX_DLGMODALFRAME
                  | win32con.WS_EX_CLIENTEDGE | win32con.WS_EX_STATICEDGE | win32con.WS_EX_TOPMOST)
 SWP_ASYNC = 0x4000  # SWP_ASYNCWINDOWPOS: never wait on SSMS's thread (it may be busy)
+KV_DOCK = "ssms:dock"  # the SSMS window to dock again on the next start (sealed kv: handle, pid)
 NOT_DIALOGS = {GLOW_CLASS, "SysShadow", "ComboLBox", "#32768", "tooltips_class32", "IME", "MSCTFIME UI"}
 
 
@@ -181,6 +186,7 @@ class SsmsDock(NativeOverlay):
         self.saved = None       # its own styles, parent and placement, to put back on undock
         self.last = None        # (hwnd, pid) of the last window undocked by Undock or Lock, for Re-dock
         self.redock_after_unlock = False
+        self._restored = False  # the record from the last Restart / Quit (kv) has been read
         self.ours: set[int] = set()  # SSMS processes this app started
         self.starting = 0       # pid being waited for (main window not up yet)
         self.note = None
@@ -237,6 +243,7 @@ class SsmsDock(NativeOverlay):
                 self.last = (self.hwnd, self.pid)
                 self.redock_after_unlock = False
                 self.release("Undock", front=True)
+            self._record(None)  # Undock means stay undocked, after a restart too
             self._queue()
             return {"ok": True}
         if name == "redock":
@@ -342,13 +349,54 @@ class SsmsDock(NativeOverlay):
 
     def on_lock(self):
         """Lock: SSMS goes back to a normal, minimized window (the lock screen covers Command Center, not SSMS);
-        docked again when Command Center is unlocked and the SQL tab shows."""
+        docked again once Command Center is unlocked (recorded too, in case it quits while locked)."""
         with self._dock_lock:
             if self.hwnd:
+                self._record({"hwnd": self.hwnd, "pid": self.pid})
                 self.last = (self.hwnd, self.pid)
                 self.redock_after_unlock = True
                 self.release("Lock", minimize=True)
         self._queue()
+
+    def release_for_exit(self, why: str, minimize=False):
+        """Restart / Quit: SSMS goes back to a normal window (minimized on Restart, never closed) and is recorded so
+        the next start docks it again. The later clean-up releases (window closing, exit hook) find nothing docked and
+        leave the record alone."""
+        with self._dock_lock:
+            hwnd, pid = self.hwnd, self.pid
+        if hwnd:
+            self._record({"hwnd": hwnd, "pid": pid})
+        self.release(why, minimize=minimize)
+
+    def _record(self, entry):
+        try:
+            db.kv_set(KV_DOCK, entry)
+        except Exception as e:
+            log.warning("SSMS dock: couldn't record the docked window (%s)", type(e).__name__)
+
+    def _restore(self):
+        """Once per start, after unlock: the SSMS window recorded at the last Restart / Quit / Lock, if it's still that
+        SSMS's top-level main window, becomes the one to dock again (then the record is cleared)."""
+        self._restored = True
+        try:
+            e = db.kv_get(KV_DOCK)
+        except Exception:
+            e = None
+        if not e:
+            return
+        self._record(None)
+        h, pid = e.get("hwnd") if isinstance(e, dict) else None, e.get("pid") if isinstance(e, dict) else None
+        if not isinstance(h, int) or not isinstance(pid, int) or self.hwnd or not win32gui.IsWindow(h):
+            return
+        try:
+            if win32process.GetWindowThreadProcessId(h)[1] != pid or win32gui.GetParent(h) != 0 or not is_our_ssms(pid):
+                return
+            self._check_exe()
+        except Exception as ex:
+            log.info("SSMS dock: not docking the recorded SSMS again (%s)", type(ex).__name__)
+            return
+        self.last, self.redock_after_unlock = (h, pid), True
+        log.info("SSMS dock: docking SSMS (pid %s) again after the restart", pid)
 
     def install_hooks(self):
         """Last lines of defence for SSMS's window: interpreter exit, unhandled exceptions, Windows ending the session."""
@@ -443,7 +491,11 @@ class SsmsDock(NativeOverlay):
         with self._lock:
             want = dict(self.want)
         show = self._showing(want)
-        if show and not self.hwnd and self.redock_after_unlock and self.last and win32gui.IsWindow(self.last[0]):
+        ready = self.app.unlocked and not self.app.lock_showing and not self.app.quitting
+        if ready and not self._restored:
+            self._restore()
+        # Docked again after unlock (Lock) or a restart right away, like VS Code: hidden in the panel until the tab shows.
+        if ready and not self.hwnd and self.redock_after_unlock and self.last and win32gui.IsWindow(self.last[0]):
             hwnd, pid = self.last
             if is_our_ssms(pid):
                 self._dock(hwnd, pid)  # (calls _apply again)

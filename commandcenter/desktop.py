@@ -605,7 +605,9 @@ class DesktopApp:
 
     def quit(self):
         self.quitting = True
-        self.ssms.release("quit")  # SSMS goes back to a normal window before this one is destroyed (never closed)
+        # SSMS goes back to a normal window before this one is destroyed (never closed; minimized on Restart), recorded
+        # so the next start docks it again
+        self.ssms.release_for_exit("restart" if self.restarting else "quit", minimize=self.restarting)
         # Docked VS Code windows too (minimized on Restart, shown on Quit), recorded so the next start docks them again
         self.code.release_all("restart" if self.restarting else "quit", minimize=self.restarting, remember=True)
         # From here nothing of Joe's is inside the window, so the process may be ended outright if the orderly close
