@@ -1696,11 +1696,12 @@ function ago(iso) {
   return mins < 48 * 60 ? `${Math.floor(mins / 60)}h` : `${Math.floor(mins / 1440)}d`;
 }
 
-function fuSection(key, title, items, row, { empty, note, hot = false, urgent = false } = {}) {
-  items = items || [];
+// A group with nothing in it isn't shown (no "0" headings); renderFollowups says when there's nothing at all.
+function fuSection(key, title, items, row, { note, hot = false, urgent = false } = {}) {
+  if (!items?.length) return null;
   const id = `fu-${key}`;
-  const collapsed = items.length > 0 && fuCollapsed.has(key);
-  const list = items.length ? el("ul", { class: "list fu-rows", id, hidden: collapsed }, items.map(row)) : null;
+  const collapsed = fuCollapsed.has(key);
+  const list = el("ul", { class: "list fu-rows", id, hidden: collapsed }, items.map(row));
   const noteEl = note ? el("div", { class: "fu-note", hidden: collapsed }, note) : null;
   const label = [el("span", { class: "fu-caret", "aria-hidden": "true" }), el("span", { class: "fu-sec-title" }, title), el("span", { class: "chip" }, items.length)];
   const toggle = (e) => {
@@ -1711,11 +1712,9 @@ function fuSection(key, title, items, row, { empty, note, hot = false, urgent = 
     open ? fuCollapsed.delete(key) : fuCollapsed.add(key);
     store.set(FU_COLLAPSED, JSON.stringify([...fuCollapsed]));
   };
-  return el("section", { class: `fu-sec${hot ? " hot" : ""}${urgent ? " urgent" : ""}${items.length ? "" : " is-empty"}`, "aria-label": title },
+  return el("section", { class: `fu-sec${hot ? " hot" : ""}${urgent ? " urgent" : ""}`, "aria-label": title },
     el("h4", { class: "fu-sec-h" },
-      items.length ? el("button", { type: "button", class: "fu-toggle", "aria-expanded": String(!collapsed), "aria-controls": id, onclick: toggle }, label)
-                   : el("span", { class: "fu-toggle" }, label),
-      !items.length && el("span", { class: "fu-empty" }, empty)),
+      el("button", { type: "button", class: "fu-toggle", "aria-expanded": String(!collapsed), "aria-controls": id, onclick: toggle }, label)),
     list, noteEl);
 }
 
@@ -1811,14 +1810,14 @@ function renderFollowups(f) {
   const hiddenNote = [h.more && `${h.more} more`, h.older && `${h.older} older`, h.automated && `${h.automated} automated`,
     h.before && `${h.before.toLocaleString()} flagged before ${new Date(`${h.since}T00:00`).toLocaleDateString([], { month: "short", day: "numeric" })}`]
     .filter(Boolean).join(" · ");
-  box.replaceChildren(
-    fuSection("urgent", "Urgent — reply needed", f.urgent_reply, (m) => replyRow(m, { urgent: true }),
-      { empty: "None. Set who counts under Urgent people.", hot: !!f.urgent_reply?.length, urgent: true }),
-    fuSection("reply", "Needs your reply", f.needs_reply, (m) => replyRow(m), { empty: "Nothing waiting on you." }),
-    fuSection("teams", "Teams — reply needed", f.teams_reply, teamsRow, { empty: "No unread Teams messages.", hot: !!f.teams_reply?.some((m) => m.urgent) }),
-    fuSection("awaiting", "Awaiting their reply", f.awaiting_reply, awaitingRow, { empty: "No one owes you a reply." }),
-    fuSection("flagged", "Flagged", f.flagged, flaggedRow, { empty: "No recent flags.", note: hiddenNote && `Hidden: ${hiddenNote} (of ${Number(h.total || 0).toLocaleString()} flagged)` }),
-    fuSection("vip", "Important senders", f.unread_vip, vipRow, { empty: "No unread mail from important senders." }));
+  const sections = [
+    fuSection("urgent", "Urgent — reply needed", f.urgent_reply, (m) => replyRow(m, { urgent: true }), { hot: true, urgent: true }),
+    fuSection("reply", "Needs your reply", f.needs_reply, (m) => replyRow(m)),
+    fuSection("teams", "Teams — reply needed", f.teams_reply, teamsRow, { hot: !!f.teams_reply?.some((m) => m.urgent) }),
+    fuSection("awaiting", "Awaiting their reply", f.awaiting_reply, awaitingRow),
+    fuSection("flagged", "Flagged", f.flagged, flaggedRow, { note: hiddenNote && `Hidden: ${hiddenNote} (of ${Number(h.total || 0).toLocaleString()} flagged)` }),
+    fuSection("vip", "Important senders", f.unread_vip, vipRow)].filter(Boolean);
+  box.replaceChildren(...(sections.length ? sections : [el("ul", { class: "list" }, el("li", { class: "empty" }, "No follow-ups."))]));
 }
 
 // ---- urgent people ---------------------------------------------------------------

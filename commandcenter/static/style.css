@@ -697,9 +697,6 @@ button.prio-pill:hover { color: #fff; border-color: rgb(var(--accent-rgb) / .7);
 button.fu-toggle:hover { color: #fff; background: rgb(255 255 255 / .06); border-color: transparent; box-shadow: none; }
 .fu-caret::before { content: "▾"; display: inline-block; width: .7rem; color: var(--muted); transition: transform .15s; }
 button.fu-toggle[aria-expanded=false] .fu-caret::before { transform: rotate(-90deg); }
-.fu-sec.is-empty .fu-caret::before { content: ""; }
-.fu-sec.is-empty .fu-toggle { color: var(--muted); }
-.fu-empty { font: italic 500 .8rem var(--font-ui); color: var(--dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fu-sec.hot .fu-sec-title { color: var(--red); }
 .fu-sec.hot .chip { color: #fff; background: #c8102e; border-color: var(--red); box-shadow: 0 0 .6rem rgb(var(--red-rgb) / .6); }
 .fu-sec.urgent .fu-sec-title::before { content: "▲ "; color: var(--red); font-size: .66rem; }
