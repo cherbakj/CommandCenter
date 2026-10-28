@@ -5,6 +5,7 @@ and whether any Command Center UI must be on top; these classes put a WinForms P
 Channel: POST /api/window/<view>/bounds (security.py: the normal session cookie, X-CommandCenter and Origin checks),
 checked by parse_bounds(). There is no pywebview js_api. update() runs on the server thread and only stores the latest
 report; one BeginInvoke at a time applies it on the window's UI thread (CSS px x DPI x dashboard zoom)."""
+import ctypes
 import logging
 import math
 import threading
@@ -154,7 +155,10 @@ class NativeOverlay:
         from System.Drawing import Rectangle
         main = form.browser.webview
         try:
-            scale = float(form.DeviceDpi) / 96 * float(main.ZoomFactor)
+            # The window's real DPI from Windows, not form.DeviceDpi: .NET Framework reads that before pywebview makes
+            # the process DPI-aware and keeps 96, which placed every view at 2/3 size on a 150% display.
+            dpi = ctypes.windll.user32.GetDpiForWindow(ctypes.c_void_p(int(form.Handle.ToInt64()))) or int(form.DeviceDpi)
+            scale = dpi / 96 * float(main.ZoomFactor)
         except Exception:
             scale = 1.0
         ox, oy, cw, ch = main.Left, main.Top, main.ClientSize.Width, main.ClientSize.Height
