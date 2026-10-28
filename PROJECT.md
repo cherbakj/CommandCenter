@@ -201,6 +201,7 @@ Appearance (skin, colors, text size, density, effects: glow, frosted glass, back
 
 ## Constraints
 - Cylance blocks `.ps1` files, so never create them. Run everything through `run.cmd` or `.venv\Scripts\python.exe`.
+- **Window from other threads:** never set a .NET property of the window (e.g. pywebview's `window.on_top`, which sets `TopMost` on the calling thread) from the server, tray or any non-UI thread. pythonnet keeps the GIL through a property set, and a property that sends the window a message waits for the UI thread, which may be waiting for the GIL: the whole app freezes (Windows "not responding"; it happened on 10/25-10/28 when a second launch or the tray showed CC). Use pywebview's methods (they `Invoke`, and pythonnet releases the GIL for method calls) or ctypes (`DesktopApp.show` brings the window forward with `SetWindowPos` through ctypes). Endpoints that wait on the window run in `asyncio.to_thread`.
 - **Outlook COM** calls must stay on one thread (`outlook.call()`). Use `_table_rows()`/`_mail_rows()` for bulk reads; the To-Do folder ignores GetTable filters.
 - **Tests:** run a second copy with `CC_PORT=<port> CC_DEV_NO_AUTH=1 python -m commandcenter serve --no-browser`. Never use 8765 for tests.
 

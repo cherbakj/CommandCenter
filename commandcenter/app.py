@@ -255,7 +255,10 @@ async def focus(minutes: int = Body(..., embed=True)):
 async def show_window():
     """Used by a second launch of the app to bring the running window forward."""
     show = getattr(app.state, "show_window", None)
-    show() if show else alerts.open_dashboard()  # serve mode: a fresh one-time sign-in link
+    if show:  # off the event loop: showing waits on the window's thread, and the server must keep answering meanwhile
+        await asyncio.to_thread(show)
+    else:
+        alerts.open_dashboard()  # serve mode: a fresh one-time sign-in link
     return {"ok": True}
 
 

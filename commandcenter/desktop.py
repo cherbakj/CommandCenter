@@ -355,8 +355,14 @@ class DesktopApp:
             hwnd = self._hwnd()
             if ctypes.windll.user32.IsIconic(hwnd):  # un-minimize to its previous state (full screen stays full screen)
                 ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-            self.window.on_top = True  # nudge it in front of other windows
-            self.window.on_top = False
+            # Nudge it in front of other windows with plain Win32 calls, not window.on_top: pythonnet keeps the GIL
+            # through a .NET property set, and TopMost's SetWindowPos waits on the window's thread, which may be
+            # waiting for the GIL itself. That deadlock froze CC when a second launch or the tray showed it.
+            # ctypes lets go of the GIL during the call.
+            set_pos = ctypes.windll.user32.SetWindowPos
+            flags = 0x0001 | 0x0002  # SWP_NOSIZE | SWP_NOMOVE
+            set_pos(ctypes.c_void_p(hwnd), ctypes.c_void_p(-1), 0, 0, 0, 0, flags)  # HWND_TOPMOST
+            set_pos(ctypes.c_void_p(hwnd), ctypes.c_void_p(-2), 0, 0, 0, 0, flags)  # HWND_NOTOPMOST
             self._unlock()
 
     def raise_for_reminder(self) -> str:
