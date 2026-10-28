@@ -735,6 +735,12 @@ def _mentions_me(item, names, me_smtp) -> bool:
     return _mention_cache[key]
 
 
+def _mention_names(me_name) -> list[str]:
+    """What counts as naming Joe: followups.mention_names plus his Outlook name (his address is checked too)."""
+    fu = config.section("followups", {})
+    return [str(n) for n in fu.get("mention_names", ["Joe", "Joe Cherbak"]) or []] + [me_name]
+
+
 def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, important=()) -> dict:
     """Sent mail nobody answered, mail you haven't replied to (internal senders by default, urgent people
     split out), unread Teams missed-activity emails, and unread mail from important senders (`important`:
@@ -744,7 +750,7 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, important=()) -> 
     urgent = people.urgent_people()
     me_name, me_smtp = _me()
     # "Needs your reply" only when the message calls Joe out by name or address (urgent people always count).
-    mention_names = [str(n) for n in fu.get("mention_names", ["Joe", "Joe Cherbak"]) or []] + [me_name]
+    mention_names = _mention_names(me_name)
     need_mention = fu.get("needs_reply_requires_mention", True) is not False
     now = datetime.now()
     horizon = now - timedelta(days=max(awaiting_days, reply_days) + 7)
@@ -844,6 +850,13 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
     urgent = people.urgent_people()
     important = people.important_senders()
     blocked = _blocked()
+    # Only mail that calls Joe out alerts (Joe's call 2026-10-28): his name, address or an @mention in the subject
+    # or the new text above the quoted history, as in Follow-ups. Urgent people always alert. Automated mail and
+    # Teams' notification emails don't count (the Teams reader alerts on chats and @mentions itself).
+    # outlook.alerts_require_mention: false goes back to alerting on every rule match.
+    need_mention = cfg.get("alerts_require_mention", True) is not False
+    me_name, me_smtp = _me() if need_mention else ("", "")
+    names = _mention_names(me_name)
     for item in _iter_inbox(200):
         if _local_time(item.ReceivedTime) < since:
             break
@@ -863,6 +876,10 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
             elif people.matches(mail["sender"], mail["sender_name"], urgent):
                 hits.append((mail, {"name": "Urgent reply needed", "priority": "high"}))
                 continue
+        sender = (mail["sender"] or "").lower()
+        if need_mention and (is_teams_notification(sender) or _is_bulk(item, sender)
+                             or not _mentions_me(item, names, me_smtp)):
+            continue
         # Important senders (the config "VIP sender" rule's senders plus the list edited in the app) come next:
         # high priority even if that rule was removed from config.yaml.
         if important and people.is_important(mail["sender"], important):

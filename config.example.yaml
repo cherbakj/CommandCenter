@@ -80,11 +80,15 @@ asana:
 # together with the ones you mark in the app (Mark important on an email, or Follow-ups > Important senders /
 # Ctrl+K): their mail is a high-priority alert, listed under Follow-ups > Important senders and starred. The two
 # example entries below are ignored; replace them or leave the list to the app.
+# An email only alerts when it names you (alerts_require_mention): your name (followups.mention_names, your Outlook
+# name) or address, or an @mention, in the subject or the new text above the quoted history. Urgent people's mail
+# always alerts. Automated mail and Teams' notification emails never count (Teams alerts come from the Teams reader).
 # ---------------------------------------------------------------------------
 outlook:
   enabled: true
   poll_seconds: 60
   auto_start: true                    # reopen Outlook if it gets closed
+  alerts_require_mention: true        # false: every rule match alerts, named or not
   focus_keywords: ["focus"]           # a calendar event with this in its title turns on focus mode
   rules:
     - name: VIP sender                  # more can be added in the app (Follow-ups > Important senders)
