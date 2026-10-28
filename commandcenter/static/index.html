@@ -89,6 +89,7 @@
             </div>
             <div class="tw-tools" data-for="agenda">
               <span id="agenda-tools-slot" class="slot"></span>
+              <button id="block-time" type="button" class="small primary" title="Block time on your Outlook calendar">＋ Block time</button>
             </div>
             <div class="tw-tools" data-for="tasks" hidden>
               <button id="asana-btn" class="small"></button>
@@ -115,6 +116,15 @@
           <div class="tw-panel a-follow" role="tabpanel" id="tw-follow" aria-labelledby="tw-tab-follow" hidden>
             <div id="followups" class="followups"></div>
           </div>
+        </div>
+        <!-- Recent Teams DMs and mentions from the background read; a row opens that chat in the Teams tab (app.js "teams") -->
+        <div class="panel a-teams" id="today-teams" role="region" aria-labelledby="today-teams-label">
+          <div class="panel-head">
+            <span class="panel-label" id="today-teams-label">TEAMS · RECENT DMS</span><span id="today-teams-count" class="chip" hidden></span>
+            <span class="spacer"></span>
+            <button id="today-teams-all" type="button" class="small subtle">Teams ›</button>
+          </div>
+          <ul id="today-teams-list" class="list fu-rows"></ul>
         </div>
         <!-- today's calendar: a time grid of the day (daycal.js) -->
         <div class="panel a-day" id="today-day" role="region" aria-label="Today's calendar"></div>
@@ -173,10 +183,11 @@
         <div class="teams-side">
           <div class="panel" id="teams-status"></div>
           <!-- unread / recent DMs and @mentions, read by the background Teams check (app.js renderTeamsRecent) -->
-          <div class="panel teams-recent" id="teams-recent" aria-labelledby="teams-recent-label">
-            <div class="panel-head"><span class="panel-label" id="teams-recent-label">RECENT DMS AND MENTIONS</span><span class="spacer"></span><span class="muted small" id="teams-recent-note"></span></div>
+          <!-- collapsible, collapsed unless opened (remembered per viewer: localStorage cc.teams.recentOpen) -->
+          <details class="panel teams-recent" id="teams-recent">
+            <summary class="panel-head"><span class="panel-label" id="teams-recent-label">RECENT DMS AND MENTIONS</span><span id="teams-recent-count" class="chip" hidden></span><span class="spacer"></span><span class="muted small" id="teams-recent-note"></span></summary>
             <ul id="teams-recent-list" class="list"></ul>
-          </div>
+          </details>
           <details class="panel teams-more">
             <summary class="panel-label">SEND A MESSAGE · MISSED-ACTIVITY EMAILS</summary>
             <p class="muted">Opens the chat in the Teams app with your message filled in. You press send.</p>

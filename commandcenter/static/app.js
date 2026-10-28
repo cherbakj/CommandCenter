@@ -1491,7 +1491,9 @@ function slotRow(slot) {
     el("div", { class: "time-col" }, timeOf(slot.start), el("div", { class: "muted" }, timeOf(slot.end))),
     el("div", { class: "grow" },
       el("div", { class: "slot-title" }, `Open · ${duration(mins)}`),
-      el("div", { class: "muted slot-hint" }, "Drop a task here to block time")));
+      el("div", { class: "muted slot-hint" }, "Drop a task here to block time")),
+    el("div", { class: "actions" },
+      el("button", { type: "button", class: "small subtle", title: "Block this time on your Outlook calendar", onclick: () => scheduleDialog(null, slot) }, "Block")));
 }
 
 function endDrag() { dragTask = null; document.body.classList.remove("drag-task"); }
@@ -1610,13 +1612,16 @@ function renderTasks(t) {
   )), "No open tasks. Inbox zero energy.");
 }
 
+// Blocks time on Joe's Outlook calendar (POST /api/calendar/block: a busy appointment with no attendees, 5-minute
+// reminder). For a task (Schedule, or a task dropped on a free slot) or on its own (＋ Block time on the Agenda, a free
+// slot's Block, Ctrl+K). The default title is never "Blocked": that subject at midday reads as Joe's lunch (_is_lunch).
 function scheduleDialog(task, slot) {
-  if (!slot) slot = todayData && freeSlots(todayData.agenda)[0];
-  const subject = el("input", { value: `Focus: ${task.subject}`, maxlength: "250", "aria-label": "Title" });
+  if (!slot && task) slot = todayData && freeSlots(todayData.agenda)[0];
+  const subject = el("input", { value: task ? `Focus: ${task.subject}` : "Focus time", maxlength: "250", "aria-label": "Title" });
   const start = el("input", { type: "datetime-local", step: "300", "aria-label": "Start", value: localInput(slot ? slot.start : roundUp(new Date(), 15)) });
   const fits = slot ? (slot.end - slot.start) / 60000 : 120;
-  const pick = fits >= 60 ? 60 : [45, 30].find((m) => m <= fits) || 30;
-  const len = el("select", { "aria-label": "Length" }, [30, 45, 60, 90, 120].map((m) => el("option", { value: m, selected: m === pick }, duration(m))));
+  const pick = fits >= 60 ? 60 : [45, 30, 15].find((m) => m <= fits) || 15;
+  const len = el("select", { "aria-label": "Length" }, [15, 30, 45, 60, 90, 120, 180, 240].map((m) => el("option", { value: m, selected: m === pick }, duration(m))));
   const hint = el("div", { class: "muted" });
   const updateHint = () => {
     hint.textContent = /focus/i.test(subject.value)
@@ -1631,16 +1636,17 @@ function scheduleDialog(task, slot) {
     const s = new Date(start.value);
     if (isNaN(s)) throw new Error("Pick a start time.");
     const minutes = Number(len.value);
+    if (/^\s*(blocked|lunch)\s*$/i.test(subject.value)) throw new Error("Use another title: “Blocked” or “Lunch” around midday counts as your lunch break.");
     await api("/api/calendar/block", {
       subject: subject.value.trim(), start: localIso(s), minutes,
-      notes: `Time blocked for: ${task.subject}${task.url ? "\n" + task.url : ""}`,
+      notes: task ? `Time blocked for: ${task.subject}${task.url ? "\n" + task.url : ""}` : "",
     });
     $("#dialog").close();
     showMessage("Time blocked", `“${subject.value.trim()}” is on your calendar: ${dayTime(s)} – ${timeOf(new Date(s.getTime() + minutes * 60000))}.`);
     loaders.today();
   });
-  showDialog(el("h3", {}, "Block time for a task"),
-    el("p", { class: "muted" }, task.subject),
+  showDialog(el("h3", {}, task ? "Block time for a task" : "Block time on your calendar"),
+    el("p", { class: "muted" }, task ? task.subject : "Adds a busy appointment to your Outlook calendar (no attendees, a reminder 5 minutes before)."),
     el("label", { class: "field-label" }, "Title"), subject, hint,
     el("div", { class: "two-col" },
       el("div", {}, el("label", { class: "field-label" }, "Start"), start),
@@ -1650,6 +1656,8 @@ function scheduleDialog(task, slot) {
       el("button", { type: "button", class: "primary", onclick: save }, "Add to calendar")));
   subject.focus();
 }
+
+$("#block-time").addEventListener("click", () => scheduleDialog(null));
 
 // ---- snooze + no-reply reminders --------------------------------------------------
 
@@ -2035,6 +2043,7 @@ function rescanLabel(btn, word) {
 loaders.today = (refresh = false) => guarded(async () => {
   const btn = $("#today-refresh");
   btn.disabled = true; rescanLabel(btn, "Scanning…");
+  loadTodayTeams();  // its own request: Teams shows even while Outlook is slow
   try {
     todayData = await api(`/api/today?refresh=${refresh}`);
     renderWeather(todayData.weather);
@@ -2289,8 +2298,9 @@ function renderTeamsBadge(s) {
   badge.hidden = !n;
   badge.textContent = n > 99 ? "99+" : String(n);
   badge.closest("button").title = n ? teamsTip(s) : "";
-  // a new background read while the tab is open: show it
+  // a new background read while the Teams tab or Today is open: show it
   if (s?.checked && teamsChecked && s.checked !== teamsChecked && $("#tab-teams").classList.contains("active")) loaders.teams();
+  if (s?.checked && teamsChecked && s.checked !== teamsChecked && $("#tab-today").classList.contains("active")) loadTodayTeams();
   teamsChecked = s?.checked || teamsChecked;
 }
 
@@ -2312,9 +2322,24 @@ function teamsCounts(s) {
 // Recent DMs and @mentions (newest first). Links come from teams.py; only Teams deep links are opened.
 const TEAMS_KIND = { dm: ["DM", "Direct message"], group: ["Group", "Group chat"], meeting: ["Meeting", "Meeting chat"], mention: ["Mention", "@mention of you"] };
 const teamsLink = (u) => (typeof u === "string" && /^(msteams:\/l\/|https:\/\/teams\.microsoft\.com\/l\/)[^\s"<>\\]+$/.test(u) ? u : null);
-function teamsRecentRow(r) {
+// Opens a chat from a Recent row: the Teams tab's web view (CC.teamsWeb switches to the tab), else the Teams app.
+const openTeamsRecent = (link) => (CC.teamsWeb ? CC.teamsWeb.open(link) : openExternal(link));
+// today: the row is on the Today tab, where Open chat always goes to the Teams tab (CC.teamsWeb falls back by itself).
+function teamsRecentRow(r, today = false) {
   const [label, about] = TEAMS_KIND[r.kind] || ["Teams", "Teams"];
   const link = teamsLink(r.link);
+  if (today) return fuRow(r, {
+    cls: `teams-row ${r.unread ? "unread" : ""} ${r.urgent ? "sev-urgent" : ""} ${link ? "teams-open" : ""}`,
+    src: el("span", { class: `src src-teams tk-${TEAMS_KIND[r.kind] ? r.kind : "dm"}`, title: `Microsoft Teams · ${about}${r.unread ? " · unread" : ""}` }, label),
+    who: r.who, whoTitle: r.where ? `${r.who} · ${r.where}` : r.who,
+    subject: r.preview || (r.kind === "mention" ? "mentioned you" : "(no preview)"),
+    about: [r.where && `in ${r.where}`, r.preview].filter(Boolean).join(": "),
+    tags: [r.urgent && el("span", { class: "tag urgent" }, "Urgent"), r.count > 1 && el("span", { class: "tag teams-n", title: `${r.count} unread messages` }, r.count)],
+    at: r.time,
+    primary: link ? el("button", { type: "button", class: "small primary", title: "Open this chat in the Teams tab", "aria-label": `Open chat: ${r.who}`, onclick: () => openTeamsRecent(link) }, "Open chat")
+      : el("button", { type: "button", class: "small alt", onclick: () => openTab("teams") }, "Teams"),
+    quick: [],
+  });
   return fuRow(r, {
     cls: `teams-row ${r.unread ? "unread" : ""} ${r.urgent ? "sev-urgent" : ""}`,
     src: el("span", { class: `src src-teams tk-${TEAMS_KIND[r.kind] ? r.kind : "dm"}`, title: `Microsoft Teams · ${about}${r.unread ? " · unread" : ""}` }, label),
@@ -2341,7 +2366,11 @@ function renderTeamsRecent(t) {
     : !t.read_at ? "Shows up after the next background check (or Check now)."
     : s.details === "unavailable" ? "Details unavailable on the last check (only Teams' unread total could be read)."
     : "No DMs or mentions in the last 3 days.";
-  fill($("#teams-recent-list"), recent.map(teamsRecentRow), empty);
+  fill($("#teams-recent-list"), recent.map((r) => teamsRecentRow(r)), empty);
+  const unread = recent.filter((r) => r.unread).length;
+  $("#teams-recent-count").textContent = unread;
+  $("#teams-recent-count").hidden = !unread;
+  $("#teams-recent-count").title = `${unread} unread`;
   // a click anywhere on a row (not on its buttons) opens that chat in the web view too
   $("#teams-recent-list").querySelectorAll("li.teams-row").forEach((li, i) => {
     const link = teamsLink(recent[i]?.link);
@@ -2350,6 +2379,35 @@ function renderTeamsRecent(t) {
     li.addEventListener("click", (e) => { if (!e.target.closest("button, a, input")) CC.teamsWeb.open(link); });
   });
 }
+// The Teams tab's Recent list is collapsed unless Joe opened it (remembered per viewer); Today shows the newest ones.
+$("#teams-recent").open = store.get("cc.teams.recentOpen") === "1";
+$("#teams-recent").addEventListener("toggle", (e) => store.set("cc.teams.recentOpen", e.currentTarget.open ? "1" : null));
+
+// Today: the newest Recent DMs and mentions under the main panel (GET /api/teams/recent: the background read only,
+// no Outlook). A row, or its Open chat, opens that chat in the Teams tab.
+const TODAY_TEAMS_MAX = 6;
+let todayTeamsSeq = 0;
+async function loadTodayTeams() {
+  const seq = ++todayTeamsSeq;
+  let t;
+  try { t = await api("/api/teams/recent"); } catch (e) {
+    if (seq === todayTeamsSeq) fill($("#today-teams-list"), [el("li", { class: "err" }, e.message)], "");
+    return;
+  }
+  if (seq !== todayTeamsSeq) return;
+  const recent = (Array.isArray(t.recent) ? t.recent : []).slice(0, TODAY_TEAMS_MAX);
+  const unread = (t.recent || []).filter((r) => r.unread).length;
+  $("#today-teams-count").textContent = unread;
+  $("#today-teams-count").hidden = !unread;
+  $("#today-teams-count").title = `${unread} unread`;
+  const empty = !t.set_up ? "Not connected: log in on the Teams tab." : !t.read_at ? "Shows up after the next Teams check." : "No DMs or mentions in the last 3 days.";
+  fill($("#today-teams-list"), recent.map((r) => teamsRecentRow(r, true)), empty);
+  $("#today-teams-list").querySelectorAll("li.teams-row").forEach((li, i) => {
+    const link = teamsLink(recent[i]?.link);
+    if (link) li.addEventListener("click", (e) => { if (!e.target.closest("button, a, input")) openTeamsRecent(link); });
+  });
+}
+$("#today-teams-all").addEventListener("click", () => openTab("teams"));
 
 loaders.teams = () => guarded(async () => {
   const t = await api("/api/teams");
@@ -2408,6 +2466,7 @@ function paletteSources() {
   for (const p of proj.list) add("Projects", `Work on: ${p.name}`, p.path, () => { setActiveProject(p.path); openTab("vscode"); });
   add("Commands", "New task", "Outlook or Asana", () => newTaskDialog());
   add("Commands", "Rescan follow-ups", "", () => { openTab("today"); loaders.today(true); });
+  add("Commands", "Block time on calendar", "a busy appointment in Outlook", () => scheduleDialog(null));
   add("Commands", "Focus 30 minutes", "mute non-urgent alerts", () => setFocus(30));
   add("Commands", "Focus 1 hour", "mute non-urgent alerts", () => setFocus(60));
   add("Commands", "Focus 2 hours", "mute non-urgent alerts", () => setFocus(120));

@@ -1,5 +1,6 @@
 // Workday helpers on Today: the uncommitted-work tile (in the stats strip), the "Yesterday" recap with a stand-up
-// copy, and meeting notes with action items (Yesterday / Notes buttons on the Agenda tab). Notes are work data,
+// copy (Yesterday on the Agenda tab), and meeting notes with action items (Notes on Calendar-tab meetings and the Prep
+// card, Ctrl+K "Meeting notes"; not on Today). Notes are work data,
 // DPAPI-encrypted on this PC (labelled "encrypted", not "private"), so they stay visible in Privacy mode.
 // Everything is drawn with CC.el / textContent (never innerHTML): task, mail and meeting text is untrusted.
 (() => {
@@ -226,7 +227,8 @@
     }
   }
 
-  CC.addMeetingAction((m) => {
+  CC.addMeetingAction((m, where) => {
+    if (where === "agenda") return null;  // not on Today's agenda (Joe's call 2026-10-28); the Calendar tab and Prep keep it
     if (!m || !OUTLOOK_ID.test(m.id || "") || !START_RE.test(m.start || "")) return null;
     const has = state.noteKeys.has(noteKey(m.id, m.start));
     return el("button", { type: "button", class: `small subtle cc-notes-btn ${has ? "has" : ""}`, "data-mid": m.id, "data-start": m.start,
@@ -424,9 +426,9 @@
   function mount() {
     const host = document.querySelector("#agenda-tools-slot");
     if (!host || tools) return;
+    // (No Notes button here: Joe doesn't want meeting notes on Today; they're on the Calendar tab and Ctrl+K.)
     tools = [
       el("button", { type: "button", class: "small subtle", title: "What you did on the last workday, ready for stand-up", onclick: () => recapDialog() }, "Yesterday"),
-      el("button", { type: "button", class: "small subtle", title: "Meeting notes and action items (encrypted on this PC)", onclick: notesListDialog }, "Notes"),
     ];
     host.append(...tools);
     loadNoteKeys();

@@ -45,11 +45,16 @@
 .teams-side > .panel { flex: none; }
 .teams-side .teams-recent { margin-top: 0; }
 .teams-side #teams-recent-list { max-height: none; }
-.teams-more > summary { cursor: pointer; list-style: none; }
-.teams-more > summary::-webkit-details-marker { display: none; }
+.teams-more > summary, .teams-recent > summary { cursor: pointer; list-style: none; }
+.teams-more > summary::-webkit-details-marker, .teams-recent > summary::-webkit-details-marker { display: none; }
 .teams-more > summary::before { content: "▸ "; }
 .teams-more[open] > summary::before { content: "▾ "; }
 .teams-more[open] > summary { margin-bottom: .5rem; }
+/* Recent DMs and mentions: collapsed unless opened (app.js remembers it); the unread count shows either way. */
+.teams-recent > summary { display: flex; align-items: center; gap: .5rem; margin: 0; }
+.teams-recent > summary::before { content: "▸"; color: var(--muted); width: .7rem; flex: none; }
+.teams-recent[open] > summary::before { content: "▾"; }
+.teams-recent[open] > summary { margin-bottom: .5rem; }
 .teams-web { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .tv-bar { display: flex; align-items: center; gap: .4rem; margin-bottom: .55rem; min-width: 0; }
 .tv-bar > * { flex: none; }

@@ -463,6 +463,12 @@ async def teams_info():
             **teams.details()}
 
 
+@app.get("/api/teams/recent")
+async def teams_recent():
+    """Today's Teams panel: the background read's Recent list only (no Outlook call, unlike /api/teams)."""
+    return {"set_up": teams.is_set_up(), "state": db.kv_get("teams:state"), **teams.details()}
+
+
 @app.post("/api/teams/login")
 async def teams_login():
     asyncio.create_task(teams.login())
