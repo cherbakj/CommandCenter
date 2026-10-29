@@ -1,6 +1,7 @@
 """Desktop shell: runs the server in the background and shows the dashboard in a native window
 (Edge WebView2 through pywebview), with a tray icon. The window is open, minimized or closed for good:
 closing it (Alt+F4) minimizes it so alerts keep running; Close in the power menu or Quit in the tray exits.
+"Force quit Command Center" in the taskbar button's right-click menu ends a stuck copy from outside (forcequit.py).
 
 Unlock: the window starts on a local start-up page, not the dashboard: the launch animation's puzzle
 assembling (static/splash.js in gate mode, no API calls). The first time it is shown (at launch, or from
@@ -666,6 +667,8 @@ class DesktopApp:
             return
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
         ensure_icon_file()
+        from . import forcequit
+        forcequit.register_jump_list(APP_ID, str(ICON_PATH))  # "Force quit Command Center" on the taskbar button
         security.harden_folders()
         if not self._start_server():
             return
@@ -742,8 +745,26 @@ def install_shortcuts(startup=True):
         link.IconLocation = str(ICON_PATH)
         link.Description = "Outlook, Teams, tasks and alerts in one place"
         link.Save()
+        _set_app_id(link.FullName)
         made.append(f"{name}: {folder / (TITLE + '.lnk')}")
     return made
+
+
+def _set_app_id(path: str):
+    """Gives a shortcut the window's AppUserModelID, so a pinned shortcut and the running window share one taskbar
+    button, with the Force quit task."""
+    try:
+        import pythoncom
+        from win32comext.propsys import propsys, pscon
+        from win32comext.shell import shell
+        link = pythoncom.CoCreateInstance(shell.CLSID_ShellLink, None, pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink)
+        link.QueryInterface(pythoncom.IID_IPersistFile).Load(path, 2)  # STGM_READWRITE
+        store = link.QueryInterface(propsys.IID_IPropertyStore)
+        store.SetValue(pscon.PKEY_AppUserModel_ID, propsys.PROPVARIANTType(APP_ID))
+        store.Commit()
+        link.QueryInterface(pythoncom.IID_IPersistFile).Save(path, True)
+    except Exception as e:
+        log.warning("Shortcut app id not set (%s)", type(e).__name__)
 
 
 def uninstall_shortcuts():

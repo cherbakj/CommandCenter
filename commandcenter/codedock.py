@@ -19,7 +19,8 @@ it's one of the projects (projects._known), with the same "other accounts can mo
 else; VS Code is started with the folder as a plain list argument (no shell), without Command Center's ELECTRON_* /
 VSCODE_* environment.
 
-What can't be helped (as with SSMS): if this process is killed outright (Task Manager, a crash), Windows destroys its
+What can't be helped (as with SSMS): if this process is killed outright (Task Manager, a crash; Force quit in the
+taskbar menu, forcequit.py, puts them back first), Windows destroys its
 windows' children, including docked VS Code windows; VS Code then closes those windows (tested: a one-window VS Code
 quit), so Claude chats running in them stop. Unsaved editors come back from VS Code's own backups. Keys: while VS Code
 has the keyboard, Ctrl+K, Ctrl+Shift+P and F11 are VS Code's (no Privacy-mode hotkey is passed through here).

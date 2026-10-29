@@ -58,6 +58,7 @@ log = logging.getLogger(__name__)
 SESSION_SECRET = secrets.token_urlsafe(32)
 HANDOFF_SECRET = secrets.token_urlsafe(32)
 HANDOFF_HEADER = "x-cc-handoff"
+HANDOFF_ROUTES = ("/api/window/show", "/api/app/quit")  # a second launch; Force quit (forcequit.py) asking first
 PUBLIC_PATHS = {"/auth"}
 
 _state = {"mode": "app", "dev_no_auth": False}
@@ -146,7 +147,7 @@ def _has_session(headers: Headers) -> bool:
 
 def _has_handoff(scope, headers: Headers) -> bool:
     supplied = headers.get(HANDOFF_HEADER, "")
-    return (scope.get("type") == "http" and scope.get("method") == "POST" and scope.get("path") == "/api/window/show"
+    return (scope.get("type") == "http" and scope.get("method") == "POST" and scope.get("path") in HANDOFF_ROUTES
             and bool(supplied) and hmac.compare_digest(supplied.encode("utf-8", "replace"), HANDOFF_SECRET.encode()))
 
 
@@ -557,8 +558,8 @@ def listen_socket(listen_port: int) -> socket.socket:
 # ---- single instance + handoff ------------------------------------------------------------
 # A named mutex in this logon session's Local\ namespace tells a second launch that we're running.
 # It then reads the handoff secret from data/instance-<port>.json (folder readable only by this
-# user, SYSTEM and Administrators) and POSTs /api/window/show with it. The secret authorizes that
-# one route only, and the same-user check applies to it as well.
+# user, SYSTEM and Administrators) and POSTs /api/window/show with it. The secret authorizes only that
+# route and /api/app/quit (Force quit asks for a normal quit first), and the same-user check applies to it as well.
 
 _mutex = None
 

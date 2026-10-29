@@ -5,6 +5,7 @@
   python -m commandcenter serve               server only, dashboard in your browser (one-time link)
   python -m commandcenter install             Start menu, desktop and sign-in shortcuts
   python -m commandcenter uninstall           remove those shortcuts
+  python -m commandcenter kill [--yes]        force quit a stuck copy (the taskbar menu's "Force quit Command Center")
   python -m commandcenter login <profile> <url>
   python -m commandcenter setpass <connection>
 
@@ -96,6 +97,8 @@ def main():
     install = sub.add_parser("install", help="Create Start menu, desktop and sign-in shortcuts")
     install.add_argument("--no-startup", action="store_true", help="Don't start automatically at sign-in")
     sub.add_parser("uninstall", help="Remove the shortcuts")
+    kill = sub.add_parser("kill", help="Force quit a stuck Command Center; docked VS Code and SSMS stay open")
+    kill.add_argument("--yes", action="store_true", help="No questions (no confirm, no start-again prompt)")
     login = sub.add_parser("login", help="Open a browser profile so you can log in to a site once")
     login.add_argument("profile")
     login.add_argument("url")
@@ -135,6 +138,9 @@ def main():
         from .desktop import uninstall_shortcuts
         for line in uninstall_shortcuts() or ["(no shortcuts found)"]:
             print("Removed", line)
+    elif args.cmd == "kill":
+        from . import forcequit
+        sys.exit(forcequit.main(confirm=not args.yes))
     elif args.cmd == "serve":
         run_server(open_browser=not args.no_browser)
     else:

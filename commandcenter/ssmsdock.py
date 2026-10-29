@@ -55,7 +55,7 @@ STRIP_STYLE = (win32con.WS_POPUP | win32con.WS_CAPTION | win32con.WS_THICKFRAME 
 STRIP_EXSTYLE = (win32con.WS_EX_APPWINDOW | win32con.WS_EX_WINDOWEDGE | win32con.WS_EX_DLGMODALFRAME
                  | win32con.WS_EX_CLIENTEDGE | win32con.WS_EX_STATICEDGE | win32con.WS_EX_TOPMOST)
 SWP_ASYNC = 0x4000  # SWP_ASYNCWINDOWPOS: never wait on SSMS's thread (it may be busy)
-KV_DOCK = "ssms:dock"  # the SSMS window to dock again on the next start (sealed kv: handle, pid)
+KV_DOCK = "ssms:dock"  # the SSMS window to dock again on the next start (sealed kv: handle, pid; written on dock)
 NOT_DIALOGS = {GLOW_CLASS, "SysShadow", "ComboLBox", "#32768", "tooltips_class32", "IME", "MSCTFIME UI"}
 
 
@@ -472,6 +472,7 @@ class SsmsDock(NativeOverlay):
             self.last, self.redock_after_unlock, self.note, self.hung = None, False, None, False
             self._seen = set()  # every SSMS window already open (a connect dialog) gets checked once
         log.info("SSMS dock: docked SSMS (pid %s)", pid)
+        self._record({"hwnd": hwnd, "pid": pid})  # a Force quit (forcequit.py) puts it back from outside: docked again next start
         self._tidy()
         self._start_timer()
         self._apply()
