@@ -380,10 +380,15 @@ class DesktopApp:
             set_pos(ctypes.c_void_p(hwnd), ctypes.c_void_p(-2), 0, 0, 0, 0, flags)  # HWND_NOTOPMOST
             self._unlock()
 
-    def raise_for_reminder(self) -> str:
-        """A personal reminder is due (reminders._notify): restore the window and bring it in front so the pop-up
-        shows in the middle of it. Not while locked (that would start Windows Hello by itself) or while the screen
-        may be on show to others (reminders.share_risk); then the toast alone, and the pop-up waits in the window."""
+    FRONT_POLLS = ("reminderPoll", "hoxhuntPoll")  # the page's pop-up pollers a front request may run
+
+    def raise_for_reminder(self, poll: str = "reminderPoll") -> str:
+        """A personal reminder is due (reminders._notify) or a Hoxhunt test arrived (hoxhunt._arrived, poll
+        "hoxhuntPoll"): restore the window and bring it in front so the pop-up shows in the middle of it. Not while
+        locked (that would start Windows Hello by itself) or while the screen may be on show to others
+        (reminders.share_risk); then the toast alone, and the pop-up waits in the window."""
+        if poll not in self.FRONT_POLLS:
+            raise ValueError("unknown pop-up")
         if not self.window or self.quitting or not self.unlocked or self.lock_showing:
             return "kept back (locked)"
         user32 = ctypes.windll.user32
@@ -396,7 +401,7 @@ class DesktopApp:
             if risk:
                 return f"kept back ({risk})"
             self.show()
-        self.window.run_js("window.CC && CC.reminderPoll && CC.reminderPoll()")  # the pop-up now, not at the next poll
+        self.window.run_js(f"window.CC && CC.{poll} && CC.{poll}()")  # the pop-up now, not at the next poll
         return "already in front" if in_front else "brought forward"
 
     def minimize(self):

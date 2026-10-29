@@ -752,6 +752,7 @@ def _mentions_me(item, names, me_smtp) -> bool:
 HOXHUNT_DOMAINS = ("hoxhuntsigning.com",)
 _AR_DKIM_PASS = re.compile(r"\bdkim=pass\b[^;]*?\bheader\.d=([\w.-]+)", re.I)
 _hoxhunt_cache: dict = {}  # EntryID -> bool (a received message's headers don't change)
+on_hoxhunt = None  # set by hoxhunt.py: called (off the event loop) with the number of new tests, for the pop-up
 
 
 def hoxhunt_on() -> bool:
@@ -1002,11 +1003,13 @@ async def watch_loop():
         was_running = True
         try:
             await _update_focus_block(cfg.get("focus_keywords", ["focus"]))
+            new_tests = 0
             for mail, rule in await call(scan_new_mail):
                 if rule.get("hoxhunt"):  # its button opens the email in Outlook, where Hoxhunt's Report button is
                     alerts.raise_alert("Outlook", f"Hoxhunt test: {mail['subject']}",
                                        "Phishing test. Report it with the Hoxhunt button in Outlook; don't open its links or reply.",
-                                       "normal", {"type": "hoxhunt", "id": mail["id"]}, toast="phishing test, report it")
+                                       "high", {"type": "hoxhunt", "id": mail["id"]}, toast="phishing test, report it")
+                    new_tests += 1
                     continue
                 alerts.raise_alert(
                     "Outlook",
@@ -1016,6 +1019,8 @@ async def watch_loop():
                     {"type": "mail", "id": mail["id"]},
                     toast="important new mail" if rule.get("priority") == "high" else "new mail",
                 )
+            if new_tests and on_hoxhunt:  # the pop-up, and the window in front (hoxhunt.py)
+                await asyncio.to_thread(on_hoxhunt, new_tests)
             for m, minutes in await call(scan_meetings):
                 when = "now" if minutes == 0 else f"in {minutes} min"
                 action = {"type": "meeting", "id": m["id"], "join_url": m["join_url"], "prep": True}
