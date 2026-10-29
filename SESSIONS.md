@@ -2,6 +2,66 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-29 (about 8:30 AM - 3:30 PM local)
+
+**Summary:** Four changes: a taskbar Force quit for a stuck CC, a fix for typing lag, a full reply form without the blur, and full screen that leaves the taskbar visible. Joe restarted at 3:28 PM after the last commit, so everything is loaded.
+
+### Done
+- `aecb050` **Force quit from the taskbar** (`forcequit.py`, `run.cmd kill`).
+  - **Where:** right-click CC's taskbar button or Start menu entry > **Force quit Command Center**. It's a jump-list task registered at each start, so it works even while CC isn't responding.
+  - **What it does:**
+    - Asks Yes / No, with No as the default.
+    - Asks CC to quit normally first, waiting up to 15 s.
+    - If CC is still running: puts docked VS Code and SSMS windows back from outside, ends the process, then ends CC's own helpers (the Teams reader's Edge, the web VS Code server). It never touches Code.exe, SSMS or Windows Terminal.
+    - Offers to start CC again.
+  - The handoff secret now also authorizes `/api/app/quit`. SSMS's dock is recorded on every dock, so a force quit can re-dock it.
+  - `run.cmd install` gives the shortcuts CC's app id, so a pinned shortcut shares the taskbar button.
+  - **Tested** with a stand-in CC that had stopped responding and a throwaway-profile VS Code docked in it: VS Code came back in 0.8 s and stayed open. Against a responding test copy, it quit normally in 4 s.
+- `355856e` **Typing lag.**
+  - **Cause:** the moving background made every frosted panel re-blur the whole window 8 times a second. On the 3440×1440 ultrawide with Intel graphics, DWM was using about 34% of the GPU at idle.
+  - **Fix:**
+    - The background now steps twice a second.
+    - It holds still while a text field has focus, while a native view (VS Code, SSMS, Teams, Pulse) is on show, and while CC's window doesn't have focus.
+    - The pulsing tags hold still at those times too.
+  - The effect switches are unchanged. I couldn't reproduce the lag itself headless, so the fix rests on the GPU numbers.
+- `355856e` **Full reply form, no blur** (`CC.replyDialog`).
+  - The form has **From** (an account picker when there's more than one), **To**, **Cc**, **Bcc** and **Subject**. All are filled from Outlook's own Reply / Reply all (`POST /api/mail/reply/info`) and all are editable.
+  - Every recipient must resolve in Outlook, up to 100.
+  - The approval signature now covers the From account, so changing any field after Review is refused (409).
+  - The reply and review dialogs are solid, and the page behind them is only lightly dimmed, not blurred.
+  - Triage still sends Outlook's own reply, with no fields.
+  - **Tested** against a fake Outlook (scratchpad `reply_backend_test.py`) and in the UI with faked routes (`reply_ui_test.py`).
+- `c21f117` **Full screen keeps the taskbar in view.**
+  - CC now uses its own frameless window over the monitor's work area instead of pywebview's full screen.
+  - It fits itself again when the taskbar moves, a monitor is added or removed, or the window moves to another monitor. With an auto-hiding taskbar it leaves 1 px free.
+  - Leaving full screen goes back to the remembered windowed size and place.
+  - **Tested:** 3440×1392 on the ultrawide, with the button and F11 both toggling correctly.
+- PROJECT.md updated in all three commits.
+
+### Decisions
+- **Full screen leaves the taskbar visible** (Joe's call). It no longer covers the whole monitor.
+- **The reply form is the full form:** From / To / Cc / Bcc / Subject, filled from Outlook and editable, rather than only a text box.
+- **Where the lag was:** Joe said typing lags in CC's own fields, in the Teams and Pulse views, and in docked VS Code / Claude. The fix covers all three.
+
+### Waiting on a restart
+- Nothing. The 3:28 PM restart loaded `c21f117`, with no warnings in the log since and VS Code docked again. The tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] Check that typing feels normal now. If it still lags, try Profile > Frosted glass off next, and tell the next session.
+- [ ] Try Force quit once from the taskbar's right-click menu, answering No at the confirm to check it's there.
+- [ ] Check that full screen stays above the taskbar after docking or undocking the laptop.
+
+### Known issues
+- "VS Code dock: check failed (ObjectDisposedException)" may still be logged once at a restart. It's harmless.
+
+### Incidents
+- **Test windows on Joe's screen:** test copies of CC on port 8817 showed on screen a few times.
+  - A headed Playwright window during the reply test was closed mid-test, probably by Joe. After that, tests ran headless.
+  - A desktop test window opened for about 30 s during the full-screen test.
+  - None touched his real CC, mail or VS Code windows.
+- **Jump list:** the jump-list test briefly registered the Force quit task with the test copy's path. It was re-registered from the real repo straight away, and each CC start registers it again anyway.
+- **Profiling the live app:** py-spy ran in non-blocking, read-only mode against the live CC to find the lag. Nothing was changed.
+
 ## 2026-10-28, fourth session (about 3:30 PM - 8:25 PM local)
 
 **Summary:** CC now spots Hoxhunt phishing-test emails as they arrive, alerts Joe to report them, and shows a pop-up that keeps coming back until he does. He restarted at 7:16 PM after the last commit, so everything is loaded.
