@@ -2,6 +2,44 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-28, fourth session (about 3:30 PM - 8:25 PM local)
+
+**Summary:** CC now spots Hoxhunt phishing-test emails as they arrive, alerts Joe to report them, and shows a pop-up that keeps coming back until he does. He restarted at 7:16 PM after the last commit, so everything is loaded.
+
+### Done
+- `62408a6` **Hoxhunt tests detected, alerted and tagged.**
+  - **How a test is recognised:** the topmost `Authentication-Results` header, which Exchange Online adds on arrival, must say `dkim=pass` for a domain under `hoxhuntsigning.com`. A real phish can't pass that signature. A forged or lower header doesn't count, and neither do look-alike domains.
+  - **What happens to a test:**
+    - a high-priority alert, "Hoxhunt test: <subject>", with **Open in Outlook to report**;
+    - a **Hoxhunt test** tag in Mail and an amber band in the reader, with no Reply, Spam or ☆;
+    - it never counts as a follow-up.
+  - CC never reports a test, opens its links or moves it. Off switch: `outlook.hoxhunt: false`.
+  - **Checks, all read-only against his mailbox:**
+    - found all 17 real tests (Inbox and Deleted Items) and nothing else among about 6,500 emails;
+    - spoofed headers rejected (scratchpad `hoxhunt_test.py`).
+- `9bcba2f` **Hoxhunt pop-up** (`hoxhunt.py`, `hoxhunt.js`), like a personal reminder's.
+  - **Behaviour:**
+    - a modal that Esc doesn't close;
+    - the window comes in front, but not while CC is locked or the screen may be on show;
+    - buttons: **Open in Outlook to report** (holds the pop-up back 15 min), **Already reported** and **Remind me in 15 min**.
+  - It comes back after a reload or restart until the email has left the Inbox (Hoxhunt's Report moves it).
+  - Tested on a scratch copy with fake alerts (scratchpad `hoxhunt_pop_test.py`). The Inbox check was tested read-only against the real Outlook.
+- PROJECT.md and config.example.yaml updated in both commits.
+
+### Decisions
+- **What a Hoxhunt test triggers:** an alert to report it, then a pop-up as well. The alternatives Joe didn't pick: only tagging it, or moving or deleting it. Reporting stays his click in Outlook, so it counts for him in Hoxhunt.
+
+### Waiting on a restart
+- Nothing. The 7:16 PM restart loaded `9bcba2f`, with no errors in the log since and VS Code docked again. The tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] Only tests that arrive from now on pop up. The 8 tests already in his Inbox have no alert, so report those in Outlook by hand.
+- [ ] When the next test arrives, check that it pops up and that reporting it in Outlook ends the reminders.
+
+### Known issues
+- SSMS didn't dock again after the 7:16 PM restart because it wasn't running. Joe had quit CC at 5:02 PM, SSMS went back to a normal window as designed, and it was closed after that. This is not a bug: start it from the SQL tab.
+- "VS Code dock: check failed (ObjectDisposedException)" is logged once at each restart. It's harmless.
+
 ## 2026-10-28, third session (about 2:50 PM - 3:30 PM local)
 
 **Summary:** Email alerts now need the email to name Joe; urgent people's mail still always alerts. Joe asked about ChatGPT voice control, heard the options and parked it. He restarted at 3:27 PM after the commit, so everything is loaded.
