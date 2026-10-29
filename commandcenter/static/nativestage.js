@@ -75,6 +75,10 @@
     s.frame = 0;
     if (!s.opts.available()) return;  // no native window (browser / serve mode): nothing to tell the host
     const m = measure(s);
+    s.shown = !!m.visible;
+    // While one is on show, the page's background motion holds still (style.css: it re-blurs the whole window)
+    const any = stages.some((x) => x.shown), root = document.documentElement;
+    if (root.classList.contains("cc-native-shown") !== any) root.classList.toggle("cc-native-shown", any);
     const round = (a) => a.map((n) => Math.round(n * 10) / 10);
     const key = JSON.stringify([s.opts.site?.() || "", m.visible, m.visible ? round(m.rect) : 0, m.visible ? m.cuts.map(round) : 0]);
     if (key === s.last) return;
@@ -114,7 +118,7 @@
   }
 
   CC.nativeStage = (opts) => {
-    const s = { opts, seq: 0, last: "", sent: 0, frame: 0, timer: 0 };
+    const s = { opts, seq: 0, last: "", sent: 0, frame: 0, timer: 0, shown: false };  // shown: on show now
     s.schedule = () => { if (!s.frame) s.frame = requestAnimationFrame(() => flush(s)); };
     stages.push(s);
     new ResizeObserver(s.schedule).observe(opts.hole);

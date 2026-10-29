@@ -77,6 +77,7 @@ function toast(text) {
 // ---- dialog ------------------------------------------------------------------
 
 function showDialog(...content) {
+  $("#dialog").classList.remove("rp-dialog");  // the reply look (replyLook) is set again by the reply dialogs
   $("#dialog-body").replaceChildren(...content.flat().filter((c) => c !== null && c !== undefined && c !== false && c !== ""));
   if (!$("#dialog").open) $("#dialog").showModal();
 }
@@ -945,38 +946,73 @@ async function orderDialog(number) {
 }
 
 // Replies are always verified before sending: Review shows exactly who gets it and what it says, and the
-// server only sends a reply that came from that review (single-use approval, recipients re-checked).
-// Unsent text is kept per message in memory only (Esc / Cancel don't lose it), and dropped once it's sent or
-// opened as an Outlook draft.
+// server only sends a reply that came from that review (single-use approval covering the text and every field,
+// recipients re-checked). The form starts as Outlook's own reply (From, To, Cc, Bcc, Subject; /api/mail/reply/info)
+// and every field can be changed. Unsent replies (text and fields) are kept per message in memory only (Esc / Cancel
+// don't lose them), and dropped once sent or opened as an Outlook draft.
 const replyDrafts = new Map();
 const REPLY_DRAFTS_MAX = 25;
-function keepDraft(id, text) {
+function keepDraft(id, d) {
   replyDrafts.delete(id);
-  if (!text.trim()) return;
-  replyDrafts.set(id, text);
+  if (!d.text.trim() && !d.fields) return;
+  replyDrafts.set(id, d);
   if (replyDrafts.size > REPLY_DRAFTS_MAX) replyDrafts.delete(replyDrafts.keys().next().value);
+}
+const parseAddresses = (s) => s.split(/[;,\n]/).map((x) => x.trim()).filter(Boolean);
+// The reply and review dialogs leave the page behind them unblurred (the email stays readable) and are solid.
+function replyLook() {
+  const d = $("#dialog");
+  d.classList.add("rp-dialog");
+  d.addEventListener("close", () => d.classList.remove("rp-dialog"), { once: true });
 }
 
 function replyDialog(m, replyAll, draft = null, remindDays = 0, notice = "") {
+  const kept = draft ?? replyDrafts.get(m.id) ?? { text: "" };
+  // Fields kept for the other kind of reply (Reply vs Reply all) start over from Outlook's.
+  const st = { text: kept.text, replyAll, fields: kept.replyAll === replyAll ? kept.fields : null, accounts: kept.accounts || [] };
   const text = el("textarea", { placeholder: "Your reply…", "aria-label": "Reply text" });
-  text.value = draft ?? replyDrafts.get(m.id) ?? "";
-  text.addEventListener("input", () => keepDraft(m.id, text.value));
+  text.value = st.text;
+  const from = el("select", { id: "rp-from", "aria-label": "From" });
+  const field = (id, label) => el("input", { id, type: "text", autocomplete: "off", spellcheck: "false", "aria-label": label,
+    placeholder: "Names or addresses, separated by ;" });
+  const to = field("rp-to", "To"), cc = field("rp-cc", "Cc"), bcc = field("rp-bcc", "Bcc");
+  const subject = el("input", { id: "rp-subject", type: "text", maxlength: 255, autocomplete: "off", "aria-label": "Subject" });
+  const inputs = [from, to, cc, bcc, subject];
+  const fields = () => ({ to: parseAddresses(to.value), cc: parseAddresses(cc.value), bcc: parseAddresses(bcc.value),
+    subject: subject.value, account: from.value });
+  const fill = (f, accounts) => {
+    const list = [...new Set([f.account, ...accounts].filter(Boolean))];
+    from.replaceChildren(...(list.length ? list : [""]).map((a) => el("option", { value: a }, a || "Outlook's default account")));
+    from.value = f.account || list[0] || "";
+    from.disabled = list.length < 2;
+    to.value = f.to.join("; "); cc.value = f.cc.join("; "); bcc.value = f.bcc.join("; ");
+    subject.value = f.subject;
+  };
+  const save = () => { st.text = text.value; if (st.fields) st.fields = fields(); keepDraft(m.id, st); };
+  text.addEventListener("input", save);
+  for (const i of inputs) i.addEventListener("input", save);
   const remind = el("select", { id: "remind-days" },
     [0, 1, 2, 3, 5].map((n) => el("option", { value: n }, n ? `${n} day${n > 1 ? "s" : ""}` : "Don't remind me")));
   remind.value = String(remindDays);
   const err = el("div", { class: "err", role: "alert" });
+  const ready = () => {
+    if (!st.fields) { err.textContent = "Still loading the recipients from Outlook…"; return false; }
+    if (!text.value.trim()) { text.focus(); return false; }
+    st.text = text.value;
+    st.fields = fields();
+    return true;
+  };
   const openDraft = () => guardedIn(err, async () => {
-    if (!text.value.trim()) { text.focus(); return; }
-    await api("/api/mail/reply", { id: m.id, text: text.value, reply_all: replyAll, send: false });
+    if (!ready()) return;
+    await api("/api/mail/reply", { id: m.id, text: st.text, reply_all: replyAll, send: false, ...st.fields });
     replyDrafts.delete(m.id);
     $("#dialog").close();
     showMessage("Draft opened", "Check it and press Send in Outlook.");
   });
   const review = () => guardedIn(err, async () => {
-    if (!text.value.trim()) { text.focus(); return; }
-    const typed = text.value;
-    const p = await api("/api/mail/reply/preview", { id: m.id, text: typed, reply_all: replyAll });
-    reviewReply(m, replyAll, p, Number(remind.value), typed);
+    if (!ready()) return;
+    const p = await api("/api/mail/reply/preview", { id: m.id, text: st.text, reply_all: replyAll, ...st.fields });
+    reviewReply(m, replyAll, p, Number(remind.value), { ...st, fields: { ...st.fields } });
   });
   // Ctrl+Enter only opens the review (as in triage); Ctrl+Shift+Enter opens an Outlook draft. Nothing here sends.
   text.addEventListener("keydown", (e) => {
@@ -984,8 +1020,11 @@ function replyDialog(m, replyAll, draft = null, remindDays = 0, notice = "") {
     e.preventDefault();
     e.shiftKey ? openDraft() : review();
   });
+  const row = (label, input) => [el("label", { for: input.id }, label), input];
   showDialog(
-    el("h3", {}, `${replyAll ? "Reply all" : "Reply"}: ${m.subject}`), text,
+    el("h3", {}, `${replyAll ? "Reply all" : "Reply"}: ${m.subject}`),
+    el("div", { class: "rp-form" }, row("From", from), row("To", to), row("Cc", cc), row("Bcc", bcc), row("Subject", subject)),
+    text,
     el("div", { class: "inline-field" },
       el("label", { for: "remind-days" }, "Remind me if no reply in"), remind,
       el("span", { class: "muted" }, "(when sent from here)")),
@@ -994,11 +1033,24 @@ function replyDialog(m, replyAll, draft = null, remindDays = 0, notice = "") {
       el("button", { value: "cancel" }, "Cancel"),
       el("button", { type: "button", onclick: openDraft }, "Open draft in Outlook"),
       el("button", { type: "button", class: "primary", onclick: review }, "Review ", el("kbd", {}, "Ctrl+Enter"))));
+  replyLook();
   err.textContent = notice;
   text.focus();
+  if (st.fields) { fill(st.fields, st.accounts); return; }
+  for (const i of inputs) i.disabled = true;
+  to.placeholder = "Loading from Outlook…";
+  guardedIn(err, async () => {
+    const info = await api("/api/mail/reply/info", { id: m.id, reply_all: replyAll });
+    st.accounts = info.accounts || [];
+    st.fields = { to: info.to || [], cc: info.cc || [], bcc: info.bcc || [], subject: info.subject || "", account: info.account || "" };
+    for (const i of inputs) i.disabled = false;
+    to.placeholder = "Names or addresses, separated by ;";
+    fill(st.fields, st.accounts);
+    if (err.textContent.startsWith("Still loading")) err.textContent = "";
+  });
 }
 
-function reviewReply(m, replyAll, p, remindDays, typed = p.text) {
+function reviewReply(m, replyAll, p, remindDays, draft) {
   const err = el("div", { class: "err", role: "alert" });
   const recips = Array.isArray(p.recipients) ? p.recipients.filter(Boolean) : [];
   const outside = recips.filter((r) => r.external);
@@ -1008,14 +1060,15 @@ function reviewReply(m, replyAll, p, remindDays, typed = p.text) {
     const list = recips.filter((r) => r.type === type);
     return list.length ? el("div", { class: "rv-line" }, el("span", { class: "rv-label" }, label), el("div", { class: "rv-people" }, list.map(person))) : null;
   };
-  const edit = (notice = "") => replyDialog(m, replyAll, typed, remindDays, notice);
+  const edit = (notice = "") => replyDialog(m, replyAll, draft, remindDays, notice);
   const sendBtn = el("button", { type: "button", class: "send-btn" }, "Send");
   sendBtn.addEventListener("click", async () => {
     sendBtn.disabled = true;
     try {
-      await api("/api/mail/reply", { id: m.id, text: p.text, reply_all: replyAll, send: true, remind_days: remindDays, approval_id: p.approval_id });
+      await api("/api/mail/reply", { id: m.id, text: p.text, reply_all: replyAll, send: true, remind_days: remindDays,
+        approval_id: p.approval_id, ...draft.fields });
     } catch (e) {
-      // The approval is single-use and may be spent or expired: back to the text, so the next Review gets a fresh one.
+      // The approval is single-use and may be spent or expired: back to the form, so the next Review gets a fresh one.
       edit(`Not sent: ${e.message || "something went wrong"}`);
       return;
     }
@@ -1027,7 +1080,7 @@ function reviewReply(m, replyAll, p, remindDays, typed = p.text) {
   });
   // No recipients (e.g. Outlook couldn't resolve them): nothing to send to, so no Send button; a draft is offered.
   const openDraft = () => guardedIn(err, async () => {
-    await api("/api/mail/reply", { id: m.id, text: typed, reply_all: replyAll, send: false });
+    await api("/api/mail/reply", { id: m.id, text: draft.text, reply_all: replyAll, send: false, ...draft.fields });
     replyDrafts.delete(m.id);
     $("#dialog").close();
     showMessage("Draft opened", "Check the recipients and press Send in Outlook.");
@@ -1037,6 +1090,7 @@ function reviewReply(m, replyAll, p, remindDays, typed = p.text) {
     outside.length ? el("div", { class: "rv-warn" }, `⚠ ${outside.length} recipient${outside.length > 1 ? "s are" : " is"} outside Sonance`) : null,
     recips.length ? null : el("div", { class: "rv-warn" }, "No recipients — open a draft in Outlook instead."),
     el("div", { class: "rv-card" },
+      p.account ? el("div", { class: "rv-line" }, el("span", { class: "rv-label" }, "From"), el("div", {}, p.account)) : null,
       line("To", "To"), line("CC", "CC"), line("BCC", "BCC"),
       el("div", { class: "rv-line" }, el("span", { class: "rv-label" }, "Subject"), el("div", {}, p.subject)),
       el("pre", { class: "rv-body" }, p.text)),
@@ -1045,6 +1099,7 @@ function reviewReply(m, replyAll, p, remindDays, typed = p.text) {
     el("div", { class: "row" },
       el("button", { type: "button", class: "subtle", onclick: () => edit() }, "← Edit"),
       recips.length ? sendBtn : el("button", { type: "button", class: "primary", onclick: openDraft }, "Open draft in Outlook")));
+  replyLook();
 }
 
 
@@ -2579,6 +2634,13 @@ document.addEventListener("keydown", (e) => {
   e.preventDefault();
   toggleFullscreen();
 });
+
+// The background motion holds still while the window doesn't have the focus: typing in the docked VS Code, a site
+// view or another app (style.css, .cc-blurred).
+const markFocus = () => document.documentElement.classList.toggle("cc-blurred", !document.hasFocus());
+window.addEventListener("focus", markFocus);
+window.addEventListener("blur", markFocus);
+markFocus();
 
 tickClock();
 loadProjectList();

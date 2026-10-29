@@ -422,33 +422,99 @@ def _recipients(msg) -> list[dict]:
     return out
 
 
-def recipients_signature(subject, recipients) -> str:
-    """What the review screen promised: subject + who gets it. A send must match this exactly."""
+def recipients_signature(subject, recipients, sender="") -> str:
+    """What the review screen promised: subject + who gets it (+ the From account). A send must match this exactly."""
     who = sorted(f"{r['type']}:{(r['email'] or r['name']).lower()}" for r in recipients)
-    return (subject or "") + "|" + ";".join(who)
+    return (subject or "") + "|" + ";".join(who) + ("|from:" + sender.lower() if sender else "")
 
 
-def reply_preview(entry_id, text, reply_all=False) -> dict:
-    """Builds the reply exactly as Outlook would send it, reports subject/recipients, then discards it."""
+def _accounts() -> list[str]:
+    out = []
+    for a in _ns().Accounts:
+        try:
+            if a.SmtpAddress and a.SmtpAddress not in out:
+                out.append(a.SmtpAddress)
+        except pywintypes.com_error:
+            continue
+    return out
+
+
+def _sender(msg) -> str:
+    try:
+        acct = msg.SendUsingAccount
+        return (acct.SmtpAddress or "") if acct else ""
+    except pywintypes.com_error:
+        return ""
+
+
+def _apply_fields(msg, fields: dict):
+    """The reply form's own From / To / Cc / Bcc / Subject, in place of Outlook's. Every recipient must resolve (the
+    address book or a full address); one that doesn't stops the reply."""
+    if fields.get("account"):
+        acct = next((a for a in _ns().Accounts if (a.SmtpAddress or "").lower() == fields["account"].lower()), None)
+        if acct is None:
+            raise ValueError("That From account isn't set up in Outlook.")
+        msg.SendUsingAccount = acct
+    if fields.get("subject") is not None:
+        msg.Subject = fields["subject"]
+    if any(fields.get(k) is not None for k in ("to", "cc", "bcc")):
+        recips = msg.Recipients
+        while recips.Count:
+            recips.Remove(1)
+        for key, kind in (("to", OL_TO), ("cc", OL_CC), ("bcc", OL_BCC)):
+            for addr in fields.get(key) or []:
+                recips.Add(addr).Type = kind
+        unknown = [r.Name for r in recips if not r.Resolve()]
+        if unknown:
+            raise ValueError("Outlook couldn't match " + ", ".join(f'"{n}"' for n in unknown[:5])
+                             + (f" and {len(unknown) - 5} more" if len(unknown) > 5 else "")
+                             + ". Use the full email address.")
+
+
+def _build_reply(entry_id, reply_all, fields):
     item = _ns().GetItemFromID(entry_id)
     msg = item.ReplyAll() if reply_all else item.Reply()
+    if fields:
+        try:
+            _apply_fields(msg, fields)
+        except Exception:
+            msg.Close(OL_DISCARD)
+            raise
+    return msg
+
+
+def reply_info(entry_id, reply_all=False) -> dict:
+    """What the reply form starts with: Outlook's own reply (From account, To / Cc / Bcc, subject), then discarded."""
+    msg = _build_reply(entry_id, reply_all, None)
+    try:
+        recips = _recipients(msg)
+        pick = lambda t: [r["email"] or r["name"] for r in recips if r["type"] == t]
+        return {"subject": msg.Subject or "", "to": pick("To"), "cc": pick("CC"), "bcc": pick("BCC"),
+                "account": _sender(msg), "accounts": _accounts()}
+    finally:
+        msg.Close(OL_DISCARD)
+
+
+def reply_preview(entry_id, text, reply_all=False, fields=None) -> dict:
+    """Builds the reply exactly as Outlook would send it, reports subject/recipients, then discards it."""
+    msg = _build_reply(entry_id, reply_all, fields)
     try:
         recips = _recipients(msg)
         subject = msg.Subject or ""
+        sender = _sender(msg)
     finally:
         msg.Close(OL_DISCARD)
-    return {"subject": subject, "recipients": recips, "text": text,
-            "signature": recipients_signature(subject, recips)}
+    return {"subject": subject, "recipients": recips, "account": sender, "text": text,
+            "signature": recipients_signature(subject, recips, sender)}
 
 
-def reply(entry_id, text, reply_all=False, send=True, expect_signature=None) -> dict:
+def reply(entry_id, text, reply_all=False, send=True, expect_signature=None, fields=None) -> dict:
     """Returns the conversation and recipients, so a no-reply reminder can watch the thread.
     Sending requires `expect_signature` from reply_preview(); it's re-checked right before Send()."""
-    item = _ns().GetItemFromID(entry_id)
-    msg = item.ReplyAll() if reply_all else item.Reply()
+    msg = _build_reply(entry_id, reply_all, fields)
     if send:
         recips = _recipients(msg)
-        if expect_signature is None or recipients_signature(msg.Subject or "", recips) != expect_signature:
+        if expect_signature is None or recipients_signature(msg.Subject or "", recips, _sender(msg)) != expect_signature:
             msg.Close(OL_DISCARD)
             raise ValueError("The recipients or subject changed since you reviewed this reply. Review it again.")
     if msg.BodyFormat == OL_FORMAT_HTML:

@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import importlib
+import json
 import logging
 import os
 import re
@@ -508,40 +509,80 @@ APPROVAL_SECONDS = 300
 _approvals: dict[str, dict] = {}
 
 
-def _approval_key(id, text, reply_all) -> str:
-    return hashlib.sha256(f"{id}\0{reply_all}\0{text}".encode("utf-8")).hexdigest()
+MAX_RECIPIENTS = 100
+
+
+def _approval_key(id, text, reply_all, fields=None) -> str:
+    return hashlib.sha256(json.dumps([id, reply_all, text, fields], sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _reply_fields(to, cc, bcc, subject, account) -> dict | None:
+    """The reply form's From / To / Cc / Bcc / Subject (None: Outlook's own reply, as triage sends it)."""
+    if to is None and cc is None and bcc is None and subject is None and not account:
+        return None
+    clean = lambda xs: [x.strip() for x in (xs or []) if isinstance(x, str) and x.strip()]
+    f = {"to": clean(to), "cc": clean(cc), "bcc": clean(bcc), "subject": subject, "account": (account or "").strip()}
+    people = f["to"] + f["cc"] + f["bcc"]
+    if not people:
+        raise HTTPException(400, "Add at least one recipient")
+    if len(people) > MAX_RECIPIENTS:
+        raise HTTPException(400, f"At most {MAX_RECIPIENTS} recipients")
+    if any(len(x) > 320 or any(c in x for c in "\r\n;") for x in people):
+        raise HTTPException(400, "One of the recipients isn't a valid name or address")
+    if subject is not None and (len(subject) > 255 or "\n" in subject or "\r" in subject):
+        raise HTTPException(400, "The subject is too long")
+    if len(f["account"]) > 320:
+        raise HTTPException(400, "Unknown From account")
+    return f
+
+
+@app.post("/api/mail/reply/info")
+async def mail_reply_info(id: str = Body(...), reply_all: bool = Body(False)):
+    """What the reply form starts with: Outlook's own reply (From, To, Cc, Bcc, subject) and the From accounts."""
+    return await outlook.call(outlook.reply_info, id, reply_all)
 
 
 @app.post("/api/mail/reply/preview")
-async def mail_reply_preview(id: str = Body(...), text: str = Body(...), reply_all: bool = Body(False)):
+async def mail_reply_preview(id: str = Body(...), text: str = Body(...), reply_all: bool = Body(False),
+                             to: list[str] | None = Body(None), cc: list[str] | None = Body(None),
+                             bcc: list[str] | None = Body(None), subject: str | None = Body(None),
+                             account: str | None = Body(None)):
     if not text.strip():
         raise HTTPException(400, "Write a reply first")
     if len(text) > 20000:
         raise HTTPException(400, "Reply is too long")
-    preview = await outlook.call(outlook.reply_preview, id, text, reply_all)
+    fields = _reply_fields(to, cc, bcc, subject, account)
+    try:
+        preview = await outlook.call(outlook.reply_preview, id, text, reply_all, fields)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     now = time.time()
     for k in [k for k, v in _approvals.items() if v["expires"] < now]:
         _approvals.pop(k)
     approval_id = secrets.token_urlsafe(18)
-    _approvals[approval_id] = {"key": _approval_key(id, text, reply_all), "signature": preview["signature"],
+    _approvals[approval_id] = {"key": _approval_key(id, text, reply_all, fields), "signature": preview["signature"],
                                "expires": now + APPROVAL_SECONDS}
     return {"approval_id": approval_id, "subject": preview["subject"], "recipients": preview["recipients"],
-            "text": text, "expires_in": APPROVAL_SECONDS}
+            "account": preview["account"], "text": text, "expires_in": APPROVAL_SECONDS}
 
 
 @app.post("/api/mail/reply")
 async def mail_reply(id: str = Body(...), text: str = Body(...), reply_all: bool = Body(False), send: bool = Body(True),
-                     remind_days: float = Body(0), approval_id: str | None = Body(None)):
+                     remind_days: float = Body(0), approval_id: str | None = Body(None),
+                     to: list[str] | None = Body(None), cc: list[str] | None = Body(None),
+                     bcc: list[str] | None = Body(None), subject: str | None = Body(None),
+                     account: str | None = Body(None)):
+    fields = _reply_fields(to, cc, bcc, subject, account)
     signature = None
     if send:
         approval = _approvals.pop(approval_id or "", None)  # single use, even if it then fails
         if not approval or approval["expires"] < time.time():
             raise HTTPException(409, "Review the reply before sending (the review expired or was already used)")
-        if approval["key"] != _approval_key(id, text, reply_all):
+        if approval["key"] != _approval_key(id, text, reply_all, fields):
             raise HTTPException(409, "The reply changed after you reviewed it. Review it again.")
         signature = approval["signature"]
     try:
-        info = await outlook.call(outlook.reply, id, text, reply_all, send, signature)
+        info = await outlook.call(outlook.reply, id, text, reply_all, send, signature, fields)
     except ValueError as e:
         raise HTTPException(409, str(e))
     if send:  # encrypted at rest (db.kv_set); entries older than retention.mail_sent_log_days are dropped

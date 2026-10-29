@@ -58,8 +58,13 @@ body {
   font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased;
 }
 /* Background: a slow aurora (accent + accent-2 at low alpha) and a faint dotted grid that fades out from the
-   middle. Both sit behind everything; the aurora only moves a transformed layer (cheap), in steps small
-   enough to read as a smooth drift. Off under prefers-reduced-motion and Profile > Background motion. */
+   middle. Both sit behind everything. The aurora moves a transformed layer, but every step makes each frosted
+   panel above it blur its backdrop again, over the whole window: on integrated graphics at ultrawide size that
+   kept the GPU and Windows' compositor busy and made typing lag everywhere in Command Center, including the docked
+   VS Code and the site views. So it steps only twice a second (on soft, faint gradients that still reads as a
+   drift), and holds still while you type in a field, while a native view (VS Code, SSMS, Teams, Pulse) is on
+   show (nativestage.js: .cc-native-shown) and while the window doesn't have the focus (app.js: .cc-blurred).
+   Off under prefers-reduced-motion and Profile > Background motion. */
 body::before, body::after { content: ""; position: fixed; pointer-events: none; z-index: -1; }
 body::before {
   inset: -25%;
@@ -68,7 +73,7 @@ body::before {
     radial-gradient(34% 30% at 78% 22%, rgb(var(--accent-2-rgb) / .1), transparent 70%),
     radial-gradient(40% 36% at 62% 82%, rgb(var(--accent-2-rgb) / .06), transparent 70%),
     radial-gradient(30% 30% at 30% 78%, rgb(var(--accent-rgb) / .05), transparent 70%);
-  animation: aurora 60s steps(480) infinite alternate;
+  animation: aurora 60s steps(120) infinite alternate;
   will-change: transform;
 }
 body::after {
@@ -78,6 +83,9 @@ body::after {
   -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 40%, #000 20%, transparent 85%);
   mask-image: radial-gradient(ellipse 75% 70% at 50% 40%, #000 20%, transparent 85%);
 }
+:root:is(.cc-native-shown, .cc-blurred) body::before,
+:root:has(:is(input, textarea, select, [contenteditable="true"]):focus) body::before { animation-play-state: paused; }
+:root:is(.cc-native-shown, .cc-blurred) :is(.tag.live, .dot.bad, .tag.urgent, .stat.alarm .n) { animation-play-state: paused; }
 @keyframes aurora {
   0% { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
   50% { transform: translate3d(4%, -3%, 0) rotate(6deg) scale(1.06); }
@@ -1036,6 +1044,14 @@ body > header.nav-wrap .navs { order: 3; flex-basis: 100%; }
   font-weight: 700; font-size: 1rem; color: #1a1000; background: var(--amber);
   box-shadow: 0 0 0 1px rgb(var(--amber-rgb) / .6), 0 0 1.4rem rgb(var(--amber-rgb) / .3);
 }
+/* Reply / review dialogs (app.js replyDialog): the page behind isn't blurred and only lightly dimmed, so the email
+   stays readable while you write, and the dialog itself is solid (no glass to re-blur on every keystroke). Wider, for
+   the From / To / Cc / Bcc / Subject form. */
+#dialog.rp-dialog { width: min(52rem, 94vw); background: var(--panel-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+#dialog.rp-dialog::backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgb(3 5 8 / .3); }
+.rp-form { display: grid; grid-template-columns: 4.6rem minmax(0, 1fr); gap: .35rem .6rem; align-items: center; margin: .2rem 0 .7rem; }
+.rp-form > label { font: 700 .7rem var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.rp-form > input, .rp-form > select { margin: 0; width: 100%; min-width: 0; }
 .rv-card { border: 1px solid rgb(255 255 255 / .14); border-radius: .8rem; background: rgb(0 0 0 / .3); padding: .85rem 1rem; display: flex; flex-direction: column; gap: .5rem; }
 .rv-line { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: .5rem; align-items: baseline; }
 .rv-label { font: 700 .7rem var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
