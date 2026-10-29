@@ -413,20 +413,102 @@ class DesktopApp:
         if self.window:
             self.window.hide()
 
+    # ---- full screen: the monitor's work area, so the taskbar stays in view (Joe's call 2026-10-29) ----------
+    # Not pywebview's full screen, which covers the whole monitor, taskbar included: a frameless window over the work
+    # area (everything but the taskbar), fitted again when the taskbar or the monitors change or the window is moved
+    # to another monitor (Win+Shift+Arrow). With an auto-hiding taskbar it leaves the bottom pixel row free, so
+    # Windows doesn't take it for a full-screen app and the taskbar still comes up.
     def toggle_fullscreen(self) -> bool:
         if not self.window:
             return self.fullscreen
-        if self.fullscreen:
-            # pywebview restores the border style it saw when full screen began; at start-up that was the
-            # titled style (frameless is applied after), so make sure we come back frameless.
-            try:
-                from System.Windows.Forms import FormBorderStyle
-                self.window.native.old_style = getattr(FormBorderStyle, "None")
-            except Exception as e:
-                log.warning("Couldn't keep the window frameless: %s", e)
-        self.window.toggle_fullscreen()
         self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            self._on_ui(self._fill)
+        else:
+            self._on_ui(self._unfill)
         return self.fullscreen
+
+    def _on_ui(self, fn):
+        """Runs fn(form) on the window's UI thread (BeginInvoke: never sets a window property from another thread)."""
+        form = self.window.native if self.window else None
+        if form is None:
+            return
+        from System import Action
+
+        def run():
+            try:
+                fn(form)
+            except Exception as e:
+                log.warning("Window: couldn't fit the window (%s)", type(e).__name__)
+        try:
+            form.BeginInvoke(Action(run))
+        except Exception:
+            pass  # the window is closing
+
+    @staticmethod
+    def _corners(form, square: bool):
+        hwnd = ctypes.c_void_p(int(form.Handle.ToInt64()))
+        dwm = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        pref, color = ctypes.c_int(1 if square else 0), ctypes.c_uint(0xFFFFFFFE if square else 0xFFFFFFFF)
+        dwm(hwnd, 33, ctypes.byref(pref), 4)   # DWMWA_WINDOW_CORNER_PREFERENCE: do not round / default
+        dwm(hwnd, 34, ctypes.byref(color), 4)  # DWMWA_BORDER_COLOR: none / default
+
+    def _fill(self, form):
+        """UI thread: frameless over the work area of the window's monitor."""
+        import System.Windows.Forms as WinForms
+        from System.Drawing import Rectangle
+        if not self.fullscreen or form.WindowState == WinForms.FormWindowState.Minimized:
+            return
+        screen = WinForms.Screen.FromControl(form)
+        w, b = screen.WorkingArea, screen.Bounds
+        auto_hide = (w.X, w.Y, w.Width, w.Height) == (b.X, b.Y, b.Width, b.Height)
+        target = (w.X, w.Y, w.Width, w.Height - (1 if auto_hide else 0))
+        if form.WindowState != WinForms.FormWindowState.Normal:
+            form.WindowState = WinForms.FormWindowState.Normal
+        cur = form.Bounds
+        if (cur.X, cur.Y, cur.Width, cur.Height) != target:
+            form.Bounds = Rectangle(*target)
+        self._corners(form, True)
+
+    def _unfill(self, form):
+        """UI thread: back to the remembered windowed size and place (centred on this monitor if it has none)."""
+        import System.Windows.Forms as WinForms
+        from System.Drawing import Rectangle
+        geo = db.kv_get("window:geometry") or {}  # logical px (pywebview's)
+        scale = ctypes.windll.user32.GetDpiForSystem() / 96
+        px = lambda v: int(v * scale) if isinstance(v, (int, float)) else None
+        work = WinForms.Screen.FromControl(form).WorkingArea
+        width = min(px(geo.get("width")) or px(1600), work.Width)
+        height = min(px(geo.get("height")) or px(1000), work.Height)
+        x, y = px(geo.get("x")), px(geo.get("y"))
+        if not isinstance(x, int) or not isinstance(y, int) or not any(
+                s.WorkingArea.IntersectsWith(Rectangle(x, y, width, height)) for s in WinForms.Screen.AllScreens):
+            x, y = work.X + (work.Width - width) // 2, work.Y + (work.Height - height) // 2
+        self._corners(form, False)
+        form.Bounds = Rectangle(x, y, width, height)
+
+    def _refit(self, *_):
+        if self.fullscreen and self.window:
+            self._on_ui(self._fill)
+
+    def _start_area(self, geo: dict) -> dict:
+        """create_window's geometry: the work area of the monitor the window was last on (logical px), so full screen
+        is right from the first frame; else the remembered windowed geometry."""
+        size = {"width": geo.get("width", 1600), "height": geo.get("height", 1000), "x": geo.get("x"), "y": geo.get("y")}
+        if not self.fullscreen:
+            return size
+        try:
+            import win32api
+            import win32con
+            x, y = geo.get("x"), geo.get("y")
+            point = (x + 50, y + 50) if isinstance(x, int) and isinstance(y, int) else (0, 0)
+            info = win32api.GetMonitorInfo(win32api.MonitorFromPoint(point, win32con.MONITOR_DEFAULTTOPRIMARY))
+            left, top, right, bottom = info["Work"]
+            scale = ctypes.windll.user32.GetDpiForSystem() / 96
+            return {"width": int((right - left) / scale), "height": int((bottom - top) / scale),
+                    "x": int(left / scale), "y": int(top / scale)}
+        except Exception:
+            return size
 
     def window_state(self) -> dict:
         return {"desktop": True, "fullscreen": self.fullscreen, "locked": not self.unlocked, "pulse_view": True,
@@ -469,13 +551,17 @@ class DesktopApp:
 
     def _remember_geometry(self, *_):
         w = self.window
-        if not w or self.fullscreen or ctypes.windll.user32.IsIconic(self._hwnd()):
+        if w and self.fullscreen:
+            self._refit()  # moved to another monitor, or Windows moved it: fit that monitor's work area
+            return
+        if not w or ctypes.windll.user32.IsIconic(self._hwnd()):
             return  # remember the windowed size and position only
         if w.width > 400 and w.height > 300:
             db.kv_set("window:geometry", {"width": w.width, "height": w.height, "x": w.x, "y": w.y})
 
     def _on_shown(self):
         _set_window_icon(self._hwnd())
+        self._refit()
         self._unlock()
 
     # ---- unlock ----
@@ -677,14 +763,14 @@ class DesktopApp:
             _harden_webview()
             _nav["origin"], _nav["action"] = self.url, self._on_action
             _nav["leaving"] = lambda: [view.forget() for view in self.overlays.values()]
-            geo = db.kv_get("window:geometry") or {}
-            # Frameless (Command Center draws its own controls; its header is the drag region) and full
-            # screen by default. The size and position below are the windowed state it returns to.
+            # Frameless (Command Center draws its own controls; its header is the drag region) and full screen by
+            # default: CC's own full screen over the work area (toggle_fullscreen), not pywebview's, which covers the
+            # taskbar. kv window:geometry keeps the windowed size and place it returns to.
+            area = self._start_area(db.kv_get("window:geometry") or {})
             self.window = webview.create_window(
-                TITLE, html=_gate_page("Starting…" if self.require_unlock else "Opening…"),
-                width=geo.get("width", 1600), height=geo.get("height", 1000), x=geo.get("x"), y=geo.get("y"),
+                TITLE, html=_gate_page("Starting…" if self.require_unlock else "Opening…"), **area,
                 min_size=(760, 560), background_color="#05070d", hidden=self.start_hidden,
-                frameless=True, easy_drag=False, fullscreen=self.fullscreen, text_select=True,
+                frameless=True, easy_drag=False, fullscreen=False, text_select=True,
             )
             self.window.events.closing += self._on_closing
             self.window.events.resized += self._remember_geometry
@@ -692,6 +778,13 @@ class DesktopApp:
             self.window.events.shown += self._on_shown
             self.ssms.install_hooks()
             self.code.install_hooks()
+            try:  # the taskbar moved or resized, a monitor came or went (docking the laptop): fit full screen again
+                from Microsoft.Win32 import SystemEvents, UserPreferenceChangedEventHandler
+                from System import EventHandler
+                SystemEvents.DisplaySettingsChanged += EventHandler(self._refit)
+                SystemEvents.UserPreferenceChanged += UserPreferenceChangedEventHandler(self._refit)
+            except Exception as e:
+                log.warning("Window: no display-change hook (%s)", type(e).__name__)
 
             self.tray = self._build_tray()
             self.tray.run_detached()
