@@ -483,6 +483,9 @@ function alertAction(a) {
   }
   if (act.type === "today") return el("button", { class: "small", onclick: () => openTab("today") }, "Open Today");
   if (act.type === "mail") return el("button", { class: "small", onclick: () => { openTab("mail"); showMail(act.id); } }, "View mail");
+  // A Hoxhunt phishing test: reporting is Hoxhunt's button in Outlook, so the alert opens the email there.
+  if (act.type === "hoxhunt") return el("button", { class: "small primary", title: "Opens the email in Outlook: report it with the Hoxhunt button",
+    onclick: () => guarded(() => api("/api/outlook/open", { id: act.id })) }, "Open in Outlook to report");
   if (act.type === "url") return linkButton(act.url, "Open site");
   if (act.type === "meeting") return [
     act.join_url && linkButton(act.join_url, "Join", "small primary"),
@@ -657,6 +660,7 @@ function mailRow(m) {
         !sent && m.sender && m.sender_name && el("span", { class: "mr-addr" }, m.sender),
         el("span", { class: "mr-icons" },
           sent && mailState.data?.query && el("span", { class: "tag" }, "Sent"), m.pinned && el("span", { class: "tag" }, "Opened"),
+          m.hoxhunt && el("span", { class: "tag hoxhunt", title: "Hoxhunt phishing test: report it with the Hoxhunt button in Outlook" }, "Hoxhunt test"),
           m.high_importance && el("span", { class: "mr-imp", title: "High importance" }, "❗"),
           m.flagged && el("span", { class: "flag", title: "Flagged" }, "⚑")),
         el("time", { class: "mr-time", datetime: m.received || "", title: when(m.received) }, mailTime(m.received))),
@@ -787,7 +791,14 @@ async function showMail(id) {
           m.sender && m.sender_name && el("span", { class: "muted" }, ` <${m.sender}>`),
           el("span", { class: "mv-when muted" }, when(m.received))),
         el("div", { class: "mv-to muted" }, `To: ${m.to}`, m.cc ? ` · Cc: ${m.cc}` : "")),
-      el("div", { class: "mv-actions" },
+      // A Hoxhunt phishing test: no Reply, Flag or More, just how to report it (the body is plain text, so its links
+      // can't be clicked here).
+      m.hoxhunt ? el("div", { class: "mv-hoxhunt", role: "note" },
+        el("div", {}, el("b", {}, "Hoxhunt phishing test. "), "Report it with the Hoxhunt button in Outlook. Don't open its links or reply."),
+        el("div", { class: "mv-actions" },
+          el("button", { type: "button", class: "small primary", onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook to report"),
+          el("button", { type: "button", class: "small", onclick: () => act("/api/mail/read", { id, read: m.unread }) }, m.unread ? "Mark read" : "Mark unread")))
+      : el("div", { class: "mv-actions" },
         el("button", { type: "button", class: "small primary", onclick: () => replyDialog(m, false) }, "Reply"),
         el("button", { type: "button", class: "small", onclick: () => replyDialog(m, true) }, "Reply all"),
         el("button", { type: "button", class: "small", onclick: () => act("/api/mail/read", { id, read: m.unread }) }, m.unread ? "Mark read" : "Mark unread"),
@@ -800,7 +811,7 @@ async function showMail(id) {
     const listed = [...document.querySelectorAll("#mail-list li.mail-row")].some((li) => li.dataset.id === id);
     if (!listed || pinnedMail?.id === id) {
       pinnedMail = { id, subject: m.subject, sender_name: m.sender_name, sender: m.sender, received: m.received,
-        preview: (m.body || "").replace(/\s+/g, " "), flagged: m.flagged, high_importance: m.high_importance, important: m.important, pinned: true };
+        preview: (m.body || "").replace(/\s+/g, " "), flagged: m.flagged, high_importance: m.high_importance, important: m.important, hoxhunt: m.hoxhunt, pinned: true };
       if (!listed) { if (mailState.data) renderMail(); else await loaders.mail(); }
     }
     document.querySelectorAll("#mail-list li.mail-row").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));

@@ -799,6 +799,14 @@ li.mail-row.unread .mr-time { color: var(--accent-2); font-weight: 600; }
 .mv-when { margin-left: auto; font-size: .82rem; white-space: nowrap; }
 .mv-to { margin-top: .2rem; font-size: .82rem; }
 .mv-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin: .85rem 0 0; padding-bottom: .85rem; border-bottom: 1px solid var(--line); }
+/* A Hoxhunt phishing test: a warning band with how to report it, in place of Reply / Flag / More. */
+.mv-hoxhunt {
+  margin: .85rem 0 0; padding: .65rem .8rem 0; border: 1px solid rgb(var(--amber-rgb) / .6); border-radius: .6rem;
+  background: rgb(var(--amber-rgb) / .08); font-size: .9rem; color: var(--text);
+}
+.mv-hoxhunt b { color: var(--amber); }
+.mv-hoxhunt .mv-actions { margin-top: .6rem; padding-bottom: .65rem; border-bottom: 0; }
+.tag.hoxhunt { color: var(--amber); border-color: rgb(var(--amber-rgb) / .8); }
 #mail-view pre.mv-body { margin: .9rem 0 0; max-width: 78ch; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
   font: 400 1rem/1.65 var(--font-body); color: var(--text); background: none; border: 0; padding: 0; max-height: none; overflow: visible; }
 

@@ -13,6 +13,7 @@ import threading
 import winreg
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from email.parser import HeaderParser
 
 import pythoncom
 import pywintypes
@@ -196,6 +197,8 @@ def recent_mail(limit=50, unread_only=False) -> list[dict]:
             continue  # blocked as spam (Junk Email); the Outlook rule may not have moved it yet
         m = _summary(item)
         m["important"] = people.is_important(m["sender"], important)  # the star on Mail rows
+        if _hoxhunt_row(item, m["sender"]):
+            m.update(hoxhunt=True, important=False)  # tagged "Hoxhunt test"; no star, Spam or Mark important
         out.append(m)
         if len(out) >= limit:
             break
@@ -229,9 +232,12 @@ def _summaries(entry_ids, folder="Inbox") -> list[dict]:
             m = _summary(item)
             if folder == "Sent":
                 m["to"] = item.To or ""  # the list shows who it went to
+            hox = folder == "Inbox" and _hoxhunt_row(item, m["sender"])
         except pywintypes.com_error:
             continue  # moved or deleted meanwhile
-        m["important"] = people.is_important(m["sender"], important)
+        m["important"] = not hox and people.is_important(m["sender"], important)
+        if hox:
+            m["hoxhunt"] = True
         m["folder"] = folder
         out.append(m)
     return out
@@ -298,6 +304,8 @@ def get_message(entry_id) -> dict:
             d.update(folder="Sent", important=False)  # the reader offers no Spam / Mark important on Joe's own mail
     except pywintypes.com_error:
         pass
+    if d.get("folder") != "Sent" and _hoxhunt_row(item, d["sender"]):
+        d.update(hoxhunt=True, important=False)  # the reader shows "report it with Hoxhunt" instead of Reply
     return d
 
 
@@ -735,6 +743,43 @@ def _mentions_me(item, names, me_smtp) -> bool:
     return _mention_cache[key]
 
 
+# ---- Hoxhunt phishing tests ------------------------------------------------------
+# Hoxhunt's simulated phishing mail is DKIM-signed by a subdomain of hoxhuntsigning.com. An email counts as a test
+# only when Microsoft's own verdict (the topmost Authentication-Results header, which Exchange Online adds on
+# arrival) says that signature passed: a real phish can copy the header text but can't pass Hoxhunt's signature, so it
+# is never waved through as "just a test". Checked 2026-10-28 on the 17 tests in Joe's Inbox and Deleted Items: all
+# matched. outlook.hoxhunt: false turns it off.
+HOXHUNT_DOMAINS = ("hoxhuntsigning.com",)
+_AR_DKIM_PASS = re.compile(r"\bdkim=pass\b[^;]*?\bheader\.d=([\w.-]+)", re.I)
+_hoxhunt_cache: dict = {}  # EntryID -> bool (a received message's headers don't change)
+
+
+def hoxhunt_on() -> bool:
+    return config.section("outlook", {}).get("hoxhunt", True) is not False
+
+
+def is_hoxhunt(item) -> bool:
+    """True if this received email is a Hoxhunt phishing test (Hoxhunt's DKIM signature, verified by Microsoft)."""
+    key = item.EntryID
+    if key not in _hoxhunt_cache:
+        found = False
+        headers = _prop(item, PR_HEADERS) or ""
+        if any(d in headers.lower() for d in HOXHUNT_DOMAINS):
+            verdicts = HeaderParser().parsestr(headers).get_all("Authentication-Results") or [""]
+            for d in _AR_DKIM_PASS.findall(re.sub(r"\s+", " ", str(verdicts[0]))):
+                d = d.lower().rstrip(".")
+                found = found or any(d == h or d.endswith("." + h) for h in HOXHUNT_DOMAINS)
+        if len(_hoxhunt_cache) > 5000:
+            _hoxhunt_cache.clear()
+        _hoxhunt_cache[key] = found
+    return _hoxhunt_cache[key]
+
+
+def _hoxhunt_row(item, sender) -> bool:
+    """For mail lists: Hoxhunt tests come from outside Sonance, so internal senders aren't checked (no header read)."""
+    return hoxhunt_on() and not people.is_internal(sender) and is_hoxhunt(item)
+
+
 def _mention_names(me_name) -> list[str]:
     """What counts as naming Joe: followups.mention_names plus his Outlook name (his address is checked too)."""
     fu = config.section("followups", {})
@@ -787,7 +832,8 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, important=()) -> 
                 who = teams_sender(item.Subject)
                 teams_reply.append({**_summary(item), "from_name": who, "urgent": people.matches("", who, urgent)})
             continue
-        if item.UnRead and important and people.is_important(sender, important) and len(unread_vip) < 25:
+        if (item.UnRead and important and people.is_important(sender, important) and len(unread_vip) < 25
+                and not _hoxhunt_row(item, sender)):
             unread_vip.append({**_summary(item), "important": True})
         if received < recent or conv in reply_seen:
             continue
@@ -803,6 +849,8 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, important=()) -> 
         if replied or _is_bulk(item, sender) or NO_REPLY_SUBJECT.search(item.Subject or ""):
             continue
         if need_mention and not is_urgent and not _mentions_me(item, mention_names, me_smtp):
+            continue
+        if _hoxhunt_row(item, sender):  # a phishing test never needs a reply (it may borrow an urgent person's name)
             continue
         summary = {**_summary(item), "internal": people.is_internal(sender), "urgent": is_urgent}
         if is_urgent and len(urgent_reply) < 25:
@@ -857,11 +905,17 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
     need_mention = cfg.get("alerts_require_mention", True) is not False
     me_name, me_smtp = _me() if need_mention else ("", "")
     names = _mention_names(me_name)
+    hoxhunt = hoxhunt_on()
     for item in _iter_inbox(200):
         if _local_time(item.ReceivedTime) < since:
             break
         mail = _summary(item)
         if db.seen("mail:" + mail["id"]):
+            continue
+        # A Hoxhunt phishing test comes first (it may borrow an urgent person's name, or a spam-blocked sender's):
+        # an alert to report it with Hoxhunt's button in Outlook, and none of the rules below.
+        if hoxhunt and is_hoxhunt(item):
+            hits.append((mail, {"name": "Hoxhunt test", "priority": "normal", "hoxhunt": True}))
             continue
         if blocked and blocked.hit(mail["sender"], item.Subject or "", mail["sender_name"]):
             spam.append(item)  # no alert; moved below (not while walking the sorted Items)
@@ -949,6 +1003,11 @@ async def watch_loop():
         try:
             await _update_focus_block(cfg.get("focus_keywords", ["focus"]))
             for mail, rule in await call(scan_new_mail):
+                if rule.get("hoxhunt"):  # its button opens the email in Outlook, where Hoxhunt's Report button is
+                    alerts.raise_alert("Outlook", f"Hoxhunt test: {mail['subject']}",
+                                       "Phishing test. Report it with the Hoxhunt button in Outlook; don't open its links or reply.",
+                                       "normal", {"type": "hoxhunt", "id": mail["id"]}, toast="phishing test, report it")
+                    continue
                 alerts.raise_alert(
                     "Outlook",
                     f"{rule.get('name', 'Mail')}: {mail['subject']}",

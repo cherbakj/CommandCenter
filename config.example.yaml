@@ -89,6 +89,8 @@ outlook:
   poll_seconds: 60
   auto_start: true                    # reopen Outlook if it gets closed
   alerts_require_mention: true        # false: every rule match alerts, named or not
+  hoxhunt: true                       # Hoxhunt phishing tests (Hoxhunt's signature, verified by Microsoft): an alert to
+                                      #   report them with Hoxhunt's button in Outlook; tagged in Mail, never follow-ups
   focus_keywords: ["focus"]           # a calendar event with this in its title turns on focus mode
   rules:
     - name: VIP sender                  # more can be added in the app (Follow-ups > Important senders)

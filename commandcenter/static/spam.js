@@ -39,7 +39,7 @@
   }
 
   CC.addMailAction((m, where) => {
-    if (!eligible(m)) return null;
+    if (!eligible(m) || m.hoxhunt) return null;  // a Hoxhunt test is reported with Hoxhunt's button, not blocked
     return el("button", {
       type: "button", class: `small subtle spam-btn ${where === "row" ? "spam-row-btn" : ""}`,
       title: "Mark as spam: send mail like this to Junk Email", "aria-label": `Mark as spam: ${m.subject || "this email"}`,

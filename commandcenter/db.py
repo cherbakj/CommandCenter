@@ -215,8 +215,9 @@ def action_alerts(kind: str) -> list[tuple[int, dict]]:
 
 
 def mail_alerts() -> list[tuple[int, str]]:
-    """(alert id, EntryID) of the alerts whose action opens an email, newest first."""
-    return [(i, a["id"]) for i, a in action_alerts("mail") if isinstance(a.get("id"), str)]
+    """(alert id, EntryID) of the alerts whose action opens an email (a Hoxhunt test's too), newest first."""
+    found = action_alerts("mail") + action_alerts("hoxhunt")
+    return sorted(((i, a["id"]) for i, a in found if isinstance(a.get("id"), str)), reverse=True)
 
 
 def delete_mail_alerts(entry_id: str) -> int:

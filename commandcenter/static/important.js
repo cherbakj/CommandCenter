@@ -119,7 +119,7 @@
   }
 
   CC.addMailAction((m, where) => {
-    if (!eligible(m)) return null;
+    if (!eligible(m) || m.hoxhunt) return null;  // a Hoxhunt test's sender is never an important sender
     const on = state(m).important;
     const onclick = (e) => { e.stopPropagation(); toggle(m, where); };
     if (where === "row") {
