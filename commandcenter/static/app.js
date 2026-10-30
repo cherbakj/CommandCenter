@@ -1222,6 +1222,7 @@ async function prepDialog(id, meta) {
 
 loaders.websites = () => guarded(async () => {
   const { monitors } = await api("/api/websites");
+  document.dispatchEvent(new CustomEvent("cc:websites", { detail: { monitors: monitors.length } }));  // websites.js: the sites added in the tab
   fill($("#web-list"), monitors.map((m) => {
     const s = m.state || {};
     const statusText = !m.enabled && m.enabled !== undefined ? el("span", { class: "muted" }, "disabled")

@@ -174,7 +174,10 @@ def inventory() -> list[dict]:
              "Teams on the web, signed in by you (Microsoft 365 / Okta), shown in the Teams tab to read and answer chats. "
              "Separate from the background Teams reader's profile."),
             ("pulse_view", "Pulse site (Pulse tab)", "webview-pulse",
-             "pulse.sonance.com and dev.pulse.sonance.com, signed in by you (Okta), shown in the Pulse tab.")):
+             "pulse.sonance.com and dev.pulse.sonance.com, signed in by you (Okta), shown in the Pulse tab."),
+            ("websites_view", "Sites in the Websites tab", "webview-websites",
+             "The sites you add in the Websites tab, shown there, and any account you sign in to on them. Sessions are "
+             "kept in this work profile, not the personal vault. Removing a site doesn't sign you out of it.")):
         there = _try(lambda f=folder: (config.DATA_DIR / f).is_dir(), False)
         add(vid, vname, "Work", what + " Command Center only places the window; it reads nothing from the page except its "
             "title and address for the tab's bar.",
@@ -282,6 +285,15 @@ def inventory() -> list[dict]:
             "The blocked addresses, domains and phrases (kv spam:blocks) and whether the Outlook rules saved. No "
             "subjects or bodies of the emails themselves.", dpapi, "Until you unblock it", connected=None,
             state=f"{n_blocks} block(s)" + ("" if not n_blocks or rule_ok else " · Outlook rule not saved"))
+
+    from . import websites
+    n_sites = _try(lambda: len(websites.sites()), 0)
+    add("websites", "Websites tab: sites and logins", "Work",
+        "The sites you add in the Websites tab, with the username and password you give each one.",
+        "Names, addresses and other addresses (kv websites:sites); usernames and passwords in Windows Credential Manager "
+        f"({websites.KEYRING_SERVICE}), never in the database, config or logs.",
+        f"List: {dpapi}; logins: Windows Credential Manager", "Until you remove the site", connected=None,
+        state=f"{n_sites} site(s)")
 
     n_alerts = _table_count("alerts")
     add("alerts", "Alerts and log", "Work",

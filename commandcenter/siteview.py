@@ -1,13 +1,14 @@
-"""Web sites shown inside the Command Center window: the Pulse site (WORK Pulse tab) and Teams on the web (COMMS
-Teams tab). Both refuse to be framed, so each is a WebView2 of its own that the window hosts, laid over its tab's
+"""Web sites shown inside the Command Center window: the Pulse site (WORK Pulse tab), Teams on the web (COMMS Teams
+tab) and the sites added in the Websites tab (websites.py). They refuse to be framed, so each is a WebView2 of its own that the window hosts, laid over its tab's
 empty stage (overlay.NativeOverlay: the page reports where the stage is and what must be on top). Being a top-level
 page in its own control, the site isn't a frame.
 
 Isolation, the same for every site view:
-  * its own profile folder in data/ (webview-pulse, webview-teams): its cookies and sign-in never mix with Command
+  * its own profile folder in data/ (webview-pulse, webview-teams, webview-websites): its cookies and sign-in never mix with Command
     Center's, and the site has no Command Center cookie, so it can't use the local API;
   * devtools, host objects, web messages, browser extensions, swipe navigation, status bar, form autofill and
-    password saving off; the OS-account single sign-on switch off; no script is injected into the site;
+    password saving off; the OS-account single sign-on switch off; no script is injected into the site (the one
+    exception: Sign in on the Websites tab, on Joe's click, see websites.py);
   * top-level navigation only to the view's allowlist (the site and the sign-in hosts it really uses). Anything
     else, and every new-window request, opens in the default browser; mail / Teams / Okta Verify links go to
     Windows; other schemes are dropped. Only after a click (IsUserInitiated), at most 3 per 10 s. The one exception

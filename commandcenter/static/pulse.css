@@ -63,3 +63,9 @@
 .pv-wait { font: 700 2.4rem var(--font-display); letter-spacing: .3em; color: rgb(var(--accent-rgb) / .12); user-select: none; }
 .pv-fallback { max-width: 40rem; margin: 2rem; }
 .pv-fallback .row { flex-wrap: wrap; gap: .5rem; }
+/* Websites tab (websites.js) uses the same bar and stage. */
+.ws-bar { flex-wrap: wrap; }
+.ws-bar .ws-pick { width: auto; max-width: 14rem; margin: 0; padding: .2rem .5rem; }
+.ws-help { margin: .25rem 0 .6rem; font-size: .82rem; }
+.ws-check { display: flex; align-items: center; gap: .4rem; margin: .2rem 0 .6rem; font-size: .9rem; }
+.ws-check input { width: auto; margin: 0; }

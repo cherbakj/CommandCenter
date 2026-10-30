@@ -34,6 +34,7 @@ from . import alerts, config, db, security, starterror
 from .siteview import PulseView, TeamsView, _no_autofill
 from .codedock import CodeDock
 from .ssmsdock import SsmsDock
+from .websites import WebsiteView
 
 log = logging.getLogger(__name__)
 APP_ID = "Sonance.CommandCenter"
@@ -359,10 +360,11 @@ class DesktopApp:
         # Native windows over dashboard tabs (overlay.py; security.py's /api/window/<view>/* routes)
         self.pulse = PulseView(self)  # the Pulse tab's site view
         self.teams = TeamsView(self)  # Teams on the web in the Teams tab
+        self.websites = WebsiteView(self)  # the sites added in the Websites tab
         self.ssms = SsmsDock(self)    # the SQL tab's docked SSMS
         self.ssms.hotkey_factory = GlobalHotkey
         self.code = CodeDock(self)    # desktop VS Code docked in the VS Code tab
-        self.overlays = {"pulse": self.pulse, "teams": self.teams, "ssms": self.ssms, "code": self.code}
+        self.overlays = {"pulse": self.pulse, "teams": self.teams, "websites": self.websites, "ssms": self.ssms, "code": self.code}
 
     # ---- window (security.shell uses these for the /api/window/* routes) ----
     def show(self):
