@@ -13,7 +13,7 @@ next midnight); `day` stays in clear for lookups and retention (retention.offhou
 app.maintenance; listed under "Unencrypted metadata" in Privacy & Data). Work data: shown in Privacy mode.
 
 Command Center starts at sign-in, but time while it isn't running (closed, restarting) or while the PC sleeps
-simply isn't logged. Input that software injects (a "mouse jiggler", remote control) counts like real input.
+simply isn't logged. Command Center's own nudges (keeplive.py) don't count. Input that other software injects (a "mouse jiggler", remote control) counts like real input.
 """
 import asyncio
 import ctypes
@@ -21,6 +21,7 @@ import ctypes.wintypes as wt
 import json
 import logging
 import re
+import time
 from datetime import date, datetime, time as dtime, timedelta
 
 from fastapi import APIRouter
@@ -252,6 +253,27 @@ def idle_seconds() -> float | None:
         return None
 
 
+# Command Center's own nudges (keeplive.py) restart Windows' idle timer, but Joe wasn't there: real_idle_seconds leaves
+# them out. Any input more than a moment after the last nudge is his.
+NUDGE_SLOP = 1.0
+_nudge = {"at": None, "real": None}  # time.monotonic of the last nudge, and of his last input before it
+
+
+def real_idle_seconds() -> float | None:
+    """idle_seconds, not counting Command Center's own nudges."""
+    idle = idle_seconds()
+    if idle is None or _nudge["at"] is None:
+        return idle
+    now = time.monotonic()
+    return idle if now - idle > _nudge["at"] + NUDGE_SLOP else now - _nudge["real"]
+
+
+def before_nudge():
+    idle = real_idle_seconds()
+    now = time.monotonic()
+    _nudge.update(at=now, real=now - (idle or 0))
+
+
 def _windows_locked() -> bool:
     from . import privacy  # its helper: the input desktop isn't ours (Win+L, session switched / disconnected)
     return privacy.windows_locked()
@@ -272,7 +294,7 @@ def sample_once(now: datetime | None = None, idle: float | None = None, locked: 
         state["active"] = False
         return False
     locked = _windows_locked() if locked is None else locked
-    idle = idle_seconds() if idle is None else idle
+    idle = real_idle_seconds() if idle is None else idle
     last_input = now - timedelta(seconds=idle) if idle is not None and idle >= 0 else None
     grown = _tracker.sample(last_input, locked, s["idle_minutes"])
     # "Working off-hours right now": the session reached this minute or the one before, outside work hours.
