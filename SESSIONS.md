@@ -2,6 +2,54 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-10-30 (8:35 AM - 10:15 AM local, closed at 3:55 PM)
+
+**Summary:** Pictures in Mail, an error screen for a failed start, a Websites tab configured from inside the tab, and Stay Available in Teams. My typo took CC down for about 7 minutes this morning. Joe restarted at 10:20 AM after the last commit, so everything is loaded.
+
+### Done
+- `43c6478` **Pictures in the Mail reader and Triage** (`connectors/mailimages.py`, `CC.mailContent`, `GET /api/mail/image`).
+  - Embedded pictures show in place, attached ones at the end under "Attached pictures"; click to enlarge.
+  - Web-hosted pictures are never fetched, because loading one tells the sender the email was opened. A line gives the count and offers Open in Outlook.
+  - **Tested** read-only on 375 recent emails: all 499 pictures read correctly, and 424 of the 476 embedded ones landed straight after matching text (the other 52 sit close by).
+- `ff4a03b` **Error screen when CC can't start** (`starterror.py`, with `__main__.py` now only a guard around the new `cli.py`).
+  - It shows what went wrong, how to fix it, what isn't running, and full details, with Try again, Copy details, Open log and Close.
+  - **Tested** on a scratch copy broken seven ways: the screen came up in 0.8-2.2 s each time, and a good start cleared the report. Copy details was never clicked in a full test, because it would overwrite Joe's clipboard.
+- `61cd5e2` **Websites tab, configured in the tab** (`websites.py`, `websites.js`).
+  - + Add takes an address, name, optional login and other sign-in addresses. Each site opens in a native view inside the tab.
+  - Sign in fills the login form only on click and only on the site's listed addresses; it never presses the site's button.
+  - The list is sealed work data (kv `websites:sites`). Logins are only in Credential Manager (`CommandCenter-Websites`), and the password never goes back to the page.
+  - **Tested** end to end on a practice login page: no password in pages, responses, data files or logs; quit in 2-3 s; the login survived a restart; test credentials removed.
+- `6681f71` **Stay Available in Teams** (`keeplive.py`, `teams.keep_available`, default on).
+  - After 2 quiet minutes, while the desktop app runs and Windows is unlocked, CC sends a zero-distance mouse move. The pointer stays put, with no keys or clicks.
+  - The off-hours log leaves the nudges out (`offhours.real_idle_seconds`).
+  - **Tested** with fake clocks and in a scratch copy: nudges at 120 s, none while locked, with the setting off, with Teams off or in serve mode. The live log shows it on since the 10:20 AM start.
+
+### Decisions
+- **Websites tab:** Joe chose showing sites inside the tab and filling the login only when he clicks, over opening them in the browser or filling automatically.
+- **YouTube in Websites:** Joe asked for it, then called it off ("nevermind"). The work was discarded and nothing from it was committed. The general Websites tab replaces it.
+- **Stay Available:** the nudge also holds off Windows' idle timers. None is set on this PC today (display and sleep Never, no lock policy, no screen saver timeout, checked 2026-10-30). If a lock timer is ever added, set `teams.keep_available: false` or it stops that timer working.
+
+### Settings changed (config.yaml, not in git)
+- None in the end. `websites:` was changed for the YouTube work and restored to `websites: []`. `teams.keep_available` isn't set, so the default (on) applies.
+
+### Waiting on a restart
+- Nothing. The running copy started at 10:20 AM, after the last code commit (`6681f71`, 10:12 AM). This entry changes only the log, and the tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] Check that Teams really stays Available: leave the PC untouched for about 10 minutes, then look at the status from a phone or ask a coworker. I couldn't confirm this myself.
+- [ ] Answer: does he want a **Show pictures** button for web-hosted pictures in Mail (one click per email, tells the sender, never on Hoxhunt tests)? Asked, not answered, not built.
+- [ ] Try the Websites tab on a real site he uses. Only a practice login page has been tested.
+
+### Known issues
+- **Stay Available limits:** Teams still shows Away when Windows is locked, the PC sleeps, CC is closed, or an elevated window is in front (Windows refuses the nudge; CC logs one warning). Teams also shows Available while Joe has walked away and the PC is unlocked.
+- **The PC doesn't lock by itself:** with no timer set, it stays unlocked until Win+L, with mail and an unlocked personal vault open in CC. I told Joe.
+- **Websites tab:** a login inside a frame can't be filled, and Google sign-in in an embedded view is untested.
+
+### Incidents
+- **CC down about 8:42-8:49 AM, my fault.** A Bash heredoc turned `"\\n"` into a real line break in `mailimages.py` while I was editing in the live folder. Joe restarted, and CC failed with nothing on screen. Fixed by hand; the uncommitted work was stashed so CC could start. That led to the error screen. CC changes are now built in a git worktree and fast-forwarded into `main` (saved in memory). Backslash escapes don't go through Bash heredocs; scripts go through the Write tool.
+- **A test opened example.com in Joe's real browser.** A script run over Chrome DevTools counted as a user click, so a `location.href` test left the view. Joe was told and the step was removed. Nothing else came of it.
+- **Test windows:** scratch copies of CC briefly appeared on screen during tests before being moved off screen. All test servers are stopped and none were left listening at close.
+
 ## 2026-10-29 (about 8:30 AM - 3:30 PM local)
 
 **Summary:** Four changes: a taskbar Force quit for a stuck CC, a fix for typing lag, a full reply form without the blur, and full screen that leaves the taskbar visible. Joe restarted at 3:28 PM after the last commit, so everything is loaded.
