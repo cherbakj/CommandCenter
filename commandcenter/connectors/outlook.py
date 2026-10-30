@@ -22,6 +22,7 @@ import win32gui
 import win32process
 
 from .. import alerts, config, db, people
+from . import mailimages
 
 log = logging.getLogger(__name__)
 
@@ -306,7 +307,17 @@ def get_message(entry_id) -> dict:
         pass
     if d.get("folder") != "Sent" and _hoxhunt_row(item, d["sender"]):
         d.update(hoxhunt=True, important=False)  # the reader shows "report it with Hoxhunt" instead of Reply
+    try:
+        d.update(mailimages.build(item, d["body"]))
+    except Exception as e:  # the email still opens, as text
+        log.warning("Mail images: couldn't read them (%s)", type(e).__name__)
+    if d.get("hoxhunt"):
+        d["remote_images"] = 0  # its band already says to open it in Outlook, to report it
     return d
+
+
+def mail_image(entry_id, n) -> tuple[bytes, str] | None:
+    return mailimages.read(_ns().GetItemFromID(entry_id), n)
 
 
 def upcoming_meetings(hours=24) -> list[dict]:

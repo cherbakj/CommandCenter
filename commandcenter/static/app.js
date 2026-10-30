@@ -757,6 +757,36 @@ function closeReader() {
   if (id) document.querySelector(`#mail-list li[data-id="${CSS.escape(id)}"]`)?.focus();
 }
 
+// An email's text with its pictures in place (/api/mail/item "parts"; the Mail reader and Triage). Pictures come only
+// from inside the email through /api/mail/image: ones hosted on the web aren't fetched, they get a line saying so.
+function zoomMailImage(src, alt) {
+  const dlg = el("dialog", { class: "mv-zoom", "aria-label": "Picture", onclick: () => dlg.close(), onclose: () => dlg.remove() },
+    el("img", { src, alt }));
+  document.body.append(dlg);
+  dlg.showModal();
+}
+
+function mailImage(m, pic) {
+  const src = `/api/mail/image?id=${encodeURIComponent(m.id)}&n=${pic.n}`;
+  const alt = pic.alt || pic.name || "Picture from the email";
+  const img = el("img", { src, alt, title: pic.name || null, loading: "lazy", width: pic.width,
+    onerror: () => btn.replaceWith(el("span", { class: "mv-img-missing muted" }, `Couldn't show ${pic.name || "this picture"} here. Open the email in Outlook to see it.`)) });
+  const btn = el("button", { type: "button", class: "mv-img", "aria-label": `Enlarge: ${alt}`, onclick: () => zoomMailImage(src, alt) }, img);
+  return btn;
+}
+
+function mailContent(m, textClass = "mv-body", tidy = (text) => text) {
+  const nodes = (m.parts || [{ text: m.body || "" }]).map((p) => (p.images
+    ? el("div", { class: "mv-imgs" }, p.attached && el("div", { class: "mv-imgs-label muted" }, "Attached pictures"), p.images.map((pic) => mailImage(m, pic)))
+    : el("pre", { class: textClass }, tidy(p.text))));
+  if (m.remote_images) {
+    const count = m.remote_images === 1 ? "1 picture from the web isn't" : `${m.remote_images} pictures from the web aren't`;
+    nodes.unshift(el("div", { class: "mv-remote muted" }, `${count} shown, because loading them tells the sender you opened this. `,
+      el("button", { type: "button", class: "small subtle", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open in Outlook")));
+  }
+  return el("div", { class: "mv-content" }, nodes);
+}
+
 async function showMail(id) {
   selectedMail = id;
   $("#tab-mail").classList.add("reading");
@@ -806,7 +836,7 @@ async function showMail(id) {
         el("button", { type: "button", class: "small", onclick: () => act("/api/mail/flag", { id, flagged: !m.flagged }) }, m.flagged ? "Clear flag" : "⚑ Flag"),
         menuButton("More ▾", "More actions for this email", more, "small subtle", "left")),
       orderChips,
-      el("pre", { class: "mv-body" }, m.body),
+      mailContent(m),
     );
     view.scrollTop = 0;
     const listed = [...document.querySelectorAll("#mail-list li.mail-row")].some((li) => li.dataset.id === id);
@@ -2655,6 +2685,7 @@ setInterval(refresh, 5000);
 window.CC = {
   $, el, api, guarded, fill, when, timeOf, srcTag, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
   replyDialog,  // verified reply: compose -> review (recipients, subject, text) -> Send
+  mailContent,  // an email's text with its pictures in place
   importantStar,  // the ★ before an important sender
   toast,  // short note in the corner
   get todayData() { return todayData; },

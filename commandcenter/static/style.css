@@ -826,6 +826,18 @@ dialog.hx-pop h3 { margin-bottom: .3rem; }
 .hx-pop-acts { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 #mail-view pre.mv-body { margin: .9rem 0 0; max-width: 78ch; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
   font: 400 1rem/1.65 var(--font-body); color: var(--text); background: none; border: 0; padding: 0; max-height: none; overflow: visible; }
+/* Pictures from inside an email (the Mail reader and Triage). A white ground, because many are logos and screenshots
+   drawn for a white email. */
+.mv-imgs { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .5rem; margin: .8rem 0; }
+.mv-imgs-label { flex: 0 0 100%; font-size: .85rem; }
+.mv-img { display: block; max-width: 100%; padding: 0; border: 0; border-radius: 3px; background: #fff; box-shadow: none; cursor: zoom-in; overflow: hidden; }
+.mv-img img { display: block; max-width: 100%; height: auto; }
+.mv-img-missing { font-size: .88rem; }
+.mv-remote { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem; margin-top: .8rem; font-size: .88rem; }
+dialog.mv-zoom { width: fit-content; max-width: 96vw; max-height: 96vh; padding: 0; border: 0; border-radius: 4px; background: #fff; box-shadow: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none; cursor: zoom-out; overflow: hidden; }
+dialog.mv-zoom::backdrop { background: rgb(3 5 8 / .75); -webkit-backdrop-filter: none; backdrop-filter: none; }
+dialog.mv-zoom img { display: block; max-width: 96vw; max-height: 96vh; }
 
 /* Narrow pane: the list, or the open email (Back returns to the list). */
 @container pane (max-width: 55.99rem) {

@@ -164,8 +164,11 @@
         bodyBox.prepend(el("div", { class: "err" }, `Couldn't load the full message: ${full.error}. Showing the preview.`));
         return;
       }
-      const text = String(full.body || "").replace(/\r\n/g, "\n").replace(/\n{4,}/g, "\n\n\n");
-      body.textContent = text.length > MAX_BODY ? `${text.slice(0, MAX_BODY)}\n\n… (long message: open it in Outlook for the rest)` : text || "(no text)";
+      const tidy = (raw) => {
+        const text = String(raw || "").replace(/\r\n/g, "\n").replace(/\n{4,}/g, "\n\n\n");
+        return text.length > MAX_BODY ? `${text.slice(0, MAX_BODY)}\n\n… (long message: open it in Outlook for the rest)` : text || "(no text)";
+      };
+      body.replaceWith(CC.mailContent(full, "tri-body-text", tidy));
       if (full.to || full.cc) {
         bodyBox.before(el("div", { class: "tri-to muted" }, `To: ${String(full.to || "").slice(0, 300)}${full.cc ? `  ·  Cc: ${String(full.cc).slice(0, 300)}` : ""}`));
       }

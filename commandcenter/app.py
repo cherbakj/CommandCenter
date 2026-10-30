@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import alerts, config, db, orders, security, today
@@ -498,6 +498,16 @@ async def mail(unread_only: bool = False, limit: int = 50, q: str = "", folder: 
 @app.get("/api/mail/item")
 async def mail_item(id: str):
     return await outlook.call(outlook.get_message, id)
+
+
+@app.get("/api/mail/image")
+async def mail_image(id: str, n: int):
+    """A picture carried inside an email (the `n` from /api/mail/item's parts). Held in memory only; no-store like every
+    response here."""
+    found = await outlook.call(outlook.mail_image, id, n)
+    if not found:
+        raise HTTPException(404, "no such picture")
+    return Response(content=found[0], media_type=found[1])
 
 
 # ---- verified sending: nothing is sent unless it was reviewed first ------------------------------
