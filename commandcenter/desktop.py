@@ -30,7 +30,7 @@ import uvicorn
 import webview
 from PIL import Image, ImageDraw
 
-from . import alerts, config, db, security
+from . import alerts, config, db, security, starterror
 from .siteview import PulseView, TeamsView, _no_autofill
 from .codedock import CodeDock
 from .ssmsdock import SsmsDock
@@ -759,6 +759,7 @@ class DesktopApp:
         if not self._start_server():
             return
         security.write_instance(self.port)
+        starterror.clear()
         try:
             _harden_webview()
             _nav["origin"], _nav["action"] = self.url, self._on_action

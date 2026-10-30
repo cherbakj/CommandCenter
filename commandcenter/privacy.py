@@ -286,8 +286,10 @@ def inventory() -> list[dict]:
     n_alerts = _table_count("alerts")
     add("alerts", "Alerts and log", "Work",
         "Alerts raised by the other sources. The log file records ids, sources and errors, never titles or bodies.",
-        f"{n_alerts if n_alerts is not None else '?'} alert(s) in SQLite; data\\commandcenter.log (5 MB, 3 old files).",
-        f"Alerts: {dpapi}; log: private data folder", f"Alerts {_days(r.get('alerts_days'))}; log rotates at 5 MB",
+        f"{n_alerts if n_alerts is not None else '?'} alert(s) in SQLite; data\\commandcenter.log (5 MB, 3 old files); "
+        "only after a failed start, data\\last-start-error.txt (the error and the end of the log).",
+        f"Alerts: {dpapi}; log and error report: private data folder",
+        f"Alerts {_days(r.get('alerts_days'))}; log rotates at 5 MB; error report until the next good start",
         connected=None, state=f"{n_alerts} stored" if n_alerts is not None else "")
 
     notes = _table_count("meeting_notes")
