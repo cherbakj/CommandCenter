@@ -2,9 +2,9 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
-## 2026-10-30 (8:35 AM - 10:15 AM local, closed at 3:55 PM)
+## 2026-10-30 (8:35-10:15 AM and 5:30-5:45 PM local, closed at 8:40 PM)
 
-**Summary:** Pictures in Mail, an error screen for a failed start, a Websites tab configured from inside the tab, and Stay Available in Teams. My typo took CC down for about 7 minutes this morning. Joe restarted at 10:20 AM after the last commit, so everything is loaded.
+**Summary:** Pictures in Mail, an error screen for a failed start, a Websites tab configured from inside the tab, and Stay Available in Teams with an on/off switch. My typo took CC down for about 7 minutes this morning, and a test copy briefly signed in to Joe's real Teams this evening. Joe restarted at 6:48 PM after the last commit, so everything is loaded. Stay Available is currently switched off.
 
 ### Done
 - `43c6478` **Pictures in the Mail reader and Triage** (`connectors/mailimages.py`, `CC.mailContent`, `GET /api/mail/image`).
@@ -34,13 +34,14 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
 
 ### After the close (5:30-5:45 PM)
 - `490890c` **Stay Available switch**: a checkbox on the Teams tab's bar and a Ctrl+K command turn it on and off at once, with no restart. The choice is kept in kv `teams:keep_available`; `teams.keep_available` in `config.yaml` is now only the value before the switch is first used. It's on the bar, not the status panel, because the list holding that panel is hidden in a narrow pane or after ⟨.
-- **Tested** on a scratch copy: 6 nudges in 6 s when on, 0 when off, stays off after a restart, not offered in serve mode. Committed on `main`; not on GitHub until the next close-session.
+- **Tested** on a scratch copy: 6 nudges in 6 s when on, 0 when off, stays off after a restart, not offered in serve mode.
+- **State at close:** the live log shows the switch turned off at 6:48 PM, seconds after the restart, so CC isn't nudging now. It stays off until switched back on.
 
 ### Waiting on a restart
-- `490890c`, the Stay Available switch. Nothing else: the running copy started at 10:20 AM. Stay Available keeps running as it is until then. The tree is clean and safe to restart on.
+- Nothing. The running copy started at 6:48 PM, after the last code commit (`490890c`, 5:38 PM). The tree is clean and safe to restart on.
 
 ### Waiting on Joe
-- [ ] Check that Teams really stays Available: leave the PC untouched for about 10 minutes, then look at the status from a phone or ask a coworker. I couldn't confirm this myself.
+- [ ] Check that Teams really stays Available: with the switch on (it's off now), leave the PC untouched for about 10 minutes, then look at the status from a phone or ask a coworker. I couldn't confirm this myself.
 - [ ] Answer: does he want a **Show pictures** button for web-hosted pictures in Mail (one click per email, tells the sender, never on Hoxhunt tests)? Asked, not answered, not built.
 - [ ] Try the Websites tab on a real site he uses. Only a practice login page has been tested.
 
