@@ -32,8 +32,12 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
 ### Settings changed (config.yaml, not in git)
 - None in the end. `websites:` was changed for the YouTube work and restored to `websites: []`. `teams.keep_available` isn't set, so the default (on) applies.
 
+### After the close (5:30-5:45 PM)
+- `490890c` **Stay Available switch**: a checkbox on the Teams tab's bar and a Ctrl+K command turn it on and off at once, with no restart. The choice is kept in kv `teams:keep_available`; `teams.keep_available` in `config.yaml` is now only the value before the switch is first used. It's on the bar, not the status panel, because the list holding that panel is hidden in a narrow pane or after ⟨.
+- **Tested** on a scratch copy: 6 nudges in 6 s when on, 0 when off, stays off after a restart, not offered in serve mode. Committed on `main`; not on GitHub until the next close-session.
+
 ### Waiting on a restart
-- Nothing. The running copy started at 10:20 AM, after the last code commit (`6681f71`, 10:12 AM). This entry changes only the log, and the tree is clean and safe to restart on.
+- `490890c`, the Stay Available switch. Nothing else: the running copy started at 10:20 AM. Stay Available keeps running as it is until then. The tree is clean and safe to restart on.
 
 ### Waiting on Joe
 - [ ] Check that Teams really stays Available: leave the PC untouched for about 10 minutes, then look at the status from a phone or ask a coworker. I couldn't confirm this myself.
@@ -49,6 +53,7 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
 - **CC down about 8:42-8:49 AM, my fault.** A Bash heredoc turned `"\\n"` into a real line break in `mailimages.py` while I was editing in the live folder. Joe restarted, and CC failed with nothing on screen. Fixed by hand; the uncommitted work was stashed so CC could start. That led to the error screen. CC changes are now built in a git worktree and fast-forwarded into `main` (saved in memory). Backslash escapes don't go through Bash heredocs; scripts go through the Write tool.
 - **A test opened example.com in Joe's real browser.** A script run over Chrome DevTools counted as a user click, so a `location.href` test left the view. Joe was told and the step was removed. Nothing else came of it.
 - **Test windows:** scratch copies of CC briefly appeared on screen during tests before being moved off screen. All test servers are stopped and none were left listening at close.
+- **A test copy signed in to Joe's real Teams, 5:32-5:33 PM, my fault.** Opening the Teams tab in a copy let `TeamsView.OS_SSO` sign in with his Windows work account in a scratch profile, off screen, and it opened one of his chats. Nothing was sent, but that chat may have been marked read, which I can't check. Joe was told. The profile is deleted, and tests now point the copy's Teams view at example.com with single sign-on off (saved in memory).
 
 ## 2026-10-29 (about 8:30 AM - 3:30 PM local)
 
