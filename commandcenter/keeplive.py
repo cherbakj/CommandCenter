@@ -1,5 +1,6 @@
-"""Keeps Joe shown as Available in Teams while Command Center runs (Joe's call 2026-10-30; off with
-teams.keep_available: false). Teams goes Away when Windows has seen no input for about 5 minutes, so after 2 quiet minutes
+"""Keeps Joe shown as Available in Teams while Command Center runs (Joe's call 2026-10-30). The Stay Available switch on
+the Teams tab and in Ctrl+K turns it on and off; until it's first used, teams.keep_available in config.yaml decides (default
+on). Teams goes Away when Windows has seen no input for about 5 minutes, so after 2 quiet minutes
 this sends Windows a mouse move of zero distance: the idle timer restarts and the pointer stays put. No keys, no clicks,
 nothing sent to Teams.
 
@@ -11,9 +12,14 @@ import ctypes
 import ctypes.wintypes as wt
 import logging
 
-from . import config, offhours, privacy, security
+from fastapi import APIRouter, Body, HTTPException
+
+from . import config, db, offhours, privacy, security
 
 log = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/teams/keep-available")
+
+SETTING = "teams:keep_available"  # the switch; kept until changed
 
 NUDGE_AFTER = 120  # s of no input
 CHECK_SECONDS = 30
@@ -33,10 +39,19 @@ class _INPUT(ctypes.Structure):
     _fields_ = [("type", wt.DWORD), ("u", _INPUTUNION)]
 
 
+def available() -> bool:
+    """The desktop app only, with Teams on."""
+    return security._state["mode"] == "app" and bool((config.section("teams", {}) or {}).get("enabled", True))
+
+
+def is_on() -> bool:
+    """The switch; config.yaml's setting until it's first used."""
+    on = db.kv_get(SETTING)
+    return bool((config.section("teams", {}) or {}).get("keep_available", True)) if on is None else bool(on)
+
+
 def enabled() -> bool:
-    """The desktop app only, with Teams on and the setting not turned off."""
-    teams = config.section("teams", {}) or {}
-    return security._state["mode"] == "app" and bool(teams.get("enabled", True)) and bool(teams.get("keep_available", True))
+    return available() and is_on()
 
 
 def _send_nudge() -> bool:
@@ -71,6 +86,20 @@ async def keep_available_loop():
         except Exception as e:  # never let the loop die
             log.warning("Teams keep-available: %s", type(e).__name__)
         await asyncio.sleep(CHECK_SECONDS)
+
+
+@router.get("")
+async def status():
+    return {"available": available(), "on": is_on()}
+
+
+@router.post("")
+async def set_on(on: bool = Body(..., embed=True)):
+    if not available():
+        raise HTTPException(400, "Stay Available works only in the desktop app with Teams on")
+    db.kv_set(SETTING, on)
+    log.info("Teams keep-available: %s", "on" if on else "off")
+    return await status()
 
 
 background = [keep_available_loop]

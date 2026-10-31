@@ -6,7 +6,7 @@
 (function () {
   "use strict";
   if (!window.CC) return;
-  const { el, api, guarded, openExternal } = CC;
+  const { el, api, guarded, openExternal, toast } = CC;
 
   const section = document.getElementById("tab-teams");
   const web = document.getElementById("teams-web");
@@ -54,6 +54,22 @@
       onclick: () => setMode(m),
     }, label)));
 
+  // Stay Available (keeplive.py): a switch on the bar, on screen whichever way the list is, and a Ctrl+K command. One
+  // element, kept through the bar's rebuilds.
+  let keep = null;
+  const keepBox = el("input", { type: "checkbox" });
+  const keepSwitch = el("label", { class: "tv-keep", title: "Teams won't go Away while Command Center is open and Windows is unlocked. Also holds off any screen saver, sleep or inactivity lock timer set on this PC." },
+    keepBox, "Stay Available");
+  const showKeep = () => { keepBox.checked = !!keep?.on; };
+  const loadKeep = () => api("/api/teams/keep-available").then((k) => { keep = k; showKeep(); renderBar(); }).catch(() => {});
+  const setKeep = (on) => guarded(async () => {
+    keep = await api("/api/teams/keep-available", { on });
+    toast(on ? "Stay Available on: Teams won't go Away while Command Center is open and Windows is unlocked"
+      : "Stay Available off: Teams can go Away after about 5 minutes with no input");
+  }).then(showKeep);  // what the server holds, if it refused
+  keepBox.addEventListener("change", () => setKeep(keepBox.checked));
+  CC.addPaletteSource(() => keep?.available ? [{ group: "Commands", label: `Stay Available in Teams: turn ${keep.on ? "off" : "on"}`, hint: `now ${keep.on ? "on" : "off"}`, run: () => setKeep(!keep.on) }] : []);
+
   async function load() {
     try {
       const s = await api("/api/window/teams");
@@ -81,6 +97,7 @@
     const note = (v.failed && v.note) || (v.note && now - (v.note_at || 0) < 15 ? v.note : null) ||
       (v.outside && now - v.outside.at < 15 ? `Opened ${v.outside.host} in your browser` : null) || st.error;
     const call = v.call_hint_at && now - v.call_hint_at < 60;
+    const keepFocused = document.activeElement === keepBox;
     bar.replaceChildren(...[sideToggle(), modeSwitch(),
       el("button", { type: "button", class: "small subtle", title: "Back", "aria-label": "Back", disabled: !v.can_back, onclick: () => act("back") }, "←"),
       el("button", { type: "button", class: "small subtle", title: "Reload", "aria-label": "Reload", onclick: () => act("reload") }, "↻"),
@@ -90,8 +107,10 @@
         el("span", { class: "tv-title" }, v.title || (v.ready ? "" : "Starting…")),
         v.host && v.host !== "teams.microsoft.com" ? el("span", { class: "muted tv-host" }, v.host) : null),
       note ? el("span", { class: `tv-note${v.failed || st.error ? " err" : ""}` }, note) : null,
+      keep?.available ? keepSwitch : null,
       el("button", { type: "button", class: `small ${call ? "primary" : "alt"}`, title: "Calls, meetings and anything else: the Teams app", onclick: () => act("app") }, "Open in Teams app"),
     ].filter(Boolean));
+    if (keepFocused) keepBox.focus();
   }
 
   function startPoll() {
@@ -120,6 +139,7 @@
 
   // The core Teams loader (counts, Recent list) runs after the view's status, so its rows know whether to offer "Open chat".
   const coreLoader = CC.loaders.teams;
+  loadKeep();
   CC.loaders.teams = async () => { await load(); startPoll(); return coreLoader?.(); };
   if (CC.nativeStage) {
     nativeStage = CC.nativeStage({ view: "teams", section, hole, available: () => !!st.available });

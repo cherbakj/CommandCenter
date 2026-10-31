@@ -161,10 +161,10 @@ def inventory() -> list[dict]:
         "unread and your @mentions, with sender, chat name, a short preview and time (from the chat list and Teams' "
         "own cache in that page). Nothing is clicked, marked read or sent. Chats open in the Teams app.",
         "That browser profile (its cookies and Teams' own cache) in the private data folder; the unread counts; "
-        "the chat / activity ids already alerted on. Names and previews stay in memory only (gone on restart); "
+        "the chat / activity ids already alerted on; the Stay Available switch. Names and previews stay in memory only (gone on restart); "
         "Teams alerts carry them like other alerts.",
-        "Profile: Edge's own encryption (DPAPI), private folder; alerted ids: " + dpapi + "; counts: unencrypted metadata",
-        "Profile until you sign out of it; alerted ids while unread; alerts " + _days(r.get("alerts_days")),
+        "Profile: Edge's own encryption (DPAPI), private folder; alerted ids and the switch: " + dpapi + "; counts: unencrypted metadata",
+        "Profile until you sign out of it; alerted ids while unread; the switch until changed; alerts " + _days(r.get("alerts_days")),
         connected=teams_on, state="Signed in" if teams_on else "Not set up")
 
     # The sites shown inside the window (siteview.py): each has its own WebView2 profile folder, created the first time

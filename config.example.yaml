@@ -40,7 +40,8 @@ teams:
   keep_open_minutes: 60    # that Edge stays open between checks (~1.4 GB) and starts afresh this often;
                            # 0 = close it after every check (cold-starts Teams each time: several cores for ~20 s)
   priority: normal         # alerts for new DMs / @mentions; from urgent people they are always high
-  keep_available: true     # while Command Center runs and Windows is unlocked, Teams doesn't go Away for inactivity
+  keep_available: true     # the starting value of the Stay Available switch (Teams tab's bar, Ctrl+K); once that's used, it decides.
+                           # While Command Center runs and Windows is unlocked, Teams doesn't go Away for inactivity
                            # (a zero-distance mouse nudge after 2 quiet minutes). It also holds off any screen saver,
                            # display-off, sleep or inactivity lock timer set on this PC. false = off
   # The Teams tab also shows Teams on the web (its own sign-in, data/webview-teams). It goes only to Teams and its
