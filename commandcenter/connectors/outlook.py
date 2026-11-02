@@ -343,6 +343,14 @@ def current_focus_block(keywords) -> dict | None:
 
 
 OL_BUSY_STATUS = {0: "free", 1: "tentative", 2: "busy", 3: "out of office", 4: "working elsewhere"}
+OL_CANCELED = (5, 7)  # olMeetingCanceled, olMeetingReceivedAndCanceled
+
+
+def _is_canceled(item) -> bool:
+    try:
+        return item.MeetingStatus in OL_CANCELED
+    except pywintypes.com_error:
+        return False
 
 
 LUNCH_DEFAULTS = {"subjects": ["lunch", "blocked"], "between": "11:00-14:30"}
@@ -400,6 +408,7 @@ def _meetings(start, end, limit=50, all_day=False) -> list[dict]:
                 "join_url": link.group(0) if link else None,
                 "all_day": bool(item.AllDayEvent),
                 "status": OL_BUSY_STATUS.get(item.BusyStatus, ""),
+                "canceled": _is_canceled(item),
             })
         item = found.GetNext()
     return out
@@ -409,6 +418,23 @@ def meetings_range(days=10) -> list[dict]:
     """Calendar items (including all-day ones) from the start of today through `days` days."""
     start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     return _meetings(start, start + timedelta(days=days), limit=400, all_day=True)
+
+
+def next_meetings(count=6) -> list[dict]:
+    """The header's next-meeting highlight: what's on now and what's coming, soonest first. Lunch blocks and all-day
+    events don't count, as for the meeting reminders, nor do cancelled meetings or anything over 12 hours (a multi-day
+    hold isn't a meeting). Looks 4 days ahead (over a long weekend) only when the next 24 hours have nothing to come."""
+    now = datetime.now()
+    found = []
+    for hours in (24, 96):
+        found = []
+        for m in _meetings(now, now + timedelta(hours=hours)):
+            start, end = datetime.fromisoformat(m["start"]), datetime.fromisoformat(m["end"])
+            if end > now and not m["lunch"] and not m["canceled"] and end - start <= timedelta(hours=12):
+                found.append(m)
+        if any(datetime.fromisoformat(m["start"]) > now for m in found):
+            break
+    return found[:count]
 
 
 # ---- actions -----------------------------------------------------------------

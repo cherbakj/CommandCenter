@@ -641,6 +641,16 @@ async def meetings(hours: int = 24):
     return {"meetings": await outlook.call(outlook.upcoming_meetings, min(hours, 24 * 14))}
 
 
+@app.get("/api/meetings/next")
+async def next_meetings():
+    """The header's next-meeting highlight. An Outlook problem leaves it as it was (meetings: null)."""
+    try:
+        return {"meetings": await outlook.call(outlook.next_meetings)}
+    except Exception as e:
+        log.info("Next meetings: not read (%s)", type(e).__name__)
+        return {"meetings": None}
+
+
 @app.get("/api/meetings/prep")
 async def meeting_prep(id: str):
     return await outlook.call(outlook.meeting_prep, id)

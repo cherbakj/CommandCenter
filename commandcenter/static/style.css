@@ -111,7 +111,7 @@ body > header::after {
   box-shadow: var(--hi), 0 0 1rem rgb(var(--accent-rgb) / .12);
 }
 .slash { color: var(--accent-2); margin: 0 .1rem; }
-.navs { display: flex; align-items: center; gap: .7rem; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: .15rem .1rem; }
+.navs { display: flex; align-items: center; gap: .7rem; flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: .15rem .1rem; }
 .navs::-webkit-scrollbar { display: none; }
 /* Sideways-scrolling nav (narrow window): fade the edge that hides more tabs. */
 .navs.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 2.5rem), transparent); }
@@ -149,6 +149,38 @@ nav button.active { color: rgb(var(--pill-c)); text-shadow: 0 0 .7rem rgb(var(--
 nav button.active:hover { background: transparent; }
 /* Before app.js has placed the pill (or without it): the active tab carries its own pill. */
 .nav-group:not(.pill-on) button.active { background: rgb(var(--pill-c) / .16); border-color: rgb(var(--pill-c) / .55); }
+/* A group as one dropdown, when the header is too tight for the strip (app.js fitHeader, navDrops). */
+.nav-drop { display: none; align-items: center; gap: .4rem; }
+.nav-drop-caret { font-size: .7em; opacity: .8; }
+body > header.nav-collapsed .nav-drop { display: inline-flex; }
+body > header.nav-collapsed .nav-group button[data-tab] { display: none; }
+/* Next meeting (nextmeeting.js): takes the header's free space and sits in the middle of it. Flat on purpose: no
+   animation or blur up here, on every tab (see "Background motion and typing lag" in PROJECT.md). */
+.next-meeting { flex: 1 1 0; min-width: 15rem; display: flex; align-items: center; justify-content: center; container: nm / inline-size; }
+.next-meeting[hidden] { display: none; }
+.nm-chip {
+  --nm-c: var(--accent-2-rgb);
+  display: flex; align-items: center; gap: .2rem; min-width: 0; max-width: 100%; padding: .12rem; border-radius: var(--r-pill);
+  border: 1px solid rgb(var(--nm-c) / .6); background: rgb(var(--nm-c) / .13);
+}
+.nm-chip.nm-soon { --nm-c: var(--amber-rgb); }
+.nm-chip.nm-live { --nm-c: var(--red-rgb); }
+.nm-chip.nm-later { border-color: var(--line); background: rgb(255 255 255 / .035); }
+.nm-chip.nm-later .nm-when { color: var(--muted); }
+.nm-chip.nm-later .nm-subject { color: var(--muted); font-weight: 500; }
+button.nm-main {
+  display: flex; align-items: center; gap: .55rem; min-width: 0; padding: .26rem .75rem; white-space: nowrap;
+  font: 600 .86rem var(--font-ui); letter-spacing: .01em; text-transform: none; color: var(--text);
+  background: transparent; border: 1px solid transparent; border-radius: var(--r-pill); box-shadow: none;
+}
+button.nm-main:hover { color: #fff; background: rgb(var(--nm-c) / .14); border-color: transparent; box-shadow: none; }
+.nm-when { flex: none; font-weight: 700; color: rgb(var(--nm-c)); }
+.nm-subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nm-time, .nm-then { flex: none; font-weight: 500; font-size: .8rem; color: var(--muted); }
+.nm-time:empty, .nm-then:empty { display: none; }
+button.nm-join { flex: none; border-radius: var(--r-pill); }
+@container nm (max-width: 38rem) { .nm-then { display: none; } }
+@container nm (max-width: 28rem) { .nm-time { display: none; } }
 .header-right { margin-left: auto; display: flex; align-items: center; gap: .5rem; flex: none; }
 .layout-toggle { min-width: 5.6rem; }
 .layout-toggle[aria-pressed="true"] { color: var(--accent-2); border-color: rgb(var(--accent-2-rgb) / .6); }
@@ -988,10 +1020,11 @@ dialog:focus-visible { outline: none; }
 ::-webkit-scrollbar-thumb:hover { background: rgb(var(--accent-rgb) / .5); background-clip: padding-box; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
-/* ---- header at smaller widths: one row from 1920px up, then the nav groups wrap to a second row ---- */
+/* ---- header at smaller widths: one row while it fits, with COMMS and WORK as dropdowns when the strips don't (app.js fitHeader) ---- */
 /* Labels next to the search key and the status dots show while the header has room (app.js fitHeader). */
 body > header.hdr-tight .search-btn span, body > header.hdr-tight .status-name, body > header.hdr-tight .snip-word { display: none; }
 body > header.hdr-tight .status > span { padding: .28rem .45rem; }
+body > header.hdr-compact .logo-text { display: none; }
 body > header.hdr-tight .status .dot { margin-right: 0; }
 @media (max-width: 2799px) {
   .status > span { padding: .28rem .6rem; }
@@ -1001,11 +1034,13 @@ body > header.hdr-tight .status .dot { margin-right: 0; }
   .navs { gap: .5rem; }
   .layout-toggle { min-width: 0; }
 }
-body > header.nav-wrap { flex-wrap: wrap; row-gap: .4rem; }
-body > header.nav-wrap .navs { order: 3; flex-basis: 100%; }
+/* Last resort, a second row: the logo and buttons stay on the first (::before is the line break and the gap). */
+body > header.nav-wrap { flex-wrap: wrap; row-gap: 0; }
+body > header.nav-wrap::before { content: ""; order: 2; flex: 0 0 100%; height: .4rem; }
+body > header.nav-wrap .navs { order: 3; }
+body > header.nav-wrap .next-meeting { order: 4; }
 @media (max-width: 1919px) {
-  body > header { flex-wrap: wrap; row-gap: .4rem; padding: .45rem 1rem; }
-  .navs { order: 3; flex-basis: 100%; }
+  body > header { padding: .45rem 1rem; }
 }
 @media (max-width: 1100px) {
   .status { display: none; }

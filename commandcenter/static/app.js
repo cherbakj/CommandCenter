@@ -262,15 +262,49 @@ function applyLayout() {
 
 // The active tab's pill (style.css .nav-group::before) slides under the active button of each nav group.
 function navPill() {
+  const collapsed = document.querySelector("header").classList.contains("nav-collapsed");
   document.querySelectorAll(".nav-group").forEach((g) => {
-    const b = g.querySelector("button.active");
+    const b = collapsed ? null : g.querySelector("button[data-tab].active");
     const was = g.classList.contains("pill-on");
     g.classList.toggle("pill-on", !!b);
-    if (!b) return;
+    if (!b) { g.classList.remove("pill-anim"); return; }
     g.style.setProperty("--pill-x", `${b.offsetLeft}px`);
     g.style.setProperty("--pill-w", `${b.offsetWidth}px`);
     if (was) g.classList.add("pill-anim");  // the first placement doesn't slide in from the edge
   });
+  navDrops();
+}
+
+// In a header too tight for the tab strips (fitHeader: .nav-collapsed) each group is one dropdown: its open tab and
+// its badges on the button, the tabs in the menu. The strip's buttons stay in the page, hidden (style.css): they're
+// still what everything else moves, counts and marks active.
+const tabBadges = (b) => [...b.querySelectorAll(".badge:not([hidden])")].map((n) => {
+  const c = n.cloneNode(true);
+  c.removeAttribute("id");
+  return c;
+});
+const navDropItems = (group) => [...group.querySelectorAll("button[data-tab]")].map((b) => el("button", {
+  type: "button", role: "menuitemradio", "aria-checked": String(b.classList.contains("active")), onclick: () => openTab(b.dataset.tab),
+}, b.dataset.label || b.textContent.trim(), tabBadges(b)));
+const navDropButtons = ["comms", "work"].map((pane) => {
+  const group = $(`#nav-${pane}`);
+  const btn = menuButton("", `${pane.toUpperCase()} tabs`, () => navDropItems(group), "nav-drop", "left");
+  group.querySelector(".nav-label").after(btn);
+  return { pane, group, btn };
+});
+function navDrops() {
+  for (const { pane, group, btn } of navDropButtons) {
+    const on = group.querySelector("button[data-tab].active");
+    const tab = on || navButton(layout.active[pane]);  // a pane not on show: the tab it would open
+    const label = tab?.dataset.label || "";
+    const badges = [...group.querySelectorAll("button[data-tab]")].flatMap(tabBadges);
+    btn.classList.toggle("active", !!on);
+    const key = JSON.stringify([label, badges.map((b) => [b.className, b.textContent, b.title])]);
+    if (btn.dataset.key === key) continue;
+    btn.dataset.key = key;
+    btn.setAttribute("aria-label", `${pane.toUpperCase()} tabs: ${label}`);
+    btn.replaceChildren(label, ...badges, el("span", { class: "nav-drop-caret", "aria-hidden": "true" }, "▾"));
+  }
 }
 
 function runLoaders(ids) { for (const id of ids) loaders[id]?.(); }
@@ -308,21 +342,21 @@ window.addEventListener("resize", () => {
   else if (layout.split) applySplit();
 });
 
-// The nav groups stay on the header row while they fit; when they don't (big text size, narrow window)
-// they move to a second header row instead of scrolling out of sight.
+// The header stays one row as long as it can (the next meeting takes the room that's left, down to its minimum).
+// Each step is tried until the tabs fit, and the last one is kept whatever happens:
+//   1) everything, with the labels on the right ("Search", "Outlook", "Teams"); 2) without those labels;
+//   3) COMMS and WORK as dropdowns (navDrops), with the labels again; 4) dropdowns without the labels;
+//   5) also just the JC mark for a logo; 6) the dropdowns and the next meeting on a second row.
+const HEADER_STEPS = [[], ["hdr-tight"], ["nav-collapsed"], ["nav-collapsed", "hdr-tight"], ["nav-collapsed", "hdr-tight", "hdr-compact"], ["nav-collapsed", "nav-wrap"]];
 let headerFrame = 0;
 function fitHeader() {
   cancelAnimationFrame(headerFrame);
   headerFrame = requestAnimationFrame(() => {
     const h = document.querySelector("header"), n = document.querySelector(".navs");
-    const overflows = () => n.scrollWidth > n.clientWidth + 1;
-    // 1) Labels on the right ("Search", "Outlook", "Teams") when everything fits on one row.
-    // 2) Otherwise drop those labels to keep one row. 3) Otherwise the navs take a second row,
-    //    which leaves room for the labels again.
-    h.classList.remove("nav-wrap", "hdr-tight");
-    if (overflows()) {
-      h.classList.add("hdr-tight");
-      if (overflows()) { h.classList.remove("hdr-tight"); h.classList.add("nav-wrap"); }
+    for (const step of HEADER_STEPS) {
+      h.classList.remove("hdr-tight", "hdr-compact", "nav-collapsed", "nav-wrap");
+      h.classList.add(...step);
+      if (n.scrollWidth <= n.clientWidth + 1) break;
     }
     navFade();
     navPill();
@@ -339,6 +373,7 @@ document.querySelector(".navs").addEventListener("scroll", navFade, { passive: t
   const ro = new ResizeObserver(fitHeader);
   ro.observe(document.querySelector("header"));
   ro.observe(document.querySelector(".header-right"));
+  ro.observe($("#next-meeting"));
   document.querySelectorAll(".nav-group").forEach((n) => ro.observe(n));
 })();
 
@@ -2164,6 +2199,7 @@ document.addEventListener("pointerdown", (e) => { if (menuOpen && !menuOpen.menu
 // (A scroll right after opening is the button being scrolled into view: ignored.)
 document.addEventListener("scroll", (e) => { if (menuOpen && !menuOpen.menu.contains(e.target) && performance.now() - menuOpen.at > 250) closeMenu(); }, true);
 window.addEventListener("resize", () => closeMenu());
+window.addEventListener("blur", () => closeMenu());  // a click in a native view never reaches this page
 
 // The Follow-ups lists (urgent people, important senders, snoozed, muted) sit behind one "Manage" menu so the
 // Needs you card's head stays one row; each item clicks its button in #fu-manage, which keeps its own label and handler.
@@ -2616,7 +2652,7 @@ function renderWindowControls(st) {
   }
 }
 // The frameless window drags by the header's empty parts (never its buttons), and only when not full screen.
-const DRAG_PARTS = "header, header .logo, header .logo *, header .navs, header .nav-group, header .nav-label, header .header-right";
+const DRAG_PARTS = "header, header .logo, header .logo *, header .navs, header .nav-group, header .nav-label, header .next-meeting, header .header-right";
 function setDragRegions(on) {
   document.querySelectorAll(DRAG_PARTS).forEach((n) => n.classList.toggle("pywebview-drag-region", on));
 }
@@ -2684,7 +2720,8 @@ setInterval(refresh, 5000);
 //   CC.registerTab({ id: "toolkit", label: "Toolkit", render(section) {...}, onShow() {...} })
 //   CC.addPaletteSource(() => [{ group: "Toolkit", label: "...", hint: "...", run() {...} }])
 window.CC = {
-  $, el, api, guarded, fill, when, timeOf, srcTag, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
+  $, el, api, guarded, fill, when, timeOf, duration, srcTag, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
+  prepDialog,  // the Prep card for a meeting
   replyDialog,  // verified reply: compose -> review (recipients, subject, text) -> Send
   mailContent,  // an email's text with its pictures in place
   importantStar,  // the ★ before an important sender
