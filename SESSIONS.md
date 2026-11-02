@@ -2,6 +2,56 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-11-02 (8:39 AM - 3:40 PM local)
+
+**Summary:** Next meeting in the header, collapsing tab groups, the Calendar as a time grid, cleaner reminders and Schedule, and a read-only Voice test tab. Voice is on hold: OpenAI refused its first call with a 429 and Joe is sorting out billing.
+
+### Done
+- `ffb4951` **Next meeting in the header, and COMMS / WORK dropdowns when it's tight** (`nextmeeting.js`, `GET /api/meetings/next`, `outlook.next_meetings`, `fitHeader`).
+  - **Tested:** header at 3440 down to 480 px, one row from 1366 up. `/api/meetings/next` read-only against real Outlook: about 100 ms, nothing wrongly included.
+- `7b58b9c` **Calendar tab as a time grid from the top**, like Outlook's week view (`planner.js`, `planner.css`), and **reminder pop-up without "Time for this"**, subject in bold (`personal.js`, `personal.css`).
+  - **Tested** with made-up data at five window setups, 1920 single and the Pulse skin.
+- `32b2435` **Today's Schedule lists only meetings.** Open slots show only while a task is being dragged, so drag-to-block still works. The per-slot Block button is gone.
+  - **Tested** with real mouse drags at three layouts; nothing written to the calendar.
+- `d88c6fa` **Voice tab, a test** (`voice.py`, `voice.js`, `voice.css`). Talks to OpenAI's Realtime API about what's in CC. PROJECT.md has the details.
+  - **Read-only:** a fixed list of read tools plus opening a tab. No send, reply or change. Personal data and Hoxhunt tests' text are never offered.
+  - **Microphone switch:** off at every start, with a red Listening button in the header while it's on. Ends after 5 quiet minutes, on Windows lock, or with the page.
+  - **Key and page:** CC's server makes the call, so the API key stays in Credential Manager (`CommandCenter-OpenAI`) and the page's CSP is unchanged. Only the mic policy on `/` changed.
+  - **Bug found in the real window:** WebView2 remembers a permission answer, even across starts, so an allowed mic stayed available with the switch off, and one deny stuck. The switch now sets the state itself (`desktop._set_mic_state`), and it's set to Deny at window start and on dashboard navigation.
+  - **Tested:** server side against a fake OpenAI; the tab in Edge with real WebRTC to a fake peer and a fake mic; the real window's permission across two starts, one quit with the switch on. **Not tested: real OpenAI, a real mic, or the full tab flow in the real window.** The dock stand-in test wasn't re-run for the `desktop.py` change, but Joe's 3:09 PM restart re-docked his VS Code (log).
+- `bea3920` **Voice says why OpenAI refused**, from its short error code (`insufficient_quota`, `billing_not_active`, `rate_limit_exceeded`). OpenAI's message text is still never used. **Tested** against a fake OpenAI only.
+
+### Decisions
+- **Calendar "from-top":** I took this as an Outlook-week-style time grid and told Joe to say if he meant otherwise. He didn't object.
+- **Schedule:** no open rows. Removing them was Joe's call; showing them only during a drag and dropping the Block button were mine, and I told him.
+- **Voice:** Joe chose option 2 (voice that works with CC's data, through OpenAI's API) with an on/off mic control and a test page first, open to building it into the whole tool later. He turned down ChatGPT itself in a tab (option 1) and fixed voice commands on this PC (option 3). This replaces the 10-28 "parked" note.
+- **Work data to OpenAI:** Joe answered yes, other users are doing it now. That's his word; I saw no written policy.
+- **Read-only first:** my call, and I told Joe. Actions come later, each with CC's usual preview and confirm.
+
+### Settings changed (config.yaml, not in git)
+- None. `voice:` isn't set in `config.yaml`, so the defaults apply (`gpt-realtime-2.1`, voice `marin`, `idle_minutes: 5`). `config.example.yaml` documents them.
+
+### Waiting on a restart
+- `bea3920` only: the running copy started at 3:09 PM, after `d88c6fa` and before this commit. It changes nothing but Voice's refusal messages. The tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] Sort out OpenAI API billing (platform.openai.com > Settings > Billing, and any project budget limit), then tick Microphone in the Voice tab and ask something. He asked to hold off on Voice until this is done. An admin may be needed if the key belongs to a company organization. His key is saved.
+- [ ] Look at the Calendar with his real meetings, and try a header dropdown over docked VS Code. I couldn't test either.
+- [ ] Decide what to do about the spam rule failure below, if it matters to him.
+- [ ] Carried over from 10-30: check that Teams really stays Available (the switch was off at that close); answer whether he wants a **Show pictures** button for web-hosted pictures in Mail; try the Websites tab on a real site.
+
+### In flight / not finished
+- **Voice, on hold at Joe's request.** No code is in progress. When billing is cleared: try it for real, watch for WebRTC being blocked by the firewall or VPN, and judge answer quality and cost (`gpt-realtime-2.1-mini` is about a third of the price). Building it into the whole tool and adding actions come after that.
+
+### Known issues
+- **Voice's first call refused:** one attempt, 3:10:46 PM, HTTP 429. The running copy doesn't record the reason, so "no credit" is my likely guess, not confirmed. No later attempt is in the log. The refusal means no voice or mail data was exchanged.
+- **Outlook spam rule doesn't save:** `Spam rule save failed (COM error 0x80020009)` when a domain block is added, on 10-26, 10-30 and today at 9:08 AM. The block works through CC's filter while CC runs, but not with CC closed. Not caused by today's work; not investigated.
+- **Voice's permission on Lock:** mic state goes to Deny on navigation and the page's call ends with it, but this path was tested by reload, not by the Lock button.
+- **Header at 480 px:** the window buttons alone are wider than the window, so it scrolls sideways. Left as is.
+
+### Incidents
+- **Test copies of CC on Joe's desktop, about 2:50-2:55 PM.** To test the mic permission I ran a desktop copy from a worktree on port 8821, several times, with a fake mic device, hidden or placed off screen. A second tray icon may have appeared and keyboard focus may have jumped; I warned him. It used its own data folder, Teams and Outlook off, and his jump list was left alone. All test servers are stopped and none were left listening; the live app wasn't touched.
+
 ## 2026-10-30 (8:35-10:15 AM and 5:30-5:45 PM local, closed at 8:40 PM)
 
 **Summary:** Pictures in Mail, an error screen for a failed start, a Websites tab configured from inside the tab, and Stay Available in Teams with an on/off switch. My typo took CC down for about 7 minutes this morning, and a test copy briefly signed in to Joe's real Teams this evening. Joe restarted at 6:48 PM after the last commit, so everything is loaded. Stay Available is currently switched off.
