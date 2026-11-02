@@ -930,6 +930,7 @@ button.danger { color: #ffb3bf; border-color: rgb(var(--red-rgb) / .55); backgro
 button.danger:hover { color: #fff; border-color: var(--red); background: rgb(var(--red-rgb) / .22); box-shadow: 0 0 .9rem rgb(var(--red-rgb) / .35); }
 
 /* ---- free slots + task drag ---- */
+body:not(.drag-task) #agenda li.slot { display: none; }
 .list li.slot { border: 1px dashed rgb(var(--accent-rgb) / .45); box-shadow: inset 3px 0 0 var(--accent); margin: .3rem 0; background: rgb(var(--accent-rgb) / .04); align-items: center; }
 .list li.slot .time-col { color: var(--accent); }
 .slot-title { font: 700 .76rem var(--font-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }

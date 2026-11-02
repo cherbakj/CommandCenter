@@ -1522,6 +1522,7 @@ function balanceStats() {
 new ResizeObserver(() => balanceStats()).observe($("#stats"));
 
 // Open time today: inside the workday, from now on, between meetings, at least 30 minutes.
+// The Schedule lists them only while a task is being dragged (style.css li.slot): they're where it can be dropped.
 function freeSlots(agenda, now = new Date()) {
   if (isWeekend(now)) return [];
   const at = (h) => new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, Math.round(h * 60));
@@ -1554,9 +1555,7 @@ function slotRow(slot) {
     el("div", { class: "time-col" }, timeOf(slot.start), el("div", { class: "muted" }, timeOf(slot.end))),
     el("div", { class: "grow" },
       el("div", { class: "slot-title" }, `Open · ${duration(mins)}`),
-      el("div", { class: "muted slot-hint" }, "Drop a task here to block time")),
-    el("div", { class: "actions" },
-      el("button", { type: "button", class: "small subtle", title: "Block this time on your Outlook calendar", onclick: () => scheduleDialog(null, slot) }, "Block")));
+      el("div", { class: "muted slot-hint" }, "Drop a task here to block time")));
 }
 
 function endDrag() { dragTask = null; document.body.classList.remove("drag-task"); }
@@ -1653,12 +1652,13 @@ function renderTasks(t) {
       class: `task ${task.due && task.due < today ? "overdue" : task.due === today ? "due-today" : ""} prio-${PRIO[task.priority] ? task.priority : "normal"}`,
       "data-key": taskKey(task),
       draggable: "true",
-      title: "Drag onto an open slot in the Schedule to block time for it",
+      title: "Drag onto the Schedule to block time for it: its open slots show while you drag",
       ondragstart: (e) => {
         dragTask = task;
         e.dataTransfer.effectAllowed = "copy";
         e.dataTransfer.setData("text/plain", task.subject);
-        document.body.classList.add("drag-task");
+        // After this event: rows appearing during it can move the task under the pointer, and the browser would end the drag.
+        setTimeout(() => { if (dragTask) document.body.classList.add("drag-task"); });
       },
       ondragend: endDrag,
     },
@@ -1679,8 +1679,8 @@ function renderTasks(t) {
 }
 
 // Blocks time on Joe's Outlook calendar (POST /api/calendar/block: a busy appointment with no attendees, 5-minute
-// reminder). For a task (Schedule, or a task dropped on a free slot) or on its own (＋ Block time on the Agenda, a free
-// slot's Block, Ctrl+K). The default title is never "Blocked": that subject at midday reads as Joe's lunch (_is_lunch).
+// reminder). For a task (Schedule, or a task dropped on a free slot) or on its own (＋ Block time on the Agenda,
+// Ctrl+K). The default title is never "Blocked": that subject at midday reads as Joe's lunch (_is_lunch).
 function scheduleDialog(task, slot) {
   if (!slot && task) slot = todayData && freeSlots(todayData.agenda)[0];
   const subject = el("input", { value: task ? `Focus: ${task.subject}` : "Focus time", maxlength: "250", "aria-label": "Title" });
