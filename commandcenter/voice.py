@@ -40,6 +40,14 @@ MAX_SDP = 200_000
 BODY_CHARS = 4000  # of one email, for read_email
 OUTLOOK_ID = re.compile(r"[0-9A-Fa-f]{16,1024}")
 KEY_FORMAT = re.compile(r"sk-[A-Za-z0-9_\-]{10,300}")
+ERROR_BYTES = 8192
+ERROR_CODE = re.compile(r"[a-z0-9_]{1,60}")
+REASONS = {
+    "insufficient_quota": "OpenAI says the API account has no credit available (insufficient_quota). Check Settings > Billing "
+                          "and the project's budget limit at platform.openai.com; new credit can take a few minutes to apply.",
+    "billing_not_active": "OpenAI says billing isn't active on the API account (billing_not_active). Check Settings > Billing at platform.openai.com.",
+    "rate_limit_exceeded": "OpenAI's rate limit was hit (rate_limit_exceeded). Wait a minute and try again.",
+}
 # USD per 1M tokens, for the tab's running estimate (OpenAI's pricing page, 2026-11-02). Not for billing.
 PRICES = {
     "gpt-realtime-2.1": {"audio_in": 32, "audio_cached": .4, "audio_out": 64, "text_in": 4, "text_cached": .4, "text_out": 24},
@@ -87,13 +95,30 @@ def _settings() -> dict:
             "idle_minutes": max(1, int(s.get("idle_minutes", 5)))}
 
 
+def _error_code(e) -> str | None:
+    """OpenAI's short reason (insufficient_quota...), never its message; only something shaped like a code."""
+    try:
+        err = json.loads(e.read(ERROR_BYTES))["error"]
+    except (ValueError, KeyError, TypeError, OSError):
+        return None
+    for value in (err.get("code"), err.get("type")) if isinstance(err, dict) else ():
+        if isinstance(value, str) and ERROR_CODE.fullmatch(value):
+            return value
+    return None
+
+
 def _open(req) -> bytes:
-    """One request to OpenAI. Its error text can quote part of the key or the request, so only the code is used."""
+    """One request to OpenAI. Its error text can quote part of the key or the request, so only the status and code are used."""
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.read(MAX_SDP)
     except urllib.error.HTTPError as e:
-        log.warning("Voice: OpenAI answered %d", e.code)
+        code = _error_code(e)
+        log.warning("Voice: OpenAI answered %d (%s)", e.code, code or "no code")
+        if code in REASONS:
+            raise ValueError(REASONS[code]) from None
+        if code and e.code == 429:
+            raise ValueError(f"OpenAI refused it ({code}).") from None
         raise ValueError({
             401: "OpenAI didn't accept the API key.",
             403: "This API key's project isn't allowed to use that model.",
