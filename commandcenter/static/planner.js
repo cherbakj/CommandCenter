@@ -1,5 +1,6 @@
-// Calendar tab: the next 10 days. Outlook meetings are the base, dated follow-ups sit on top, and
-// private personal entries (stored only on this PC, in the personal vault, never sent to Outlook) sit alongside.
+// Calendar tab: the next 10 days as a time grid, a column per day with time running down from the top. Outlook meetings
+// are the base, overlay calendars and private personal entries (stored only on this PC, in the personal vault, never
+// sent to Outlook) sit alongside at their times; all-day items and dated follow-ups are in a strip above the hours.
 // Personal entries and overlay calendars come back from the server only while the personal vault is unlocked
 // and Privacy mode is off (privacy.js / vault.py); otherwise a compact "locked" bar offers to unlock.
 (() => {
@@ -19,7 +20,7 @@
   const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const hhmm = (t) => (t ? new Date(`2000-01-01T${t}`).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "");
 
-  let section, grid, note, lockBar;
+  let section, grid, note, lockBar, nowLine = null, range = { start: 8, end: 17 }, shownDay = "", scrolled = false;
   let personalState = { available: false, set_up: false, unlocked: false, privacy: false, waiting: 0 };
 
   function personalTag() { return el("span", { class: "src src-personal", title: "Personal: only on this PC, in your personal vault (your passphrase), never sent to Outlook" }, "Personal"); }
@@ -130,35 +131,128 @@
         el("div", { class: "muted src-line" }, personalTag(), p.all_day ? "" : `until ${hhmm(p.end)}`, p.notes ? ` · ${p.notes.slice(0, 80)}` : "")));
   }
 
-  function dayCard(d) {
-    const date = dayDate(d.date);
-    const isToday = d.date === isoDay(new Date());
-    const weekend = [0, 6].includes(date.getDay());
-    // Outlook meetings and overlay-calendar events share one timeline, all-day items first.
-    const overlays = d.overlays || [];
-    const meetings = [...d.meetings.map((m) => ({ m })), ...overlays.map((e) => ({ e }))]
-      .sort((a, b) => {
-        const x = a.m || a.e, y = b.m || b.e;
-        return (y.all_day - x.all_day) || x.start.localeCompare(y.start);
-      })
-      .map((row) => (row.m ? meetingRow(row.m) : overlayRow(row.e)));
-    const block = (label, rows, cls) => rows.length ? el("div", { class: `pl-block ${cls}` }, el("div", { class: "pl-block-label" }, label), el("ul", { class: "pl-list" }, rows)) : null;
-    return el("article", { class: `pl-day ${isToday ? "today" : ""} ${weekend ? "weekend" : ""}` },
-      el("header", { class: "pl-day-head" },
-        el("div", {},
-          el("div", { class: "pl-dow" }, isToday ? "Today" : date.toLocaleDateString([], { weekday: "short" }),
-            weekend && el("span", { class: "pl-wkd" }, "Weekend")),
-          el("div", { class: "pl-date" }, date.toLocaleDateString([], { month: "short", day: "numeric" }))),
-        el("div", { class: "pl-counts" },
-          d.meetings.length ? el("span", { class: "chip", title: "Outlook meetings" }, `${d.meetings.length} mtg`) : null,
-          overlays.length ? el("span", { class: "chip pl-chip-ovl", title: "Events from your other calendars" }, `${overlays.length} other`) : null,
-          d.items.length ? el("span", { class: "chip pl-chip-fu", title: "Follow-ups" }, `${d.items.length} f/u`) : null),
-        el("button", { class: "icon subtle pl-add-personal", title: "Add a personal entry (personal vault, this PC only)", "aria-label": `Add personal entry on ${d.date}`,
-          onclick: () => withPersonal(() => personalDialog({ day: d.date, all_day: true }), "Unlock to add a personal entry.") }, "+")),
-      block(overlays.length ? "Calendar" : "Outlook", meetings, "pl-b-mtg"),
-      block("Follow-ups", d.items.map(itemRow), "pl-b-fu"),
-      block("Personal", d.personal.map(personalRow), "pl-b-personal"),
-      !meetings.length && !d.items.length && !d.personal.length ? el("div", { class: "pl-free" }, weekend ? "Weekend" : "Open day") : null);
+  // ---- the time grid ------------------------------------------------------------------------------------
+  const LONG_HOURS = 12;  // a timed event longer than this (a multi-day hold) goes in the strip, with the all-day ones
+  const hourLabel = (h) => new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: "numeric" });
+  const KIND_LABEL = { meeting: "Teams meeting", calendar: "Outlook", personal: "Personal", lunch: "Lunch block (not a meeting)" };
+
+  // A click on anything but a personal entry: its full row (Join, Notes, Open) in a dialog.
+  const detail = (row) => CC.showDialog(el("ul", { class: "pl-list" }, row), el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Close")));
+
+  // Everything on a day in one shape. cls pl-ovl and pl-b-personal are what Privacy mode and a vault lock remove
+  // (privacy.js, privacy.css, dropPersonal below), so overlay and personal items must always carry them.
+  function dayEvents(d) {
+    const out = [];
+    for (const m of d.meetings) out.push({ kind: m.lunch ? "lunch" : m.join_url ? "meeting" : "calendar", allDay: m.all_day, start: new Date(m.start), end: new Date(m.end),
+      title: m.subject, where: m.location, m, cls: m.status === "tentative" ? "tentative" : "", open: () => detail(meetingRow(m)) });
+    for (const e of d.overlays || []) out.push({ kind: "overlay", allDay: e.all_day, start: new Date(e.start), end: new Date(e.end),
+      title: e.busy ? "Busy" : e.title, where: e.location, calendar: e.calendar, color: e.color, cls: `pl-ovl ${e.busy ? "pl-ovl-busy" : ""}`, open: () => detail(overlayRow(e)) });
+    for (const p of d.personal) out.push({ kind: "personal", allDay: p.all_day || !p.start, start: new Date(`${d.date}T${p.start || "00:00"}`), end: new Date(`${d.date}T${p.end || p.start || "00:00"}`),
+      title: p.title, cls: "pl-b-personal", open: () => personalDialog(p) });
+    return out.filter((e) => !Number.isNaN(e.start.getTime()));
+  }
+
+  const colored = (node, color) => { if (color) { node.style.setProperty("--ev", color); node.style.setProperty("--ovl", color); } return node; };
+
+  function eventBlock(ev, startH, now) {
+    const past = ev.end <= now, live = ev.start <= now && now < ev.end, short = ev.e - ev.s <= 0.5, brief = ev.e - ev.s < 1;
+    const tip = [`${clock(ev.start)} – ${clock(ev.end)}`, ev.title, ev.where, ev.kind === "overlay" ? ev.calendar : KIND_LABEL[ev.kind]].filter(Boolean).join(" · ");
+    const node = el("div", { class: `dc-ev k-${ev.kind} ${past ? "past" : ""} ${live ? "live" : ""} ${short ? "short" : ""} ${brief ? "brief" : ""} ${ev.cls}` },
+      el("button", { type: "button", class: "dc-main", title: tip, "aria-label": tip, onclick: ev.open },
+        el("span", { class: "dc-title" }, ev.kind === "lunch" ? "🍽 Lunch" : ev.title),
+        el("span", { class: "dc-time" }, clock(ev.start), !short && el("span", { class: "pl-ev-end" }, ` – ${clock(ev.end)}`))),
+      ev.m?.join_url && !past && el("button", { type: "button", class: "small primary dc-join", title: "Join the Teams meeting", "aria-label": `Join ${ev.title}`,
+        onclick: () => CC.openExternal(ev.m.join_url) }, "Join"));
+    node.style.setProperty("--t", String(ev.s - startH));
+    node.style.setProperty("--h", String(Math.max(ev.e - ev.s, 0.25)));
+    node.style.setProperty("--col", String(ev.col));
+    node.style.setProperty("--cols", String(ev.cols));
+    return colored(node, ev.color);
+  }
+
+  const stripEvent = (ev) => colored(el("button", { type: "button", class: `pl-tag k-${ev.kind} ${ev.cls}`,
+    title: [ev.title, ev.where, ev.kind === "overlay" ? ev.calendar : KIND_LABEL[ev.kind]].filter(Boolean).join(" · "), onclick: ev.open }, ev.title), ev.color);
+
+  const stripItem = (x) => el("button", { type: "button", class: `pl-tag k-fu ${x.overdue ? "overdue" : ""}`,
+    title: [ITEM_LABEL[x.kind], x.title, x.who, x.overdue ? "Overdue" : ""].filter(Boolean).join(" · "), onclick: () => detail(itemRow(x)) },
+    x.time ? `${hhmm(x.time)} ` : "", x.title || "(untitled)");
+
+  function dayHead(d, isToday, weekend) {
+    const date = dayDate(d.date), overlays = d.overlays || [], meetings = d.meetings.filter((m) => !m.lunch).length;
+    return el("div", { class: `pl-head ${isToday ? "today" : ""}` },
+      el("div", { class: "pl-head-day" },
+        el("div", { class: "pl-dow" }, isToday ? "Today" : date.toLocaleDateString([], { weekday: "short" })),
+        el("div", { class: "pl-date" }, date.toLocaleDateString([], { month: "short", day: "numeric" }))),
+      el("div", { class: "pl-counts" },
+        meetings ? el("span", { class: "chip", title: "Outlook meetings" }, `${meetings} mtg`) : null,
+        overlays.length ? el("span", { class: "chip pl-chip-ovl", title: "Events from your other calendars" }, `${overlays.length} other`) : null,
+        d.items.length ? el("span", { class: "chip pl-chip-fu", title: "Follow-ups" }, `${d.items.length} f/u`) : null),
+      el("button", { class: "icon subtle pl-add-personal", title: "Add a personal entry (personal vault, this PC only)", "aria-label": `Add personal entry on ${d.date}`,
+        onclick: () => withPersonal(() => personalDialog({ day: d.date, all_day: true }), "Unlock to add a personal entry.") }, "+"));
+  }
+
+  function moveNow() {
+    if (!nowLine) return;
+    const now = new Date();
+    const h = now.getHours() + now.getMinutes() / 60;
+    nowLine.hidden = h < range.start || h > range.end;
+    nowLine.style.setProperty("--t", String(h - range.start));
+    nowLine.title = `Now ${clock(now)}`;
+  }
+
+  function renderGrid(days) {
+    const now = new Date(), today = isoDay(now), wd = CC.workday || { start: 8, end: 17 };
+    const parsed = days.map((d) => {
+      const date = dayDate(d.date), dayStart = date.getTime();
+      const hoursOf = (t) => Math.min(24, Math.max(0, (t.getTime() - dayStart) / 3600000));
+      const all = dayEvents(d);
+      const inStrip = (ev) => ev.allDay || ev.end - ev.start > LONG_HOURS * 3600000;
+      const timed = all.filter((ev) => !inStrip(ev)).map((ev) => ({ ...ev, s: hoursOf(ev.start), e: Math.max(hoursOf(ev.end), hoursOf(ev.start)) }));
+      return { d, timed, strip: all.filter(inStrip), isToday: d.date === today, weekend: [0, 6].includes(date.getDay()) };
+    });
+
+    // The same hours for every column: the workday at least, stretched to fit what's on.
+    let startH = Math.floor(wd.start), endH = Math.ceil(wd.end);
+    for (const p of parsed) for (const ev of p.timed) { startH = Math.min(startH, Math.floor(ev.s)); endH = Math.max(endH, Math.ceil(ev.e)); }
+    endH = Math.max(endH, startH + 1);
+    range = { start: startH, end: endH };
+    const hours = [];
+    for (let h = startH; h < endH; h++) hours.push(h);
+
+    nowLine = null;
+    const bodies = parsed.map((p) => {
+      CC.calendarColumns(p.timed);
+      const line = p.isToday ? el("div", { class: "dc-now", "aria-hidden": "true" }) : null;
+      if (line) nowLine = line;
+      return el("div", { class: `pl-col ${p.isToday ? "today" : ""}`, role: "group", "aria-label": dayDate(p.d.date).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) },
+        hours.map((h) => el("div", { class: `dc-hour ${p.weekend || h < wd.start || h >= wd.end ? "off" : ""}` })),
+        el("div", { class: "dc-events" }, p.timed.map((ev) => eventBlock(ev, startH, now))),
+        line);
+    });
+    const anyStrip = parsed.some((p) => p.strip.length || p.d.items.length);
+    // Days with nothing timed on a weekend give their width to the working days.
+    const track = (p) => (p.weekend && !p.timed.length ? "minmax(6rem, .6fr)" : "minmax(var(--pl-col), 1fr)");
+    grid.classList.toggle("no-strip", !anyStrip);
+    grid.style.setProperty("--hours", String(hours.length));
+    grid.style.gridTemplateColumns = `3.4rem ${parsed.map(track).join(" ")}`;
+    grid.replaceChildren(
+      el("div", { class: "pl-corner" }),
+      ...parsed.map((p) => dayHead(p.d, p.isToday, p.weekend)),
+      ...(anyStrip ? [el("div", { class: "pl-strip-label" }, "All day"),
+        ...parsed.map((p) => el("div", { class: `pl-strip ${p.isToday ? "today" : ""}` }, p.strip.map(stripEvent), p.d.items.map(stripItem)))] : []),
+      el("div", { class: "pl-gutter", "aria-hidden": "true" }, hours.map((h) => el("span", {}, hourLabel(h)))),
+      ...bodies);
+    shownDay = today;
+    moveNow();
+
+    // First draw: if the current time is below the fold, bring it into view. Later reloads keep the scroll position.
+    if (!scrolled && grid.clientHeight) {
+      scrolled = true;
+      if (nowLine && !nowLine.hidden) {
+        const top = nowLine.getBoundingClientRect().top - grid.getBoundingClientRect().top;
+        if (top > grid.clientHeight - 40) grid.scrollTop = top - grid.clientHeight / 3;
+      }
+    }
   }
 
   function personalDialog(p) {
@@ -294,7 +388,7 @@
   function render(section) {
     note = el("div", { class: "muted pl-note" });
     lockBar = el("div", { class: "pl-lockbar", hidden: true, role: "status" });
-    grid = el("div", { class: "pl-grid" }, el("div", { class: "muted" }, "Loading the next 10 days…"));
+    grid = el("div", { class: "pl-cal", tabindex: "0", "aria-label": "The next 10 days" }, el("div", { class: "muted pl-loading" }, "Loading the next 10 days…"));
     legendCals = el("span", { class: "pl-legend pl-legend-cals" });
     section.replaceChildren(
       el("div", { class: "toolbar pl-toolbar" },
@@ -322,7 +416,7 @@
       const problems = (data.calendars || []).filter((c) => c.error)
         .map((c) => `${(calendars.find((x) => x.id === c.id) || {}).name || "Calendar"}: ${c.error}`);
       note.textContent = [data.outlook_error ? `Outlook: ${data.outlook_error}` : "", ...problems].filter(Boolean).join(" · ");
-      grid.replaceChildren(...data.days.map(dayCard));
+      renderGrid(data.days);
     });
   }
 
@@ -342,6 +436,13 @@
       if (section?.classList.contains("active")) load();
     }
   });
+
+  // Each minute while it's on show: the line moves; a new day reloads.
+  setInterval(() => {
+    if (!section?.classList.contains("active") || !shownDay) return;
+    if (isoDay(new Date()) !== shownDay) load();
+    else moveNow();
+  }, 60000);
 
   function mount() {
     section = document.querySelector("#tab-calendar");

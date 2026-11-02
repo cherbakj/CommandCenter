@@ -245,7 +245,7 @@
 
   function popDialog() {
     if (pop) return pop;
-    pop = el("dialog", { class: "pr-pop", "aria-labelledby": "pr-pop-title" });
+    pop = el("dialog", { class: "pr-pop", "aria-labelledby": "pr-pop-label" });
     pop.addEventListener("cancel", (e) => e.preventDefault());  // Esc doesn't close it
     pop.addEventListener("close", () => {
       if (closing || !popItems.length) return;
@@ -278,9 +278,11 @@
             el("button", { type: "button", class: "small subtle", "aria-label": "Other snooze lengths", title: "Other snooze lengths",
               onclick: () => { more.hidden = !more.hidden; } }, "▾"), more) : null));
     });
+    // One reminder due now needs no heading: its text, in bold, says it all.
+    const heading = n > 1 ? `${n} personal reminders${missed ? ` · ${missed} missed while you were away` : ""}` : missed ? "Missed while you were away" : "";
     d.replaceChildren(...[
-      el("div", { class: "panel-label" }, "PERSONAL REMINDER"),
-      el("h3", { id: "pr-pop-title" }, n === 1 ? (missed ? "Missed while you were away" : "Time for this") : `${n} personal reminders${missed ? ` · ${missed} missed while you were away` : ""}`),
+      el("div", { class: "panel-label", id: "pr-pop-label" }, "PERSONAL REMINDER"),
+      heading ? el("h3", {}, heading) : null,
       el("ul", { class: "list pr-pop-list" }, rows),
       !popAvailable ? el("div", { class: "pr-pop-lock" },
         el("span", { class: "muted" }, `${popPrivate ? "Privacy mode is on" : "Your personal vault is locked"}, so the text is hidden. Done works without unlocking.`),

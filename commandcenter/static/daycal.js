@@ -66,6 +66,8 @@
     if (group.length) close();
   }
 
+  CC.calendarColumns = layoutColumns;  // the Calendar tab's time grid too (planner.js)
+
   const KIND_LABEL = { meeting: "Teams meeting", calendar: "Outlook", personal: "Personal", lunch: "Lunch block (not a meeting)" };
 
   function block(ev, startH, now) {
