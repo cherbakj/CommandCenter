@@ -300,7 +300,8 @@ def response_headers(path: str) -> list[tuple[bytes, bytes]]:
         (b"x-frame-options", b"SAMEORIGIN"),
         (b"cross-origin-opener-policy", b"same-origin"),
         (b"cross-origin-resource-policy", b"same-origin"),
-        (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=(), usb=()"),
+        # The dashboard may ask for the microphone (Voice tab); the desktop window still refuses it unless the switch is on.
+        (b"permissions-policy", b"camera=(), microphone=(%s), geolocation=(), payment=(), usb=()" % (b"self" if path == "/" else b"")),
     ]
     if not path.startswith("/static/"):
         headers.append((b"cache-control", b"no-store"))  # keep mail etc. out of the browser's disk cache

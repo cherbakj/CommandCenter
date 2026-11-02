@@ -226,6 +226,15 @@ def inventory() -> list[dict]:
         connected=ac,
         state="Connected" if ac else "Not connected", actions=["disconnect"] if ac else [])
 
+    from . import voice
+    vk = _try(lambda: voice._key() is not None, False)
+    add("voice", "Voice (test)", "Work", "Talk to OpenAI's Realtime API from the Voice tab. While a session is open, your voice "
+        "and what it reads for you (meetings, follow-ups, tasks, mail, Teams previews, alerts, Pulse tickets) go to OpenAI, under "
+        "OpenAI's API data terms. Personal data is never offered.",
+        "Only the API key, in Windows Credential Manager. The transcript is on the page only and goes with a reload.",
+        "Credential Manager (DPAPI)", "Key until removed; nothing else is kept here", connected=vk,
+        state="Key saved" if vk else "Not set up", actions=["disconnect"] if vk else [])
+
     running = None
     try:
         from . import terminal

@@ -357,6 +357,7 @@
   const ACTIONS = {
     asana: { disconnect: { label: "Disconnect", path: "/api/asana/disconnect", text: "Disconnect Asana? The token is deleted from Credential Manager." } },
     pulse: { disconnect: { label: "Disconnect", path: "/api/pulse/disconnect", text: "Disconnect Pulse? The database password is deleted from Credential Manager." } },
+    voice: { disconnect: { label: "Remove key", path: "/api/voice/disconnect", text: "Remove the OpenAI key? It's deleted from Credential Manager." } },
     toolkit: { forget: { label: "Forget password", path: "/api/toolkit/forget", text: "Forget the Toolkit SQL password? It's deleted from Credential Manager." } },
   };
   let panelOpen = false;

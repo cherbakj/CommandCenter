@@ -29,7 +29,7 @@ def _load_feature_modules():
     """Optional feature modules (each in its own file) that add API routes and background jobs."""
     found = []
     for name in ("security", "toolkit", "pulse", "terminal", "vscode", "planner", "profile", "feeds", "daily", "vault", "privacy",
-                 "spam", "offhours", "reminders", "snip", "hoxhunt", "websites", "keeplive"):
+                 "spam", "offhours", "reminders", "snip", "hoxhunt", "websites", "keeplive", "voice"):
         try:
             found.append(importlib.import_module(f".{name}", __package__))
         except ModuleNotFoundError as e:

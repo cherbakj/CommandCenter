@@ -295,6 +295,11 @@ daily:
 # Only start/end times are stored (encrypted, retention.offhours_days), never what you were doing. Nothing is
 # logged while Command Center isn't running (it starts at sign-in) or while the PC sleeps.
 # ---------------------------------------------------------------------------
+voice:                           # Voice tab (test). The OpenAI API key is entered in the tab, kept in Credential Manager.
+  model: gpt-realtime-2.1        # or gpt-realtime-2.1-mini, about a third of the price
+  voice: marin                   # marin and cedar are OpenAI's best quality
+  idle_minutes: 5                # a session ends after this long with nobody talking
+
 offhours:
   enabled: true
   work_start: "08:00"            # work hours (local time); everything outside them counts as off-hours

@@ -162,7 +162,8 @@ def _set_window_icon(hwnd):
 
 
 # ---- WebView2 hardening ---------------------------------------------------------------
-_nav = {"origin": None, "action": None, "leaving": None}
+MIC_STATE_WAIT = 5  # seconds
+_nav = {"origin": None, "action": None, "leaving": None, "core": None}
 
 
 def _harden_webview():
@@ -190,6 +191,9 @@ def _harden_webview():
         original_ready(self, sender, args)
         if args.IsSuccess:
             sender.CoreWebView2.NavigationStarting += _on_navigation
+            sender.CoreWebView2.PermissionRequested += _on_permission
+            _nav["core"] = sender.CoreWebView2
+            _deny_mic()  # WebView2 remembers the last state across starts
 
     def on_new_window_request(self, sender, args):
         args.set_Handled(True)  # never open a second WebView2 window
@@ -201,11 +205,41 @@ def _harden_webview():
     edgechromium.EdgeChrome.on_new_window_request = on_new_window_request
 
 
+def _set_mic_state(on: bool):
+    """The window's microphone permission for this app's page (UI thread). WebView2 remembers an answer, even across
+    starts, and asks no more, so Voice's switch sets it each time rather than answering requests. Returns the Task."""
+    from Microsoft.Web.WebView2.Core import CoreWebView2PermissionKind, CoreWebView2PermissionState
+    state = CoreWebView2PermissionState.Allow if on else CoreWebView2PermissionState.Deny
+    return _nav["core"].Profile.SetPermissionStateAsync(CoreWebView2PermissionKind.Microphone, _nav["origin"].rstrip("/"), state)
+
+
+def _deny_mic():
+    """Never lets a WebView2 problem get in the way of what it's called from (window start-up, navigation)."""
+    try:
+        _set_mic_state(False)
+    except Exception as e:
+        log.warning("Voice: couldn't set the microphone permission (%s)", type(e).__name__)
+
+
+def _on_permission(sender, args):
+    """A microphone request the state above doesn't settle (if setting it failed): the same rule, not remembered."""
+    from Microsoft.Web.WebView2.Core import CoreWebView2PermissionKind, CoreWebView2PermissionState
+    if args.PermissionKind == CoreWebView2PermissionKind.Microphone:
+        from . import voice
+        ok = voice.mic_on() and str(args.Uri).startswith(_nav["origin"] or "\0")
+        args.SavesInProfile = False
+        args.State = CoreWebView2PermissionState.Allow if ok else CoreWebView2PermissionState.Deny
+
+
 def _on_navigation(sender, args):
     uri = str(args.Uri)
     if uri.startswith(_nav["origin"] or "\0") or uri.startswith(("about:", "data:text/html")):
         if _nav.get("leaving"):
             _nav["leaving"]()  # the dashboard page is going away (reload, lock page): the native views hide
+        if _nav.get("core"):  # ...and its microphone goes with it
+            from . import voice
+            voice.page_left()
+            _deny_mic()
         return
     args.Cancel = True
     if uri.startswith(ACTION_URL):
@@ -429,6 +463,28 @@ class DesktopApp:
         else:
             self._on_ui(self._unfill)
         return self.fullscreen
+
+    def set_mic_permission(self, on: bool) -> bool:
+        """Voice's switch (server thread): waits until the window has the new state, so the page's next request sees it."""
+        if not _nav["core"]:
+            return False
+        applied = threading.Event()
+        task = {}
+
+        def apply(_form):
+            try:
+                task["t"] = _set_mic_state(on)
+            finally:
+                applied.set()
+        self._on_ui(apply)
+        if not applied.wait(MIC_STATE_WAIT) or "t" not in task:
+            return False
+        deadline = time.monotonic() + MIC_STATE_WAIT
+        while time.monotonic() < deadline:
+            if task["t"].IsCompleted:
+                return not task["t"].IsFaulted
+            time.sleep(.02)
+        return False
 
     def _on_ui(self, fn):
         """Runs fn(form) on the window's UI thread (BeginInvoke: never sets a window property from another thread)."""
@@ -732,6 +788,8 @@ class DesktopApp:
         alerts.open_hook = self.show
         from . import reminders
         reminders.front_hook = self.raise_for_reminder
+        from . import voice
+        voice.permission_hook = self.set_mic_permission
         security.shell = self
         self.server = uvicorn.Server(uvicorn.Config(security.guard(app), host="127.0.0.1", port=self.port,
                                                     log_config=None, log_level="warning", access_log=False))

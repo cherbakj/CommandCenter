@@ -1,0 +1,24 @@
+/* Voice tab (voice.js). */
+#tab-voice.active { display: flex; flex-direction: column; height: 100%; min-height: 24rem; }
+.vc-wrap { display: flex; flex-direction: column; gap: .6rem; flex: 1; width: 100%; max-width: 56rem; margin: 0 auto; min-height: 0; }
+.vc-wrap h2, .vc-wrap p { margin: 0; line-height: 1.45; }
+.vc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem; }
+.vc-mic { display: flex; align-items: center; gap: .45rem; font: 700 .95rem var(--font-ui); cursor: pointer; }
+.vc-mic input { width: 1.15rem; height: 1.15rem; margin: 0; accent-color: var(--red); }
+.vc-status { min-height: 1.4em; font-weight: 600; }
+.vc-cost { font-size: .84rem; font-variant-numeric: tabular-nums; }
+.vc-key { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; font-size: .84rem; }
+.vc-key form { flex: 1 1 100%; max-width: 32rem; }
+.vc-key input { flex: 1; min-width: 0; }
+.vc-scroll { flex: 1 1 12rem; min-height: 8rem; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-card); padding: .5rem .7rem; }
+.vc-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .4rem; }
+.vc-log:empty::before { content: "What you say and its answers show here."; color: var(--dim); }
+.vc-row { display: grid; grid-template-columns: 3.2rem minmax(0, 1fr); gap: .5rem; line-height: 1.4; }
+.vc-who { font-size: .76rem; font-weight: 700; color: var(--muted); padding-top: .12rem; }
+.vc-text { overflow-wrap: anywhere; }
+.vc-ai .vc-who { color: var(--accent-2); }
+.vc-tool { font-size: .8rem; color: var(--dim); }
+.vc-tool .vc-who { color: var(--dim); }
+.vc-note { font-size: .78rem; }
+/* In the header while the microphone is on, on every tab. Flat on purpose, like the rest of the header. */
+.voice-chip { flex: none; color: var(--red); border-color: var(--red); font-weight: 700; white-space: nowrap; }
