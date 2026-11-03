@@ -2694,10 +2694,20 @@ async function refresh() {
     const dot = (state) => el("span", { class: `dot ${state === undefined ? "" : state ? "ok" : "bad"}` });
     const item = (state, name) => el("span", { title: `${name}: ${state === undefined ? "not checked" : state ? "OK" : "problem"}` },
       dot(state), el("span", { class: "status-name" }, name));
-    $("#status").replaceChildren(
-      item(st.outlook ? st.outlook.ok : undefined, "Outlook"),
-      item(st.teams ? st.teams.ok : undefined, "Teams"),
-      ...(sites.length ? [item(sitesOk, "Websites")] : []));
+    // The health light (health.py): one dot for everything; a click lists what's behind it (health.js).
+    if (st.health && CC.health) {
+      const h = st.health;
+      const label = h.issues ? `${h.issues} issue${h.issues === 1 ? "" : "s"}` : "All OK";
+      const tip = h.issues ? `Health: ${h.names.join(", ")}. Click for details.` : "Health: everything's working. Click for details.";
+      $("#status").replaceChildren(el("button", { type: "button", class: `health-chip h-${h.state}`, title: tip,
+        "aria-label": `Health: ${label}`, onclick: () => CC.health.open() },
+        el("span", { class: `dot ${h.state === "ok" ? "ok" : h.state}` }), el("span", { class: "status-name" }, label)));
+    } else {
+      $("#status").replaceChildren(
+        item(st.outlook ? st.outlook.ok : undefined, "Outlook"),
+        item(st.teams ? st.teams.ok : undefined, "Teams"),
+        ...(sites.length ? [item(sitesOk, "Websites")] : []));
+    }
     renderTeamsBadge(st.teams);
     renderWindowControls(st);
     if (unread !== lastUnread && $("#tab-alerts").classList.contains("active")) loaders.alerts();

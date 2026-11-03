@@ -211,6 +211,15 @@ button.nm-join { flex: none; border-radius: var(--r-pill); }
 .dot { display: inline-block; width: .5rem; height: .5rem; margin-right: .45rem; border-radius: 50%; background: var(--muted); }
 .dot.ok { background: var(--accent); box-shadow: 0 0 .5rem rgb(var(--accent-rgb) / .8); }
 .dot.bad { background: var(--red); box-shadow: 0 0 .5rem var(--red); animation: pulse-soft 1.2s ease-in-out infinite; }
+.dot.warn { background: var(--amber); box-shadow: 0 0 .45rem rgb(var(--amber-rgb) / .8); }
+/* The health light (health.js): a pill like the status items, as a button */
+.status > .health-chip {
+  display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: var(--r-pill);
+  padding: .28rem .7rem; background: rgb(255 255 255 / .04); white-space: nowrap; font: inherit; color: inherit; cursor: pointer;
+}
+.status > .health-chip:hover { border-color: rgb(var(--accent-rgb) / .5); color: var(--text); }
+.status > .health-chip.h-warn { border-color: rgb(var(--amber-rgb) / .55); color: var(--amber); }
+.status > .health-chip.h-bad { border-color: rgb(var(--red-rgb) / .6); color: var(--red); }
 .badge {
   display: inline-block; min-width: 1.25rem; text-align: center; background: var(--hot); color: #1a0016; padding: 0 .38rem; margin-left: .4rem;
   border-radius: var(--r-pill); font: 700 .66rem/1.45 var(--font-mono); box-shadow: 0 0 .6rem rgb(var(--hot-rgb) / .5);
@@ -1036,7 +1045,7 @@ dialog:focus-visible { outline: none; }
 /* ---- header at smaller widths: one row while it fits, with COMMS and WORK as dropdowns when the strips don't (app.js fitHeader) ---- */
 /* Labels next to the search key and the status dots show while the header has room (app.js fitHeader). */
 body > header.hdr-tight .search-btn span, body > header.hdr-tight .status-name, body > header.hdr-tight .snip-word { display: none; }
-body > header.hdr-tight .status > span { padding: .28rem .45rem; }
+body > header.hdr-tight .status > span, body > header.hdr-tight .status > .health-chip { padding: .28rem .45rem; }
 body > header.hdr-compact .logo-text { display: none; }
 body > header.hdr-tight .status .dot { margin-right: 0; }
 @media (max-width: 2799px) {
@@ -1056,7 +1065,10 @@ body > header.nav-wrap .next-meeting { order: 4; }
   body > header { padding: .45rem 1rem; }
 }
 @media (max-width: 1100px) {
-  .status { display: none; }
+  .status > span { display: none; }  /* the old per-source dots; the health light stays, as a dot */
+  .status .status-name { display: none; }
+  .status > .health-chip { padding: .28rem .45rem; }
+  .status .health-chip .dot { margin-right: 0; }
 }
 @media (max-width: 700px) {
   body > header { gap: .6rem; padding: .5rem .75rem; }

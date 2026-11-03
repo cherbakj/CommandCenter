@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import secrets
+import sys
 import time
 import traceback
 import urllib.parse
@@ -29,7 +30,7 @@ def _load_feature_modules():
     """Optional feature modules (each in its own file) that add API routes and background jobs."""
     found = []
     for name in ("security", "toolkit", "pulse", "terminal", "vscode", "planner", "profile", "feeds", "daily", "vault", "privacy",
-                 "spam", "offhours", "reminders", "snip", "hoxhunt", "websites", "keeplive", "voice"):
+                 "spam", "offhours", "reminders", "snip", "hoxhunt", "websites", "keeplive", "voice", "health"):
         try:
             found.append(importlib.import_module(f".{name}", __package__))
         except ModuleNotFoundError as e:
@@ -131,13 +132,19 @@ async def maintenance_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    tasks = [asyncio.create_task(maintenance_loop()),  # encryption of legacy rows + retention, at start and daily
-             asyncio.create_task(outlook.watch_loop()), asyncio.create_task(web.watch_loop()),
-             asyncio.create_task(today.briefing_loop()), asyncio.create_task(teams.watch_loop()),
-             asyncio.create_task(orders.clipboard_loop())]
+    jobs = [("maintenance", maintenance_loop),  # encryption of legacy rows + retention, at start and daily
+            ("outlook", outlook.watch_loop), ("websites", web.watch_loop), ("briefing", today.briefing_loop),
+            ("teams", teams.watch_loop), ("orders", orders.clipboard_loop)]
     for module in FEATURE_MODULES:
         for job in getattr(module, "background", []):
-            tasks.append(asyncio.create_task(job()))
+            jobs.append((f"{module.__name__.rsplit('.', 1)[-1]}.{job.__name__}", job))
+    tasks = []
+    health = sys.modules.get(f"{__package__}.health")
+    for name, job in jobs:
+        task = asyncio.create_task(job(), name=name)
+        if health:
+            health.watch_task(task, name)  # one that stops while CC runs shows on the health light
+        tasks.append(task)
     # A start is logged, not raised as an alert (each restart and test copy used to add an unread one).
     log.info("Command Center started; watching Outlook and websites")
     try:
@@ -238,13 +245,31 @@ async def status():
         "asana": await asyncio.to_thread(asana.connected),
         "focus": alerts.focus_state(),
         "ui": {"accent": user_profile.get()["accent"],
-               "capture_hotkey": config.section("ui", {}).get("capture_hotkey", "Ctrl+Alt+Space") or "",
+               "capture_hotkey": _capture_hotkey(),
                "workday": [t.get("workday_start", "08:00"), t.get("workday_end", "17:00")]},
         "desktop": hasattr(app.state, "show_window"),
         "config_path": str(config.CONFIG_PATH),
         "folder_security": {k: v for k, v in (await asyncio.to_thread(security.folder_security)).items()
                             if k in ("ok", "unsafe", "fix")},
+        "health": await _health_summary(),
     }
+
+
+def _capture_hotkey() -> str:
+    """The quick-capture hotkey as configured (desktop.py registers it), for the ? sheet; "" when it's off."""
+    raw = str(config.section("ui", {}).get("capture_hotkey", "Ctrl+Alt+Space") or "").strip()
+    return "" if raw.lower() in ("", "off", "none", "false") else raw
+
+
+async def _health_summary():
+    health = sys.modules.get(f"{__package__}.health")
+    if not health:
+        return None
+    try:
+        return await asyncio.to_thread(health.summary)
+    except Exception as e:
+        log.warning("Health summary failed: %s", type(e).__name__)
+        return None
 
 
 @app.post("/api/focus")

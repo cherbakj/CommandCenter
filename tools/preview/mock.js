@@ -538,7 +538,14 @@
   function get(path, q) {
     switch (path) {
       case "/status": return json({ outlook: { ok: true, checked: at(0) }, websites: Object.fromEntries(monitors().filter((m) => m.enabled).map((m) => [m.name, m.state])),
-        teams: teamsState(), focus, ui: { accent: profile.accent, workday: ["08:00", "17:00"] }, desktop: false, config_path: "config.yaml" });
+        teams: teamsState(), focus, ui: { accent: profile.accent, workday: ["08:00", "17:00"], capture_hotkey: "Ctrl+Alt+Space" }, desktop: false, config_path: "config.yaml",
+        health: { state: "ok", issues: 0, names: [] } });
+      case "/health": return json({ state: "ok", issues: 0, names: [], checked: at(0), checks: [
+        { id: "outlook", name: "Outlook", state: "ok", text: "Read just now." },
+        { id: "teams", name: "Teams reader", state: "ok", text: "Read 1 min ago." },
+        { id: "pulse", name: "Pulse tickets", state: "ok", text: "Read 2 min ago." },
+        { id: "spam", name: "Spam blocks", state: "ok", text: "Outlook rules saved: blocks work with Command Center closed too." },
+        { id: "jobs", name: "Background jobs", state: "ok", text: "All running." }] });
       case "/alerts": return json({ alerts: (q.get("unread_only") === "true" ? alerts.filter((a) => !a.read) : alerts).slice().sort((a, b) => b.ts.localeCompare(a.ts)), unread: unreadAlerts() });
       case "/today": return json(todayData(), 200, 120);
       case "/mail": {

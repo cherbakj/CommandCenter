@@ -1,0 +1,17 @@
+/* Health dialog (health.js) */
+.hl-sum { display: flex; align-items: center; gap: .1rem; font-weight: 600; margin: 0 0 .7rem; }
+.hl-list { list-style: none; margin: 0; padding: 0; max-height: min(65vh, 40rem); overflow-y: auto; }
+.hl-row { display: flex; align-items: flex-start; gap: .7rem; padding: .55rem .4rem; border-bottom: 1px solid var(--line); }
+.hl-row .dot { margin: .4rem 0 0; flex: none; }
+.hl-row .dot.note, .hl-sum .dot.note { background: var(--cyan); }
+.hl-row .dot.off { background: transparent; border: 1px solid var(--muted); }
+.hl-main { flex: 1; min-width: 0; }
+.hl-head { display: flex; gap: .6rem; align-items: baseline; }
+.hl-word { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.hl-bad .hl-word { color: var(--red); }
+.hl-warn .hl-word { color: var(--amber); }
+.hl-text { font-size: .88rem; margin-top: .1rem; overflow-wrap: anywhere; }
+.hl-fix { font-size: .82rem; margin-top: .15rem; overflow-wrap: anywhere; }
+.hl-off .hl-main { opacity: .75; }
+.hl-row > button { flex: none; align-self: center; }
+.hl-sum > .muted { margin-left: .35rem; font-weight: 400; }
