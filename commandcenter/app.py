@@ -573,7 +573,12 @@ async def mail(unread_only: bool = False, limit: int = 50, q: str = "", folder: 
         raise HTTPException(400, "Type at least 2 characters to search")
     if folder not in ("inbox", "sent"):
         raise HTTPException(400, "folder must be inbox or sent")
-    return await outlook.call(outlook.mail_view, min(max(limit, 1), 200), unread_only, q, folder)
+    view = await outlook.call(outlook.mail_view, min(max(limit, 1), 200), unread_only, q, folder)
+    snoozed = today.active_snoozes()
+    if snoozed and not q:  # snoozed mail is out of the list until it's back (a search still finds it)
+        view["mail"] = [m for m in view["mail"] if m["id"] not in snoozed]
+        view["snoozed"] = sum(1 for v in snoozed.values() if v.get("kind") != "task")
+    return view
 
 
 @app.get("/api/mail/item")
@@ -703,6 +708,7 @@ async def mail_reply(id: str = Body(...), text: str = Body(...), reply_all: bool
         db.kv_set("mail:sent_log", sent[:200])
         if remind_days > 0:
             today.watch_for_reply(info, remind_days, id)
+        today.clear_back(id)  # replied: no longer "back from snooze"
         removed = await asyncio.to_thread(db.delete_mail_alerts, id)  # replied: its alerts are done with
         if removed:
             log.info("Reply sent: removed %d alert(s) for that email", removed)
@@ -782,7 +788,7 @@ async def calendar_block(subject: str = Body(...), start: str = Body(...), minut
 
 @app.get("/api/snoozes")
 async def get_snoozes():
-    return {"snoozes": today.snoozes(), "reply_watches": today.reply_watches()}
+    return {"snoozes": today.active_snoozes(), "reply_watches": today.reply_watches()}
 
 
 @app.post("/api/snooze")

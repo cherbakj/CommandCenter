@@ -44,6 +44,7 @@
       }
     };
     add(f.urgent_reply, { group: "Urgent — reply needed", src: "outlook", urgent: true });
+    add(f.back, { group: "Back from snooze", src: "outlook" });
     add(teams.filter((m) => m && m.urgent), { group: "Teams — urgent", src: "teams", urgent: true });
     add(f.needs_reply, { group: "Needs your reply", src: "outlook" });
     add(teams.filter((m) => m && !m.urgent), { group: "Teams — reply needed", src: "teams" });

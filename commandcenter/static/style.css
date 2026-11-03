@@ -400,6 +400,8 @@ textarea { min-height: 7.5rem; resize: vertical; line-height: 1.5; }
 .tag.asana { color: var(--hot); border-color: rgb(var(--hot-rgb) / .5); }
 .tag.overdue { color: var(--red); border-color: rgb(var(--red-rgb) / .8); }
 .tag.today { color: var(--amber); border-color: rgb(var(--amber-rgb) / .8); }
+.tag.back { color: var(--cyan); border-color: rgb(var(--accent-2-rgb, 0 229 255) / .6); }
+.mr-acts .mr-snooze { font-size: .9rem; }
 .tag.live { color: var(--accent-2); border-color: var(--accent-2); box-shadow: 0 0 .6rem rgb(var(--accent-2-rgb) / .45); animation: pulse-soft 1.8s ease-in-out infinite; }
 .check {
   width: 1.15rem; height: 1.15rem; flex-shrink: 0; margin-top: .15rem; padding: 0; border: 1.5px solid var(--line-strong);

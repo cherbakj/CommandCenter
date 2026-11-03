@@ -113,19 +113,48 @@ def sort_tasks(tasks) -> list:
 
 # ---- snooze and no-reply reminders -------------------------------------------
 
+# A snoozed email whose time has come stays in the same record with a "back" time: it's then the Follow-ups group
+# "Back from snooze" until it's dealt with (reply, Done / dismiss, snoozed again) or BACK_DAYS have passed.
+BACK_DAYS = 7
+
+
 def snoozes() -> dict:
+    """Every record, the emails that are back from snooze included."""
     return db.kv_get("snoozes", {})
+
+
+def active_snoozes() -> dict:
+    """Snoozed now (not yet back)."""
+    return {k: v for k, v in snoozes().items() if not v.get("back")}
+
+
+def back_ids() -> list[str]:
+    """Emails back from snooze, newest back first."""
+    return [k for k, v in sorted(snoozes().items(), key=lambda kv: kv[1].get("back") or "", reverse=True) if v.get("back")]
+
+
+def clear_back(item_id):
+    """Done with an email that was back from snooze (replied, dismissed, Done)."""
+    s = snoozes()
+    if s.get(item_id, {}).get("back"):
+        s.pop(item_id)
+        db.kv_set("snoozes", s)
 
 
 def snooze(item_id, until, info):
     s = snoozes()
+    was_back = (s.get(item_id) or {}).get("back")
     s[item_id] = {"until": until, **{k: info.get(k, "") for k in ("subject", "who", "kind")}}
+    if was_back:
+        s[item_id]["was_back"] = was_back  # so Unsnooze (Undo) puts it back in "Back from snooze"
     db.kv_set("snoozes", s)
 
 
 def unsnooze(item_id):
     s = snoozes()
-    s.pop(item_id, None)
+    rec = s.pop(item_id, None)
+    if rec and rec.get("was_back") and not rec.get("back"):
+        s[item_id] = {**{k: v for k, v in rec.items() if k != "was_back"}, "back": rec["was_back"]}
     db.kv_set("snoozes", s)
 
 
@@ -150,9 +179,17 @@ def cancel_reply_watch(conversation):
 async def _check_snoozes_and_reminders():
     now = datetime.now().isoformat(timespec="seconds")
     s = snoozes()
+    gone = (datetime.now() - timedelta(days=BACK_DAYS)).isoformat(timespec="seconds")
     for item_id, info in list(s.items()):
+        if info.get("back"):
+            if info["back"] < gone:
+                s.pop(item_id)  # back for a week and never dealt with
+            continue
         if info["until"] <= now:
-            s.pop(item_id)
+            if info.get("kind") == "task":
+                s.pop(item_id)
+            else:
+                info["back"] = now  # an email: the Follow-ups group "Back from snooze" until it's dealt with
             alerts.raise_alert("Snooze", f"Back from snooze: {info['subject']}", info.get("who", ""), "normal",
                                {"type": "mail", "id": item_id} if info.get("kind") != "task" else {"type": "today"},
                                toast="item back from snooze")
@@ -237,6 +274,23 @@ async def _followups(todo, refresh=False) -> dict:
             flagged.append(f)
     flagged.sort(key=lambda f: f["received"] or "", reverse=True)
     out["flagged"] = flagged[:25]
+    # Back from snooze: read fresh each time (a handful of emails), newest back first; an email that's gone (deleted,
+    # moved) or spam-blocked drops out. It's listed here only, not also in the group it would otherwise be in.
+    out["back"] = []
+    snoozed = snoozes()
+    gone = set(dismissed())  # Done / dismissed (its Undo brings it back); the record itself expires after BACK_DAYS
+    ids = [i for i in back_ids() if i not in gone][:20]
+    if ids:
+        try:
+            rows = {r["id"]: r for r in await outlook.call(outlook._summaries, ids)}
+            out["back"] = [{**rows[i], "back": snoozed[i]["back"]} for i in ids
+                           if i in rows and not spam_hidden(rows[i], blocked)
+                           and not any(m in f"{rows[i]['sender']} {rows[i]['sender_name']}".lower() for m in mutes)]
+        except Exception as e:
+            log.warning("Back from snooze: couldn't read them (%s)", type(e).__name__)
+        back = {m["id"] for m in out["back"]}
+        for k in ("urgent_reply", "needs_reply", "teams_reply", "flagged", "unread_vip"):
+            out[k] = [i for i in out.get(k, []) if i.get("id") not in back]
     # The star on received items (from the list as it is now, so a change shows before the next scan; the
     # "Important senders" group itself is rescanned: the routes that change the list clear the cache).
     for k, items in out.items():
@@ -295,7 +349,7 @@ async def build(refresh=False) -> dict:
         "agenda": agenda,
         "tasks": {"items": tasks, "asana": asana_state, "error": todo.get("error")},
         "followups": followups,
-        "snoozed": len(snoozes()),
+        "snoozed": len(active_snoozes()),
         "reply_watches": len(reply_watches()),
     }
 

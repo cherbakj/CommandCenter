@@ -734,7 +734,10 @@ function mailRow(m) {
         el("time", { class: "mr-time", datetime: m.received || "", title: when(m.received) }, mailTime(m.received))),
       el("div", { class: "mr-subj" }, m.subject),
       m.preview && el("div", { class: "mr-prev" }, m.preview.slice(0, 220))),
-    el("div", { class: "mr-acts" }, mailActions(m, "row")));
+    el("div", { class: "mr-acts" },
+      !sent && !m.hoxhunt && el("button", { type: "button", class: "icon subtle mr-snooze", title: "Snooze: back at the top of Needs you later",
+        "aria-label": `Snooze "${m.subject}"`, onclick: (e) => { e.stopPropagation(); snoozeDialog({ id: m.id, subject: m.subject, who: m.sender_name, kind: "mail" }, () => loaders.mail()); } }, "💤"),
+      mailActions(m, "row")));
 }
 
 const mailGroup = (label, n) => el("li", { class: "mail-group", role: "presentation" }, el("span", {}, label), n != null && el("span", { class: "chip" }, String(n)));
@@ -742,6 +745,8 @@ const mailGroup = (label, n) => el("li", { class: "mail-group", role: "presentat
 function renderMail() {
   const r = mailState.data;
   if (!r) return;
+  const sz = $("#mail-snoozed");
+  if (sz) { sz.hidden = !r.snoozed; sz.querySelector("span").textContent = `${r.snoozed || 0} snoozed`; }
   let mail = r.mail.slice();
   if (pinnedMail && pinnedMail.id === selectedMail && !mail.some((m) => m.id === pinnedMail.id)) mail.unshift(pinnedMail);
   const sent = r.folder === "sent";
@@ -898,7 +903,6 @@ async function showMail(id) {
     const act = (path, body, msg) => guarded(async () => { await api(path, body); if (msg) showMessage("Done", msg); loaders.mail(); showMail(id); });
     const more = () => [
       el("button", { type: "button", onclick: () => newTaskDialog({ subject: m.subject, notes: `From ${m.sender_name} <${m.sender}>, ${when(m.received)}` }) }, "+ Task"),
-      el("button", { type: "button", onclick: () => snoozeDialog({ id, subject: m.subject, who: m.sender_name, kind: "mail" }) }, "Snooze"),
       m.sender && el("button", { type: "button", onclick: () => openTeamsChat(m.sender, "") }, "Chat in Teams"),
       el("button", { type: "button", onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook"),
       ...mailActions(m, "reader"),
@@ -923,6 +927,8 @@ async function showMail(id) {
         el("button", { type: "button", class: "small", onclick: () => replyDialog(m, true) }, "Reply all"),
         el("button", { type: "button", class: "small", onclick: () => act("/api/mail/read", { id, read: m.unread }) }, m.unread ? "Mark read" : "Mark unread"),
         el("button", { type: "button", class: "small", onclick: () => act("/api/mail/flag", { id, flagged: !m.flagged }) }, m.flagged ? "Clear flag" : "⚑ Flag"),
+        m.folder !== "Sent" && el("button", { type: "button", class: "small", title: "Out of the way until later, then back at the top of Needs you",
+          onclick: () => snoozeDialog({ id, subject: m.subject, who: m.sender_name, kind: "mail" }, () => { closeReader(); loaders.mail(); }) }, "💤 Snooze"),
         menuButton("More ▾", "More actions for this email", more, "small subtle", "left")),
       orderChips,
       mailContent(m),
@@ -1457,7 +1463,7 @@ function dueText(due) {
 function followupCounts(d) {
   const f = d?.followups && !d.followups.error ? d.followups : {};
   return {
-    total: ["urgent_reply", "needs_reply", "teams_reply", "awaiting_reply", "flagged", "unread_vip"].reduce((n, k) => n + (f[k]?.length || 0), 0),
+    total: ["urgent_reply", "back", "needs_reply", "teams_reply", "awaiting_reply", "flagged", "unread_vip"].reduce((n, k) => n + (f[k]?.length || 0), 0),
     urgent: (f.urgent_reply?.length || 0) + (f.teams_reply || []).filter((m) => m.urgent).length,
     needs: f.needs_reply?.length || 0,
   };
@@ -1788,7 +1794,7 @@ function snoozeTimes(now = new Date()) {
   return { later, tomorrow, monday: day((8 - now.getDay()) % 7 || 7, 8) };
 }
 
-function snoozeDialog(item) {
+function snoozeDialog(item, onDone) {
   const t = snoozeTimes();
   const err = el("div", { class: "err", role: "alert" });
   const custom = el("input", { type: "datetime-local", step: "300", value: localInput(t.tomorrow), "aria-label": "Snooze until" });
@@ -1796,8 +1802,9 @@ function snoozeDialog(item) {
     if (isNaN(d) || d <= new Date()) throw new Error("Pick a time in the future.");
     await api("/api/snooze", { id: item.id, until: localIso(d), subject: item.subject || "", who: item.who || "", kind: item.kind });
     $("#dialog").close();
-    undoable(`Snoozed until ${dayTime(d)}`, () => api("/api/unsnooze", { id: item.id }));
+    undoable(`Snoozed until ${dayTime(d)}`, async () => { await api("/api/unsnooze", { id: item.id }); onDone?.(); });
     loaders.today();
+    onDone?.();
   });
   const opt = (label, d) => el("button", { type: "button", class: "snooze-opt", onclick: () => go(d) }, el("b", {}, label), el("span", {}, dayTime(d)));
   showDialog(el("h3", {}, "Snooze"),
@@ -1809,7 +1816,8 @@ function snoozeDialog(item) {
     el("label", { class: "field-label" }, "Or pick a date and time"),
     el("div", { class: "inline-field" }, custom, el("button", { type: "button", class: "primary", onclick: () => go(new Date(custom.value)) }, "Snooze")),
     err,
-    el("p", { class: "muted" }, item.kind === "task" ? "The task is hidden from Today until then." : "It's hidden from follow-ups until then, and you get an alert when it's back."),
+    el("p", { class: "muted" }, item.kind === "task" ? "The task is hidden from Today until then."
+      : "It's out of Mail and Follow-ups until then. Then it's back at the top of Needs you, with an alert, until you deal with it."),
     el("div", { class: "row" }, el("button", { value: "cancel", class: "subtle" }, "Cancel")));
 }
 
@@ -1834,7 +1842,7 @@ async function snoozedDialog() {
     const { snoozes, reply_watches: watches } = await api("/api/snoozes");
     const rows = Object.entries(snoozes || {}).sort((a, b) => String(a[1].until).localeCompare(String(b[1].until)));
     const d = $("#dialog");
-    const unsnooze = (id) => guarded(async () => { await api("/api/unsnooze", { id }); await snoozedDialog(); loaders.today(); });
+    const unsnooze = (id) => guarded(async () => { await api("/api/unsnooze", { id }); await snoozedDialog(); loaders.today(); loaders.mail?.(); });
     showDialog(el("h3", {}, `Snoozed (${rows.length})`),
       rows.length ? el("ul", { class: "list dialog-list" }, rows.map(([id, s]) => el("li", {},
         el("div", { class: "grow" },
@@ -2011,6 +2019,19 @@ function vipRow(m) {
   });
 }
 
+function backRow(m) {
+  return fuRow(m, {
+    cls: `${m.unread ? "unread" : ""} fu-back`,
+    src: srcTag("outlook", "back from snooze"), who: m.sender_name || m.sender, whoTitle: fromLine(m.sender_name, m.sender),
+    subject: m.subject, at: m.received,
+    tags: [el("span", { class: "tag back", title: `Back from snooze ${when(m.back)}` }, "💤 back")],
+    primary: el("button", { type: "button", class: "small primary", "aria-label": `Reply to "${m.subject}"`, onclick: () => replyDialog(m, false) }, "Reply"),
+    quick: [fuView(m), fuSnooze(m),
+      el("button", { type: "button", class: "small", title: "Done with it: off this list", "aria-label": `Done: ${m.subject}`, onclick: () => dismissFollowup(m.id) }, "Done")],
+    more: () => [m.sender && el("button", { type: "button", onclick: () => openTeamsChat(m.sender, "") }, "Chat in Teams"), ...mailActions(m, "followup")],
+  });
+}
+
 function renderFollowups(f) {
   closeMenu();
   const box = $("#followups");
@@ -2021,6 +2042,7 @@ function renderFollowups(f) {
     .filter(Boolean).join(" · ");
   const sections = [
     fuSection("urgent", "Urgent — reply needed", f.urgent_reply, (m) => replyRow(m, { urgent: true }), { hot: true, urgent: true }),
+    fuSection("back", "Back from snooze", f.back, backRow),
     fuSection("reply", "Needs your reply", f.needs_reply, (m) => replyRow(m)),
     fuSection("teams", "Teams — reply needed", f.teams_reply, teamsRow, { hot: !!f.teams_reply?.some((m) => m.urgent) }),
     fuSection("awaiting", "Awaiting their reply", f.awaiting_reply, awaitingRow),
@@ -2201,6 +2223,7 @@ loaders.today = (refresh = false) => guarded(async () => {
 
 $("#today-refresh").addEventListener("click", () => loaders.today(true));
 $("#snoozed-btn").addEventListener("click", snoozedDialog);
+$("#mail-snoozed").addEventListener("click", snoozedDialog);
 $("#urgent-btn").addEventListener("click", urgentDialog);
 
 // ---- small popup menus (⋯ on follow-up rows, task priority) ---------------------------------------------------
@@ -2591,7 +2614,7 @@ function paletteSources() {
     for (const t of todayData.tasks.items) add("Tasks", t.subject, dueText(t.due), () => t.url ? openExternal(t.url) : guarded(() => api("/api/outlook/open", { id: t.id })));
     const f = todayData.followups.error ? {} : todayData.followups;
     const seenFu = new Set();  // a message can be in two groups (e.g. needs a reply and flagged): list it once
-    for (const m of [...(f.urgent_reply || []), ...(f.needs_reply || []), ...(f.teams_reply || []), ...(f.flagged || []), ...(f.unread_vip || [])]) {
+    for (const m of [...(f.urgent_reply || []), ...(f.back || []), ...(f.needs_reply || []), ...(f.teams_reply || []), ...(f.flagged || []), ...(f.unread_vip || [])]) {
       if (!m || seenFu.has(m.id)) continue;
       seenFu.add(m.id);
       add("Follow-ups", m.subject, m.sender_name, () => { openTab("mail"); showMail(m.id); });

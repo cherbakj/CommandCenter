@@ -163,7 +163,7 @@ async def _dated_items(first: date, last: date) -> list[dict]:
             if day <= last.isoformat():
                 items.append({"kind": "flag", "source": "flagged", "id": f["id"], "day": day, "title": f["subject"],
                               "who": f.get("sender_name", ""), "overdue": f["due"] < today_iso})
-    for item_id, s in today.snoozes().items():
+    for item_id, s in today.active_snoozes().items():
         day = s["until"][:10]
         if first.isoformat() <= day <= last.isoformat():
             items.append({"kind": "snooze", "source": "outlook" if s.get("kind") != "task" else "todo", "id": item_id,
