@@ -574,6 +574,12 @@
           agenda: "1. Ship dates for PO 4410287\n2. Freight quote for Harbor Point\n3. Back-order plan for the amplifiers" });
       }
       case "/search": { const term = (q.get("q") || "").toLowerCase();
+        if (q.get("scope") === "other") {
+          const words = term.split(/\s+/).filter(Boolean), hit = (text) => words.every((w) => text.toLowerCase().includes(w));
+          return json({ teams: teamsRecent().filter((r) => hit(`${r.who} ${r.where || ""} ${r.preview}`)).slice(0, 8),
+            pulse: tickets.filter((t) => hit(`${t.ticket_no} ${t.title} ${t.detail}`)).slice(0, 8),
+            meetings: [...agenda, ...futureMeetings(10)].filter((m) => hit(`${m.subject} ${m.location || ""} ${m.organizer || ""}`)).slice(0, 10), errors: [] }, 200, 120);
+        }
         return json({ mail: allMail().filter((m) => `${m.subject} ${m.sender_name || ""} ${m.to || ""}`.toLowerCase().includes(term)).slice(0, 20)
           .map((m) => pick(m, ["id", "subject", "sender_name", "received", "folder", "to"])) }, 200, 300); }
       case "/websites": return json({ monitors: monitors() });

@@ -2547,7 +2547,7 @@ $("#teams-send").addEventListener("click", () => openTeamsChat($("#teams-to").va
 
 // ---- command palette (Ctrl+K) ------------------------------------------------
 
-const pal = { items: [], active: 0, mail: [], seq: 0, timer: null };
+const pal = { items: [], active: 0, mail: [], other: null, seq: 0, timer: null };
 
 const extraPaletteSources = [];
 
@@ -2595,15 +2595,39 @@ function paletteSources() {
       if (!m || seenFu.has(m.id)) continue;
       seenFu.add(m.id);
       add("Follow-ups", m.subject, m.sender_name, () => { openTab("mail"); showMail(m.id); });
+      out[out.length - 1].id = m.id;
     }
   }
-  for (const m of pal.mail) add("Mail", m.subject, `${m.folder === "Sent" ? "to " + m.to : m.sender_name} · ${when(m.received)}`, () => { openTab("mail"); showMail(m.id); });
+  // Found by the server for what's typed (/api/search): meetings beyond today, Teams chats, Pulse tickets, mail.
+  const o = pal.other || {};
+  const todayIds = new Set((todayData?.agenda || []).map((m) => m.id));
+  for (const m of o.meetings || []) {
+    if (todayIds.has(m.id)) continue;  // already under Agenda
+    const start = new Date(m.start);
+    add("Meetings", m.subject, `${dayTime(start)}${m.location ? " · " + m.location : ""}`, () => guarded(() => api("/api/outlook/open", { id: m.id })));
+  }
+  for (const t of o.teams || []) {
+    const link = teamsLink(t.link);
+    const kind = (TEAMS_KIND[t.kind] || ["Teams"])[0];
+    add("Teams", `${t.who}${t.where ? " · " + t.where : ""}`, `${kind}${t.unread ? " · unread" : ""} · ${String(t.preview || "").slice(0, 70)}`,
+      () => (link ? openTeamsRecent(link) : openTab("teams")));
+  }
+  for (const t of o.pulse || []) {
+    add("Pulse tickets", `${t.ticket_no ? "#" + t.ticket_no + " " : ""}${t.title}`, `${t.status || ""}${t.mine ? " · yours" : ""}`,
+      () => (t.url ? (CC.pulseSite ? CC.pulseSite.open(t.url) : openExternal(t.url)) : openTab("pulse-feedback")));
+  }
+  const fuIds = new Set(out.filter((i) => i.group === "Follow-ups").map((i) => i.id));
+  for (const m of pal.mail) {
+    if (fuIds.has(m.id)) continue;
+    add("Mail", m.subject, `${m.folder === "Sent" ? "to " + m.to : m.sender_name} · ${when(m.received)}`, () => { openTab("mail"); showMail(m.id); });
+  }
   return out;
 }
 
+const SERVER_GROUPS = new Set(["Mail", "Meetings", "Teams", "Pulse tickets"]);
 function paletteScore(item, words) {
   if (!words.length) return item.group === "Commands" ? 1 : 0;
-  if (item.group === "Mail") return 0.5;  // already matched by Outlook
+  if (SERVER_GROUPS.has(item.group)) return 0.5;  // already matched by the server
   const text = `${item.label} ${item.hint}`.toLowerCase();
   if (!words.every((w) => text.includes(w))) return 0;
   return 2 - text.indexOf(words[0]) / 200 + (item.group === "Commands" ? 0.3 : 0);
@@ -2614,7 +2638,7 @@ function renderPalette() {
   const words = q.split(/\s+/).filter(Boolean);
   pal.items = paletteSources().map((i) => ({ ...i, score: paletteScore(i, words) })).filter((i) => i.score > 0)
     .sort((a, b) => b.score - a.score).slice(0, 60);
-  const order = ["Commands", "Projects", "Agenda", "Tasks", "Follow-ups", "Pulse", "Toolkit", "SQL", "Mail"];
+  const order = ["Commands", "Projects", "Agenda", "Tasks", "Follow-ups", "Meetings", "Teams", "Pulse tickets", "Pulse", "Toolkit", "SQL", "Mail"];
   const rank = (g) => (order.includes(g) ? order.indexOf(g) : order.length - 1);  // unknown module groups before Mail
   pal.items.sort((a, b) => rank(a.group) - rank(b.group));
   pal.active = Math.min(pal.active, Math.max(0, pal.items.length - 1));
@@ -2626,6 +2650,7 @@ function renderPalette() {
       el("span", { class: "label" }, item.label), el("span", { class: "hint" }, item.hint)));
   });
   if (!rows.length) rows.push(el("li", { class: "group" }, pal.searching ? "Searching mail…" : "No matches"));
+  else if (pal.searching) rows.push(el("li", { class: "group" }, "Searching mail…"));
   $("#palette-results").replaceChildren(...rows);
   $("#palette-results .item.active")?.scrollIntoView({ block: "nearest" });
 }
@@ -2633,16 +2658,18 @@ function renderPalette() {
 function searchMail(q) {
   clearTimeout(pal.timer);
   pal.mail = [];
+  pal.other = null;
   const seq = ++pal.seq;
   pal.searching = q.length >= 3;
   if (!pal.searching) return;
-  pal.timer = setTimeout(async () => {
-    let mail = [];
-    try { mail = (await api(`/api/search?q=${encodeURIComponent(q)}`)).mail || []; } catch { /* Outlook closed: commands still work */ }
-    if (seq !== pal.seq) return;
-    pal.mail = mail;
-    pal.searching = false;  // done (found, empty or failed): the list now says "No matches" if nothing fits
-    if ($("#palette").classList.contains("open")) renderPalette();
+  pal.timer = setTimeout(() => {
+    const redraw = () => { if (seq === pal.seq && $("#palette").classList.contains("open")) renderPalette(); };
+    const enc = encodeURIComponent(q);
+    // the quick sources first (Teams, Pulse, meetings), then Outlook's text search
+    api(`/api/search?scope=other&q=${enc}`).then((r) => { if (seq === pal.seq) { pal.other = r; redraw(); } }).catch(() => {});
+    api(`/api/search?scope=mail&q=${enc}`).then((r) => { if (seq === pal.seq) pal.mail = r.mail || []; })
+      .catch(() => { /* Outlook closed: the rest still works */ })
+      .finally(() => { if (seq === pal.seq) { pal.searching = false; redraw(); } });
   }, 300);
 }
 

@@ -319,12 +319,60 @@ async def select_weather(zip: str = Body(..., embed=True)):
     return await asyncio.to_thread(weather.current, zip)
 
 
+# Ctrl+K search. Two scopes so the page can show the quick ones while Outlook's text search runs (~3 s):
+#   scope=mail:  Inbox and Sent Items by subject, people and text (the Mail tab's search), newest 15.
+#   scope=other: Teams' Recent DMs and mentions (the background read, memory only), Pulse tickets (subject, note,
+#                number; only when set up) and meetings in the next 14 days (subject, place, organizer; the list is
+#                read from Outlook at most once a minute).
+SEARCH_MAIL_MAX = 15
+_meeting_cache: dict = {}
+
+
+async def _search_meetings(words: list[str]) -> list[dict]:
+    if time.time() - _meeting_cache.get("at", 0) > 60:
+        _meeting_cache.update(items=await outlook.call(outlook.upcoming_meetings, 24 * 14), at=time.time())
+    out = []
+    for m in _meeting_cache.get("items") or []:
+        text = " ".join(str(m.get(k) or "") for k in ("subject", "location", "organizer")).lower()
+        if all(w in text for w in words) and not m.get("lunch"):
+            out.append({k: m.get(k) for k in ("id", "subject", "start", "end", "location", "join_url")})
+    return out[:10]
+
+
+def _search_teams(words: list[str]) -> list[dict]:
+    out = []
+    for r in teams.details()["recent"]:
+        text = " ".join(str(r.get(k) or "") for k in ("who", "where", "preview")).lower()
+        if all(w in text for w in words):
+            out.append({k: r.get(k) for k in ("kind", "who", "where", "preview", "time", "unread", "link")})
+    return out[:8]
+
+
+async def _search_pulse(q: str) -> list[dict]:
+    pulse = sys.modules.get(f"{__package__}.pulse")
+    if not pulse or not pulse.is_configured():
+        return []
+    rows = await asyncio.to_thread(pulse.fetch, status="all", search=q, limit=8)
+    return [{k: r.get(k) for k in ("ticket_no", "title", "status", "url", "mine", "updated_at")} for r in rows]
+
+
 @app.get("/api/search")
-async def search(q: str):
-    q = q.strip()
+async def search(q: str, scope: str = "mail"):
+    q = q.strip()[:100]
     if len(q) < 3:
-        return {"mail": []}
-    return {"mail": await outlook.call(outlook.search_mail, q[:100])}
+        return {"mail": [], "teams": [], "pulse": [], "meetings": []}
+    if scope == "mail":
+        found = await outlook.call(outlook.mail_view, SEARCH_MAIL_MAX, False, q, "inbox")
+        return {"mail": found.get("mail", [])[:SEARCH_MAIL_MAX]}
+    words = q.lower().split()
+    out = {"teams": _search_teams(words), "pulse": [], "meetings": [], "errors": []}
+    for key, job in (("meetings", _search_meetings(words)), ("pulse", _search_pulse(q))):
+        try:
+            out[key] = await job
+        except Exception as e:  # one source failing (Outlook closed, VPN down) never hides the others
+            log.info("Search: %s not searched (%s)", key, type(e).__name__)
+            out["errors"].append(key)
+    return out
 
 
 @app.post("/api/reload")
