@@ -15,7 +15,9 @@ Joe picks what to block each time: the exact sender address, the sender's whole 
   When a list becomes empty its rule is deleted (only a rule with our exact name; Outlook can't keep an empty
   condition list, and a disabled rule would still carry the unblocked entries). No other rule is ever changed.
   Rules.Save() can be slow and can fail (rule storage full, offline...): the block is still kept and enforced by
-  the app filter, and the reason is shown with a Retry.
+  the app filter, and the reason is shown with a Retry. Save() writes back every rule, not just ours, so nothing is
+  created or saved when any of Joe's other rules can't be read back intact (_unreadable_rules; true of his mailbox
+  since at least 10-26): the status is `unsupported` and Spam blocks offers Outlook's Blocked Senders list instead.
 - App filter (matcher()): the mail list, follow-ups, important senders, new-mail alerts, triage and briefing counts skip
   blocked mail; the poller moves new blocked Inbox mail to Junk (outlook.scan_new_mail). Internal senders, Exchange
   (directory) senders and urgent people are never matched.
@@ -409,6 +411,35 @@ def _find(rules) -> dict:
     return {"index": found, "dupes": dupes}
 
 
+def _unreadable_rules(rules) -> int:
+    """How many of Joe's other rules Outlook's object model can't read back intact (read only).
+
+    Rules.Save() writes the whole collection back, not just ours. A rule whose "from" / "sent to" person comes
+    back with the display name where the address type belongs (seen on rules made in Outlook on the web: the type
+    reads "Pluralsight" instead of "SMTP" or "EX", and the address has no "@") would be written back broken, or
+    the save refuses ("One or more rules cannot be saved because of invalid actions or conditions", 0x80020009,
+    on Joe's mailbox since 10-26). So when any rule looks like that, nothing is saved at all."""
+    bad = 0
+    for i in range(1, rules.Count + 1):
+        r = rules.Item(i)
+        try:
+            if r.Name in OUR_RULES:
+                continue
+            for part in (r.Conditions, r.Exceptions):
+                for cname in ("From", "SentTo"):
+                    c = getattr(part, cname)
+                    if not c.Enabled:
+                        continue
+                    rc = c.Recipients
+                    for j in range(1, rc.Count + 1):
+                        ae = rc.Item(j).AddressEntry
+                        if ae is None or ae.Type not in ("SMTP", "EX"):
+                            raise ValueError
+        except (pywintypes.com_error, AttributeError, ValueError):
+            bad += 1
+    return bad
+
+
 def _others_enabled(rules) -> dict:
     """{(name, n-th rule with that name): enabled} for every rule that isn't ours (read only)."""
     out, seen = {}, {}
@@ -466,6 +497,16 @@ def _sync_rules(senders, phrases, exceptions, force=False) -> dict:
     junk = ns.GetDefaultFolder(OL_FOLDER_JUNK)
     rules = ns.DefaultStore.GetRules()
     found = _find(rules)
+    if senders or phrases or found["index"]:
+        unreadable = _unreadable_rules(rules)
+        if unreadable:
+            log.info("Spam rules not saved: %d of the other Outlook rules can't be read back intact", unreadable)
+            return {"ok": False, "unsupported": True, "unreadable": unreadable, "senders": len(senders),
+                    "subjects": len(phrases), "local_only": False, "others_disabled": 0, "duplicates": found["dupes"],
+                    "error": f"{unreadable} of your own Outlook rules can't be read correctly by the interface Command "
+                             "Center uses (a \"from\" or \"sent to\" person comes back without the address, typical of "
+                             "rules made in Outlook on the web). Saving rules from here would rewrite those broken, so "
+                             "Command Center doesn't touch your rules."}
     changed = force
     wanted = {RULE_SENDERS: ("Address", senders), RULE_SUBJECTS: ("Text", phrases)}
     for name in OUR_RULES:  # deletions first (indexes shift), each found again by name right before

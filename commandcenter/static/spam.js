@@ -101,7 +101,7 @@
         el("div", { class: "spam-from" }, el("span", { class: "muted" }, "From "), o.sender_name && o.sender_name !== o.sender ? `${o.sender_name} <${o.sender}>` : o.sender),
         el("div", { class: "spam-subj" }, o.subject || "(no subject)")),
       kinds, previewBox, moveLabel,
-      el("p", { class: "muted spam-note" }, "Future mail like this goes to Junk Email (Outlook rule) — you can unblock anytime."),
+      el("p", { class: "muted spam-note" }, "Future mail like this goes to Junk Email — you can unblock anytime."),
       err,
       el("div", { class: "row" }, el("button", { value: "cancel" }, "Cancel ", el("kbd", {}, "Esc")), confirmBtn)));
     radios.sender.focus();
@@ -209,7 +209,7 @@
     const moved = (r.moved || 0) + (r.trigger_moved ? 1 : 0);
     const parts = [`Blocked ${r.block.label}`, `moved ${moved} to Junk`];
     if (r.alerts_removed) parts.push(`${plural(r.alerts_removed, "alert")} removed`);
-    if (r.rule && r.rule.ok === false) parts.push("Outlook rule not saved (see Spam blocks)");
+    if (r.rule && r.rule.ok === false && !r.rule.unsupported) parts.push("Outlook rule not saved (see Spam blocks)");
     if (r.move_error) parts.push(r.move_error);
     toast(parts.join(" · "), r.block.id, (r.undo_seconds || 30) * 1000 - 2000);
   }
@@ -238,7 +238,34 @@
   }
 
   // ---- the manage list -------------------------------------------------------------------------------
-  function ruleLine(rule, rerender) {
+  // Outlook's Blocked Senders list takes one address or @domain per entry; subject phrases can't go there.
+  function senderList(blocks) {
+    return blocks.filter((b) => b.kind !== "subject").map((b) => (b.kind === "domain" ? `@${b.value}` : b.value));
+  }
+
+  function ruleLine(rule, rerender, blocks = []) {
+    if (rule && rule.unsupported) {
+      const list = senderList(blocks);
+      const copyBtn = list.length && el("button", { type: "button", class: "small alt", onclick: async () => {
+        let ok = true;
+        try { await navigator.clipboard.writeText(list.join("\n")); } catch { ok = false; }
+        copyBtn.textContent = ok ? "Copied" : "Couldn't copy";
+        setTimeout(() => { copyBtn.textContent = "Copy the list"; }, 2500);
+      } }, "Copy the list");
+      const retry = el("button", { type: "button", class: "small subtle", title: "Check your Outlook rules again (after fixing them in Outlook)", onclick: async () => {
+        retry.disabled = true;
+        retry.textContent = "Checking…";
+        try { await api("/api/spam/sync", {}); } catch (e) { /* the status line shows the reason */ }
+        rerender();
+      } }, "Check again");
+      return el("div", { class: "spam-rule warn", role: "status" },
+        el("p", {}, el("b", {}, "No Outlook rule on your mailbox. "), rule.error || ""),
+        el("p", {}, "While Command Center runs it hides this mail and moves new matches to Junk Email; mail that came in "
+          + "while it was closed is moved at the next start. To block senders on the mail server too (Command Center "
+          + "closed, your phone): in Outlook, Home > Junk > Junk E-mail Options > Blocked Senders > Add, one entry each."
+          + (blocks.some((b) => b.kind === "subject") ? " Subject phrases can't go there." : "")),
+        el("div", { class: "row" }, copyBtn, retry));
+    }
     if (!rule || rule.ok === null || rule.ok === undefined) {
       return el("div", { class: "spam-rule muted" }, "Outlook rules: none yet.");
     }
@@ -274,9 +301,11 @@
     };
     CC.showDialog(el("div", { class: "spam-dlg spam-manage" },
       el("h3", {}, "Spam blocks"),
-      ruleLine(r.rule, manage),
-      el("p", { class: "muted" }, `Blocked mail goes to Junk Email through Outlook rules named “${(r.rule_names || []).join("” and “")}”, `
-        + "so it works with Command Center closed and on your phone. Unblocking doesn't move mail back."),
+      ruleLine(r.rule, manage, blocks),
+      r.rule && r.rule.unsupported
+        ? el("p", { class: "muted" }, "Unblocking doesn't move mail back.")
+        : el("p", { class: "muted" }, `Blocked mail goes to Junk Email through Outlook rules named “${(r.rule_names || []).join("” and “")}”, `
+          + "so it works with Command Center closed and on your phone. Unblocking doesn't move mail back."),
       blocks.length
         ? el("ul", { class: "list spam-list" }, blocks.map((b) => el("li", {},
             el("span", { class: `tag spam-kind-tag k-${b.kind}` }, KIND_LABEL[b.kind] || b.kind),
