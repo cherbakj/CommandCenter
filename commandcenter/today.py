@@ -381,11 +381,50 @@ def _time_reached(at, now, window_hours=4) -> bool:
     return scheduled <= now < scheduled + timedelta(hours=window_hours)
 
 
+# ---- end-of-day carry over --------------------------------------------------------------------------------
+# The wrap-up's Carry over (and Ctrl+K): replies owed are snoozed to the next workday's start (they come back as
+# "Back from snooze"), tasks due today or overdue move to that day. Only counts are kept (kv today:carryover, one
+# record, replaced each time), so the next morning's briefing can start with them.
+CARRY_KV = "today:carryover"
+
+
+def carried_over_text(day: str) -> str:
+    c = db.kv_get(CARRY_KV) or {}
+    if c.get("for") != day:
+        return ""
+    parts = [f"{c[k]} {name}{'' if c[k] == 1 else 's'}" for k, name in (("mail", "email"), ("tasks", "task"), ("tickets", "Pulse ticket"))
+             if c.get(k)]
+    return f"Carried over: {', '.join(parts)}" if parts else ""
+
+
+async def carry_over(mail: list[dict], tasks: list[dict], until: str, day: str, tickets: int = 0) -> dict:
+    done_mail, done_tasks, failed = 0, 0, []
+    for m in mail[:100]:
+        snooze(m["id"], until, {"subject": m.get("subject", ""), "who": m.get("who", ""), "kind": "mail"})
+        done_mail += 1
+    for t in tasks[:100]:
+        try:
+            if t.get("source") == "asana":
+                await asyncio.to_thread(asana.set_due, t["id"], day)
+            else:
+                await outlook.call(outlook.set_task_due, t["id"], day)
+            done_tasks += 1
+        except Exception as e:
+            log.warning("Carry over: a task wasn't moved (%s)", type(e).__name__)
+            failed.append(t.get("subject") or "a task")
+    db.kv_set(CARRY_KV, {"for": day, "mail": done_mail, "tasks": done_tasks, "tickets": max(0, int(tickets or 0)),
+                         "at": db.now()})
+    log.info("Carried over to %s: %d emails, %d tasks, %d failed", day, done_mail, done_tasks, len(failed))
+    return {"mail": done_mail, "tasks": done_tasks, "failed": failed}
+
+
 async def _briefing(now):
     data = await build(refresh=True)
     agenda = data["agenda"] if isinstance(data["agenda"], list) else []
     first = next((m for m in agenda if m["start"] >= now.isoformat(timespec="minutes") and not m.get("lunch")), None)
     body = f"First up: {first['subject']} at {datetime.fromisoformat(first['start']):%I:%M %p}" if first else ""
+    carried = carried_over_text(date.today().isoformat())
+    body = " · ".join(x for x in (carried, body) if x)
     alerts.raise_alert("Today", summary(data), body, "normal", {"type": "today"}, toast="morning briefing")
 
 
@@ -402,7 +441,7 @@ async def _wrapup(now):
              f"{len(f.get('awaiting_reply', []))} waiting on others"]
     body = (f"{label}: {len(tomorrow)} meeting(s), first is {first['subject']} at "
             f"{datetime.fromisoformat(first['start']):%I:%M %p}" if first else f"{label}: no meetings")
-    alerts.raise_alert("Wrap-up", " · ".join(parts), body, "normal", {"type": "today"}, toast="end-of-day wrap-up")
+    alerts.raise_alert("Wrap-up", " · ".join(parts), body, "normal", {"type": "wrapup"}, toast="end-of-day wrap-up")
     try:  # projects with uncommitted / unpushed work: a separate high-priority alert
         from . import daily
         await daily.wrapup_uncommitted()

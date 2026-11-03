@@ -668,6 +668,8 @@
       case "/reply-watch/cancel": watches = watches.filter((w) => w.conversation !== b.conversation); return json({ ok: true });
       case "/followups/dismiss": dismissed.add(b.id); return json({ ok: true });
       case "/followups/undismiss": dismissed.delete(b.id); return json({ ok: true });
+      case "/carryover": (b.mail || []).forEach((m) => { snoozes[m.id] = { until: b.until, subject: m.subject, who: m.who, kind: "mail" }; });
+        return json({ mail: (b.mail || []).length, tasks: (b.tasks || []).length, failed: [] });
       case "/followups/mute": if (b.sender && !muted.includes(b.sender)) muted.push(b.sender); return json({ ok: true });
       case "/followups/unmute": muted = muted.filter((s) => s !== b.sender); return json({ ok: true });
       case "/followups/urgent": urgentPeople = [...new Set(["Lena Ortiz", ...(b.people || [])])]; return json({ ok: true });

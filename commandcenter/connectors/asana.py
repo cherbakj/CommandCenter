@@ -95,6 +95,17 @@ def create_task(name, due=None, notes="") -> str:
     return _request("POST", "/tasks", data=data)["gid"]
 
 
+def _check_gid(task_id):
+    if not isinstance(task_id, str) or not task_id.isascii() or not task_id.isdigit() or len(task_id) > 30:
+        raise ValueError("That isn't an Asana task id")
+
+
+def set_due(task_id, due: str):
+    """Moves a task's due date (YYYY-MM-DD), e.g. carried over to the next workday."""
+    _check_gid(task_id)
+    _request("PUT", f"/tasks/{urllib.parse.quote(task_id, safe='')}", data={"due_on": due})
+
+
 def complete(task_id):
     # Asana task ids (gids) are digits; anything else could change which API path the token is sent to.
     if not isinstance(task_id, str) or not task_id.isascii() or not task_id.isdigit() or len(task_id) > 30:

@@ -806,6 +806,22 @@ def create_task(subject, due=None, notes="", priority="normal") -> str:
     return task.EntryID
 
 
+def set_task_due(entry_id, due: str):
+    """Moves an Outlook task's due date (or a flagged email's, which To Do shows) to `due` (YYYY-MM-DD)."""
+    item = _ns().GetItemFromID(entry_id)
+    day = datetime.fromisoformat(due)
+    if item.Class == OL_TASK:
+        try:
+            if item.StartDate and item.StartDate.year < NO_DATE_YEAR and item.StartDate.date() > day.date():
+                item.StartDate = day  # a start after the new due date isn't allowed
+        except pywintypes.com_error:
+            pass
+        item.DueDate = day
+    else:
+        item.TaskDueDate = day
+    item.Save()
+
+
 def set_task_priority(entry_id, priority):
     """Sets an Outlook task's own Importance (High / Normal / Low), so Outlook and To Do show it too. Tasks only:
     a flagged email's importance is the sender's, not Joe's priority."""

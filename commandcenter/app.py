@@ -12,6 +12,7 @@ import time
 import traceback
 import urllib.parse
 from contextlib import asynccontextmanager
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
@@ -421,6 +422,26 @@ async def task_priority(source: str = Body(...), id: str = Body(...), priority: 
     else:
         raise HTTPException(400, "Unknown task source")
     return {"ok": True, "priority": priority}
+
+
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+@app.post("/api/carryover")
+async def carryover(mail: list = Body([]), tasks: list = Body([]), until: str = Body(...), day: str = Body(...),
+                    tickets: int = Body(0)):
+    """End-of-day carry over (the wrap-up's dialog): what Joe ticked, snoozed / moved to the next workday."""
+    if not _DAY.fullmatch(day) or not until.startswith(day) or day <= date.today().isoformat():
+        raise HTTPException(400, "Pick a day after today")
+    try:
+        datetime.fromisoformat(until)
+    except ValueError:
+        raise HTTPException(400, "That time doesn't look right")
+    mail = [{"id": str(m.get("id")), "subject": str(m.get("subject", ""))[:300], "who": str(m.get("who", ""))[:200]}
+            for m in mail if isinstance(m, dict) and m.get("id")]
+    tasks = [{"source": "asana" if t.get("source") == "asana" else "outlook", "id": str(t.get("id")),
+              "subject": str(t.get("subject", ""))[:300]} for t in tasks if isinstance(t, dict) and t.get("id")]
+    return await today.carry_over(mail, tasks, until, day, tickets)
 
 
 @app.post("/api/tasks/complete")

@@ -152,7 +152,7 @@ def inventory() -> list[dict]:
         "Follow-up state (snoozes, reply checks, dismissed and muted items, urgent people, important senders), the "
         "sent-mail log, alerts.",
         dpapi, f"Sent-mail log {_days(r.get('mail_sent_log_days'))}; dismissed follow-ups {_days(r.get('dismissed_followups_days'))}; "
-        "snoozes until they end, an email back from snooze up to 7 days; urgent people and important senders until removed",
+        "snoozes until they end, an email back from snooze up to 7 days; the last end-of-day carry-over's counts until the next; urgent people and important senders until removed",
         connected=bool(st.get("ok")) if st else None, state="Connected" if st.get("ok") else (st.get("error") or "Not checked yet")[:80])
 
     teams_on = _try(teams.is_set_up, False)
