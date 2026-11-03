@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import alerts, config, db, orders, security, today
 from . import profile as user_profile
-from .connectors import asana, outlook, teams, web
+from .connectors import asana, outlook, teams, web, webimages
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -508,6 +508,26 @@ async def mail_image(id: str, n: int):
     if not found:
         raise HTTPException(404, "no such picture")
     return Response(content=found[0], media_type=found[1])
+
+
+_web_pictures = asyncio.Semaphore(4)
+
+
+@app.get("/api/mail/webimage")
+async def mail_web_image(id: str, w: int):
+    """A picture the email links from the web (the `w` from /api/mail/item's parts), fetched only because Joe clicked
+    Show pictures on that email: this is what tells the sender it was opened. The address is read from the email
+    again here (never taken from the page) and checked by webimages (public addresses only, raster types, 5 MB)."""
+    url = await outlook.call(outlook.mail_web_url, id, w)
+    if not url:
+        raise HTTPException(404, "no such picture")
+    async with _web_pictures:
+        try:
+            data, kind = await asyncio.to_thread(webimages.fetch, url)
+        except Exception as e:
+            log.info("Web picture not shown: %s", type(e).__name__)
+            raise HTTPException(404, "couldn't load that picture")
+    return Response(content=data, media_type=kind)
 
 
 # ---- verified sending: nothing is sent unless it was reviewed first ------------------------------

@@ -312,12 +312,25 @@ def get_message(entry_id) -> dict:
     except Exception as e:  # the email still opens, as text
         log.warning("Mail images: couldn't read them (%s)", type(e).__name__)
     if d.get("hoxhunt"):
-        d["remote_images"] = 0  # its band already says to open it in Outlook, to report it
+        d["remote_images"] = 0  # its band already says to open it in Outlook, to report it; no Show pictures either
+        if d.get("parts"):
+            for p in d["parts"]:
+                if p.get("images"):
+                    p["images"] = [i for i in p["images"] if "web" not in i]
+            d["parts"] = [p for p in d["parts"] if p.get("text") or p.get("images")]
     return d
 
 
 def mail_image(entry_id, n) -> tuple[bytes, str] | None:
     return mailimages.read(_ns().GetItemFromID(entry_id), n)
+
+
+def mail_web_url(entry_id, w) -> str | None:
+    """The address of an email's w-th web picture, for Show pictures; never for a Hoxhunt phishing test."""
+    item = _ns().GetItemFromID(entry_id)
+    if hoxhunt_on() and is_hoxhunt(item):
+        return None
+    return mailimages.web_url(item, w)
 
 
 def upcoming_meetings(hours=24) -> list[dict]:

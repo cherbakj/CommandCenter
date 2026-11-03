@@ -810,16 +810,38 @@ function mailImage(m, pic) {
   return btn;
 }
 
-function mailContent(m, textClass = "mv-body", tidy = (text) => text) {
-  const nodes = (m.parts || [{ text: m.body || "" }]).map((p) => (p.images
-    ? el("div", { class: "mv-imgs" }, p.attached && el("div", { class: "mv-imgs-label muted" }, "Attached pictures"), p.images.map((pic) => mailImage(m, pic)))
+// A picture the email links from the web: only after Show pictures (the server fetches it, from the email's own address).
+function mailWebImage(m, pic) {
+  const src = `/api/mail/webimage?id=${encodeURIComponent(m.id)}&w=${pic.web}`;
+  const alt = pic.alt || "Picture from the web";
+  const img = el("img", { src, alt, loading: "lazy", width: pic.width,
+    onerror: () => btn.replaceWith(el("span", { class: "mv-img-missing muted" }, pic.alt ? `[${pic.alt}]` : "[picture couldn't load]")) });
+  const btn = el("button", { type: "button", class: "mv-img", "aria-label": `Enlarge: ${alt}`, onclick: () => zoomMailImage(src, alt) }, img);
+  return btn;
+}
+
+// web: show the web pictures too (Show pictures was clicked for this email; not remembered).
+function mailContent(m, textClass = "mv-body", tidy = (text) => text, web = false) {
+  let parts = m.parts || [{ text: m.body || "" }];
+  if (!web) {
+    parts = parts.map((p) => (p.images ? { ...p, images: p.images.filter((i) => !("web" in i)) } : p)).filter((p) => !p.images || p.images.length);
+    if (!parts.some((p) => p.images)) parts = [{ text: m.body || "" }];  // no pictures to show: the text as one, as before
+  }
+  const nodes = parts.map((p) => (p.images
+    ? el("div", { class: "mv-imgs" }, p.attached && el("div", { class: "mv-imgs-label muted" }, "Attached pictures"),
+        p.images.map((pic) => ("web" in pic ? mailWebImage(m, pic) : mailImage(m, pic))))
     : el("pre", { class: textClass }, tidy(p.text))));
-  if (m.remote_images) {
+  let box;
+  if (m.remote_images && !web) {
     const count = m.remote_images === 1 ? "1 picture from the web isn't" : `${m.remote_images} pictures from the web aren't`;
+    const canShow = !m.hoxhunt && (m.parts || []).some((p) => (p.images || []).some((i) => "web" in i));
     nodes.unshift(el("div", { class: "mv-remote muted" }, `${count} shown, because loading them tells the sender you opened this. `,
+      canShow && el("button", { type: "button", class: "small alt", title: "Load this email's web pictures (the sender can tell it was opened)",
+        onclick: () => box.replaceWith(mailContent(m, textClass, tidy, true)) }, "Show pictures"),
       el("button", { type: "button", class: "small subtle", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open in Outlook")));
   }
-  return el("div", { class: "mv-content" }, nodes);
+  box = el("div", { class: "mv-content" }, nodes);
+  return box;
 }
 
 async function showMail(id) {

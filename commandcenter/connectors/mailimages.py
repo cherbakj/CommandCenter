@@ -1,6 +1,8 @@
 """Images in an email, for the Mail reader and Triage. Only what travels inside the email is shown: embedded pictures
 and attached picture files, read from Outlook as bytes (nothing is written to disk). Images hosted on the web are
-counted, never fetched: loading one tells the sender the email was opened.
+counted and placed, never fetched unless Joe clicks Show pictures on that email (webimages.py): loading one tells the
+sender the email was opened. The page never gets their addresses, only their order (`web`), and the server reads the
+address from the email again on each request.
 
 The text stays Outlook's own (item.Body, which has no mark where a picture was). Each picture's place comes from the
 HTML: its pieces of text are lined up with Body in order, and a picture goes after the line reached so far. A piece not
@@ -27,7 +29,8 @@ MAX_HTML = 2_000_000  # past this, pictures not yet reached are listed at the en
 NEARBY = 2000  # how far ahead in Body to look for a piece of text (a link's address can be long)...
 ANYWHERE = 20  # ...except a piece this long, which is distinctive enough to be looked for in all of the rest
 MIN_JUMP = 4  # a shorter piece only counts if it's exactly next
-TRACKER_PX = 2  # a web image this small is a tracking pixel: not worth a mention
+TRACKER_PX = 2  # a web image this small is a tracking pixel: not worth a mention (and never fetched)
+MAX_WEB = 60  # web pictures placed (and fetchable) per email
 
 
 def _sniff(data: bytes) -> str | None:
@@ -65,7 +68,7 @@ class _Walk(HTMLParser):
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.skip, self.remote, self.seq = 0, 0, []
+        self.skip, self.remote, self.seq, self.urls = 0, 0, [], []
 
     def handle_starttag(self, tag, attrs):
         if tag in self.SKIP:
@@ -81,6 +84,9 @@ class _Walk(HTMLParser):
                 sizes = [a.get("width", "").strip(), a.get("height", "").strip()]
                 if not any(s.isdigit() and int(s) <= TRACKER_PX for s in sizes):
                     self.remote += 1
+                    if len(self.urls) < MAX_WEB:
+                        self.seq.append({"web": len(self.urls), "width": _width(a), "alt": a.get("alt", "").strip()[:200]})
+                        self.urls.append(src)
 
     def handle_endtag(self, tag):
         if tag in self.SKIP and self.skip:
@@ -149,21 +155,29 @@ def _strip_lines(text: str) -> str:
     return text.strip("\r\n")
 
 
-def build(item, body: str) -> dict:
-    """{"remote_images": N} plus, when the email carries pictures, "parts": its text and pictures in order, each part
-    {"text": ...} or {"images": [{n, name, alt, width}], "attached": bool}."""
+def _walk(item) -> _Walk:
     walk = _Walk()
     if item.BodyFormat == OL_FORMAT_HTML:
         walk.feed((item.HTMLBody or "")[:MAX_HTML])
         walk.close()
+    return walk
+
+
+def build(item, body: str) -> dict:
+    """{"remote_images": N} plus, when the email carries or links pictures, "parts": its text and pictures in order,
+    each part {"text": ...} or {"images": [...], "attached": bool}; an image is {n, name, alt, width} (carried in the
+    email) or {web, alt, width} (on the web: shown only after Show pictures)."""
+    walk = _walk(item)
     out = {"remote_images": walk.remote}
-    if not item.Attachments.Count:
-        return out
-    by_cid, by_name, files = _attachments(item)
+    by_cid, by_name, files = _attachments(item) if item.Attachments.Count else ({}, {}, [])
     shown, used = [], set()
     seq = []  # the walk, less pictures this email doesn't carry
     for p in walk.seq:
         if isinstance(p, str):
+            seq.append(p)
+            continue
+        if "web" in p:
+            shown.append((None, p))
             seq.append(p)
             continue
         entry = by_cid.get(p["cid"]) or by_name.get(p["cid"].split("@")[0])
@@ -185,7 +199,10 @@ def build(item, body: str) -> dict:
         if group is None:
             group = {"images": [], "attached": False}
             parts.append(group)
-        group["images"].append({"n": entry["n"], "name": entry["name"], "alt": p["alt"], "width": p["width"]})
+        if entry is None:
+            group["images"].append({"web": p["web"], "alt": p["alt"], "width": p["width"]})
+        else:
+            group["images"].append({"n": entry["n"], "name": entry["name"], "alt": p["alt"], "width": p["width"]})
     text = _strip_lines(body[start:])
     if text.strip():
         parts.append({"text": text})
@@ -193,6 +210,12 @@ def build(item, body: str) -> dict:
         parts.append({"images": [{"n": e["n"], "name": e["name"], "alt": "", "width": None} for e in rest], "attached": True})
     out["parts"] = parts
     return out
+
+
+def web_url(item, w: int) -> str | None:
+    """The address of the email's w-th web picture (as numbered in build), read from the email itself."""
+    urls = _walk(item).urls
+    return urls[w] if 0 <= w < len(urls) else None
 
 
 def read(item, n: int) -> tuple[bytes, str] | None:
