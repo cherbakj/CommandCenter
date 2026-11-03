@@ -52,7 +52,7 @@
     return out;
   }
 
-  const S = { queue: [], i: 0, cleared: new Map(), bodies: new Map(), drafts: new Map(), pane: null, started: 0,
+  const S = { queue: [], i: 0, cleared: new Map(), undoDone: new Map(), bodies: new Map(), drafts: new Map(), pane: null, started: 0,
     changed: false, busy: false, escAt: 0, end: false, reviewing: false };
   let dlg, shell, topCount, topBar, card, keysBar, slotBtn;
 
@@ -147,7 +147,8 @@
       el("h2", { class: "tri-subject" }, m.subject || "(no subject)"),
       status ? el("div", { class: "tri-handled", role: "status" },  // (replaceChildren would print a bare `undefined`)
         el("span", {}, `${statusText(status)} earlier in this session, so Reply, Snooze, Done and Task are off for it.`),
-        status === "snoozed" && el("button", { type: "button", class: "small subtle", onclick: undoSnooze }, "Undo snooze")) : "",
+        status === "snoozed" && el("button", { type: "button", class: "small subtle", onclick: undoSnooze }, "Undo snooze"),
+        status === "done" && S.undoDone.has(m.id) && el("button", { type: "button", class: "small subtle", onclick: undoDone }, "Undo done")) : "",
       el("div", { class: "tri-from src-line" },
         CC.srcTag(item.src, item.src === "teams" ? `notification from ${m.sender || "Teams"}` : m.internal === false ? "external sender" : ""),
         el("span", { class: "tri-sender" }, sender),
@@ -240,6 +241,23 @@
       S.cleared.delete(item.m.id);
       S.changed = true;
       toast("Snooze undone");
+      renderItem();
+    });
+  }
+
+  // Done: marked read, unflagged (a flag) and dismissed; Undo puts each back (the flag with its dates).
+  function undoDone() {
+    const item = S.queue[S.i];
+    const back = item && S.undoDone.get(item.m.id);
+    if (!back || S.cleared.get(item.m.id) !== "done") return;
+    run(async () => {
+      await api("/api/followups/undismiss", { id: item.m.id });
+      if (back.flag !== null) await api("/api/mail/flag", { id: item.m.id, flagged: true, restore: back.flag || "" });
+      if (back.unread) await api("/api/mail/read", { id: item.m.id, read: false });
+      S.undoDone.delete(item.m.id);
+      S.cleared.delete(item.m.id);
+      S.changed = true;
+      toast("Done undone");
       renderItem();
     });
   }
@@ -473,9 +491,11 @@
     else if (id === "t") taskPane();
     else if (id === "d") {
       run(async () => {
+        const back = { unread: !!item.m.unread, flag: null };
         await api("/api/mail/read", { id: item.m.id, read: true });
-        if (item.src === "flagged") await api("/api/mail/flag", { id: item.m.id, flagged: false });  // done with a flag = unflag it
+        if (item.src === "flagged") back.flag = (await api("/api/mail/flag", { id: item.m.id, flagged: false })).restore || "";  // done with a flag = unflag it
         await api("/api/followups/dismiss", { id: item.m.id });
+        S.undoDone.set(item.m.id, back);
         markCleared("done");
       });
     } else if (id === "o") run(() => api("/api/outlook/open", { id: item.m.id }));
@@ -526,7 +546,7 @@
     document.querySelector("#palette.open")?.classList.remove("open");
     let data = CC.todayData;
     S.queue = buildQueue(data);
-    S.i = 0; S.cleared = new Map(); S.bodies = new Map(); S.drafts = new Map(); S.pane = null; S.changed = false;
+    S.i = 0; S.cleared = new Map(); S.undoDone = new Map(); S.bodies = new Map(); S.drafts = new Map(); S.pane = null; S.changed = false;
     S.busy = false; S.end = false; S.started = Date.now();
     dlg.showModal();
     if (!data) {

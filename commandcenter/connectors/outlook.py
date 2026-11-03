@@ -666,13 +666,49 @@ def set_read(entry_id, read=True):
     item.Save()
 
 
-def set_flag(entry_id, flagged=True):
+NO_DATE_YEAR = 4501  # Outlook's "None" date
+
+
+def _flag_state(item) -> dict:
+    """What a flag was, so Undo can put it back as it was: its text, start / due dates and flagged-on time."""
+    state = {}
+    for key, attr in (("request", "FlagRequest"), ("start", "TaskStartDate"), ("due", "TaskDueDate")):
+        try:
+            v = getattr(item, attr)
+            if attr == "FlagRequest" or v.year != NO_DATE_YEAR:
+                state[key] = v
+        except (pywintypes.com_error, AttributeError):
+            pass
+    try:
+        state["ordinal"] = item.PropertyAccessor.GetProperty(PID_TODO_ORDINAL)
+    except pywintypes.com_error:
+        pass
+    return state
+
+
+def set_flag(entry_id, flagged=True, restore: dict | None = None) -> dict | None:
+    """Flags or unflags an email. Unflagging returns the flag's state (kept in memory by the caller for Undo);
+    flagging with `restore` puts that state back."""
     item = _ns().GetItemFromID(entry_id)
+    before = None
     if flagged:
         item.MarkAsTask(OL_MARK_NO_DATE)
+        for key, attr in (("request", "FlagRequest"), ("start", "TaskStartDate"), ("due", "TaskDueDate")):
+            if restore and key in restore:
+                try:
+                    setattr(item, attr, restore[key])
+                except pywintypes.com_error:
+                    pass
+        if restore and "ordinal" in restore:
+            try:
+                item.PropertyAccessor.SetProperty(PID_TODO_ORDINAL, restore["ordinal"])
+            except pywintypes.com_error:
+                pass
     else:
+        before = _flag_state(item) if item.IsMarkedAsTask else None
         item.ClearTaskFlag()
     item.Save()
+    return before
 
 
 def _show(item):

@@ -74,6 +74,38 @@ function toast(text) {
   toast.timer = setTimeout(() => box.classList.remove("show"), 3500);
 }
 
+// ---- Undo for quick actions (dismiss, snooze, done, unflag, mark read) ------------------
+// A note with Undo for UNDO_MS; Ctrl+Z does the same while it shows (not in a text field, which has its own undo,
+// nor behind a dialog). Only the latest action can be undone.
+const UNDO_MS = 8000;
+let undoPending = null;
+function undoable(text, undo) {
+  let box = $("#undo-toast");
+  if (!box) { box = el("div", { id: "undo-toast", role: "status", "aria-live": "polite" }); document.body.append(box); }
+  const me = { undo };
+  me.hide = () => { if (undoPending === me) { undoPending = null; box.classList.remove("show"); } };
+  undoPending = me;
+  box.replaceChildren(el("span", { class: "undo-text" }, text),
+    el("button", { type: "button", class: "small alt", title: "Undo (Ctrl+Z)", onclick: () => runUndo(me) }, "Undo"),
+    el("button", { type: "button", class: "small subtle", "aria-label": "Dismiss", onclick: me.hide }, "✕"));
+  box.classList.add("show");
+  clearTimeout(undoable.timer);
+  undoable.timer = setTimeout(me.hide, UNDO_MS);
+}
+async function runUndo(me) {
+  if (!me || undoPending !== me) return;
+  me.hide();
+  await guarded(async () => { await me.undo(); toast("Undone"); loaders.today(); });
+}
+document.addEventListener("keydown", (e) => {
+  if (!undoPending || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "z" || e.repeat) return;
+  const a = document.activeElement;
+  if (a && a.matches("input, textarea, select, [contenteditable], [contenteditable] *")) return;
+  if (modalOpen() || $("#palette").classList.contains("open")) return;
+  e.preventDefault();
+  runUndo(undoPending);
+});
+
 // ---- dialog ------------------------------------------------------------------
 
 function showDialog(...content) {
@@ -1764,7 +1796,7 @@ function snoozeDialog(item) {
     if (isNaN(d) || d <= new Date()) throw new Error("Pick a time in the future.");
     await api("/api/snooze", { id: item.id, until: localIso(d), subject: item.subject || "", who: item.who || "", kind: item.kind });
     $("#dialog").close();
-    toast(`Snoozed until ${dayTime(d)}`);
+    undoable(`Snoozed until ${dayTime(d)}`, () => api("/api/unsnooze", { id: item.id }));
     loaders.today();
   });
   const opt = (label, d) => el("button", { type: "button", class: "snooze-opt", onclick: () => go(d) }, el("b", {}, label), el("span", {}, dayTime(d)));
@@ -1933,7 +1965,11 @@ function teamsRow(m) {
     tags: [m.urgent && el("span", { class: "tag urgent" }, "Urgent")],
     primary: el("button", { type: "button", class: "small alt", onclick: () => openExternal("msteams:") }, "Open Teams"),
     quick: [el("button", { type: "button", class: "small", title: "Mark this Teams email read", "aria-label": `Done: ${m.subject}`,
-      onclick: () => guarded(async () => { await api("/api/mail/read", { id: m.id, read: true }); loaders.today(); }) }, "Done"),
+      onclick: () => guarded(async () => {
+        await api("/api/mail/read", { id: m.id, read: true });
+        loaders.today();
+        undoable("Marked read", () => api("/api/mail/read", { id: m.id, read: false }));
+      }) }, "Done"),
     fuSnooze(m, who), fuDismiss(m)],
     more: () => mailActions(m, "followup"),
   });
@@ -1956,7 +1992,11 @@ function flaggedRow(m) {
     tags: [dueTag(m.due)],
     primary: fuView(m),
     quick: [el("button", { type: "button", class: "small", title: "Clear the flag in Outlook", "aria-label": `Unflag "${m.subject}"`,
-      onclick: () => guarded(async () => { await api("/api/mail/flag", { id: m.id, flagged: false }); loaders.today(); }) }, "Unflag"),
+      onclick: () => guarded(async () => {
+        const r = await api("/api/mail/flag", { id: m.id, flagged: false });
+        loaders.today();
+        undoable("Unflagged", () => api("/api/mail/flag", { id: m.id, flagged: true, restore: r.restore || "" }));
+      }) }, "Unflag"),
     fuSnooze(m), fuDismiss(m)],
     more: () => [el("button", { type: "button", title: "Mark the flag complete in Outlook", onclick: () => completeTask({ source: "outlook", id: m.id, subject: m.subject }) }, "Mark flag complete"),
       fuMute(m.sender || m.sender_name), ...mailActions(m, "followup")],
@@ -2062,7 +2102,11 @@ async function nudge(m) {
 }
 
 async function dismissFollowup(id) {
-  await guarded(async () => { await api("/api/followups/dismiss", { id }); loaders.today(); });
+  await guarded(async () => {
+    await api("/api/followups/dismiss", { id });
+    loaders.today();
+    undoable("Dismissed", () => api("/api/followups/undismiss", { id }));
+  });
 }
 
 async function muteSender(sender) {
@@ -2748,6 +2792,7 @@ window.CC = {
   mailContent,  // an email's text with its pictures in place
   importantStar,  // the ★ before an important sender
   toast,  // short note in the corner
+  undoable,  // undoable(text, async undoFn): a note with Undo (and Ctrl+Z) for a few seconds
   get todayData() { return todayData; },
   get workday() { return { ...WORKDAY }; },  // work hours {start, end} in hours (config offhours:)
   // The project picked in "Working on:" (right pane), or null. Changes fire document "cc:project" {detail:{path,name}}.

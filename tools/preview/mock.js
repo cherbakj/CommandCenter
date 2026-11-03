@@ -654,11 +654,12 @@
       case "/reply-watch": { const m = findMail(b.id); watches.push({ id: b.id, subject: m?.subject || "", to: m?.to || "", due: dayAt(Number(b.days) || 2, 9), conversation: `conv-${seq++}` }); return json({ ok: true }); }
       case "/reply-watch/cancel": watches = watches.filter((w) => w.conversation !== b.conversation); return json({ ok: true });
       case "/followups/dismiss": dismissed.add(b.id); return json({ ok: true });
+      case "/followups/undismiss": dismissed.delete(b.id); return json({ ok: true });
       case "/followups/mute": if (b.sender && !muted.includes(b.sender)) muted.push(b.sender); return json({ ok: true });
       case "/followups/unmute": muted = muted.filter((s) => s !== b.sender); return json({ ok: true });
       case "/followups/urgent": urgentPeople = [...new Set(["Lena Ortiz", ...(b.people || [])])]; return json({ ok: true });
       case "/mail/read": { const m = findMail(b.id); if (m) m.unread = !b.read; let n = 0; if (b.read) alerts.forEach((a) => { if (!a.read && a.action?.type === "mail" && a.action.id === b.id) { a.read = 1; n++; } }); return json({ ok: true, alerts_read: n }); }
-      case "/mail/flag": { const m = findMail(b.id); if (m) m.flagged = !!b.flagged; return json({ ok: true }); }
+      case "/mail/flag": { const m = findMail(b.id); if (m) m.flagged = !!b.flagged; return json({ ok: true, restore: b.flagged ? null : "preview" }); }
       case "/mail/reply/preview": { const m = findMail(b.id) || {};
         const recips = [{ name: m.sender_name, email: m.sender, type: "To", external: m.internal === false }];
         if (b.reply_all && m.cc) recips.push({ name: m.cc, email: "dana.reyes@example.com", type: "CC", external: false });

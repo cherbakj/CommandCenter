@@ -33,6 +33,12 @@ def dismiss(item_id):
     db.kv_set("followups:dismissed", d)
 
 
+def undismiss(item_id):
+    d = dismissed()
+    if d.pop(item_id, None) is not None:
+        db.kv_set("followups:dismissed", d)
+
+
 def prune_dismissed() -> int:
     """Retention (retention.dismissed_followups_days, default 60): forgets old dismissals. Returns how many."""
     d = dismissed()

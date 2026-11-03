@@ -58,7 +58,7 @@ html.pf-compact nav button { padding-block: .34rem; }
 /* Frosted glass off: solid panels, no blur (also the lightest setting for the GPU). */
 html.pf-no-glass { --panel: rgb(16 22 27 / .96); --glass-strong: rgb(17 24 29 / .98); --glass-filter: none; }
 html.pf-no-glass body > header { background: rgb(10 14 18 / .97); }
-html.pf-no-glass dialog, html.pf-no-glass .palette-box, html.pf-no-glass #toast { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html.pf-no-glass dialog, html.pf-no-glass .palette-box, html.pf-no-glass #toast, html.pf-no-glass #undo-toast { -webkit-backdrop-filter: none; backdrop-filter: none; }
 html.pf-no-glass dialog::backdrop, html.pf-no-glass #palette { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgb(3 5 8 / .72); }
 /* Background motion off: the aurora stays put. */
 html.pf-no-aurora body::before { animation: none; will-change: auto; }

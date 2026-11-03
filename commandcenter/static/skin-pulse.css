@@ -213,7 +213,7 @@
 :root[data-skin="pulse"] .cc-menu > .cc-menu-item:hover, :root[data-skin="pulse"] .cc-menu > .cc-menu-item:focus-visible { color: var(--accent); background: var(--pl-glass-hover); border-color: transparent; }
 :root[data-skin="pulse"] .cc-menu > .cc-menu-item.cc-menu-danger:hover, :root[data-skin="pulse"] .cc-menu > .cc-menu-item.cc-menu-danger:focus-visible { color: var(--red); background: rgb(var(--red-rgb) / .1); }
 :root[data-skin="pulse"] #palette-results .item.active { background: var(--pl-glass-hover); box-shadow: inset 3px 0 0 var(--accent); }
-:root[data-skin="pulse"] #toast { background: var(--pl-card); -webkit-backdrop-filter: none; backdrop-filter: none; border-color: var(--line); box-shadow: var(--shadow); }
+:root[data-skin="pulse"] #toast, :root[data-skin="pulse"] #undo-toast { background: var(--pl-card); -webkit-backdrop-filter: none; backdrop-filter: none; border-color: var(--line); box-shadow: var(--shadow); }
 :root[data-skin="pulse"] .restart-overlay { background: rgb(0 0 0 / .65); -webkit-backdrop-filter: none; backdrop-filter: none; }
 :root[data-skin="pulse"] .restart-box { font: 700 .9rem var(--font-ui); letter-spacing: .14em; background: var(--pl-card); border-color: var(--line); }
 :root[data-skin="pulse"] .restart-mark { filter: none; }

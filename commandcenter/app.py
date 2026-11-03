@@ -238,6 +238,7 @@ async def status():
         "asana": await asyncio.to_thread(asana.connected),
         "focus": alerts.focus_state(),
         "ui": {"accent": user_profile.get()["accent"],
+               "capture_hotkey": config.section("ui", {}).get("capture_hotkey", "Ctrl+Alt+Space") or "",
                "workday": [t.get("workday_start", "08:00"), t.get("workday_end", "17:00")]},
         "desktop": hasattr(app.state, "show_window"),
         "config_path": str(config.CONFIG_PATH),
@@ -362,6 +363,13 @@ async def complete_task(source: str = Body(...), id: str = Body(...)):
 @app.post("/api/followups/dismiss")
 async def dismiss_followup(id: str = Body(..., embed=True)):
     today.dismiss(id)
+    return {"ok": True}
+
+
+@app.post("/api/followups/undismiss")
+async def undismiss_followup(id: str = Body(..., embed=True)):
+    """Undo of Dismiss: the item is back in Follow-ups."""
+    today.undismiss(id)
     return {"ok": True}
 
 
@@ -643,11 +651,25 @@ async def mail_read(id: str = Body(...), read: bool = Body(True)):
     return {"ok": True, "alerts_read": alerts_read}
 
 
+# Unflag hands back a token; flagging again with it (Undo) restores the flag as it was: dates and flagged-on time.
+# Memory only, 10 minutes.
+_flag_undo: dict[str, dict] = {}
+
+
 @app.post("/api/mail/flag")
-async def mail_flag(id: str = Body(...), flagged: bool = Body(True)):
-    await outlook.call(outlook.set_flag, id, flagged)
+async def mail_flag(id: str = Body(...), flagged: bool = Body(True), restore: str = Body("")):
+    now = time.time()
+    for k in [k for k, v in _flag_undo.items() if v["expires"] < now]:
+        _flag_undo.pop(k)
+    saved = _flag_undo.pop(restore, None) if restore else None
+    state = saved["state"] if saved and saved["id"] == id else None
+    before = await outlook.call(outlook.set_flag, id, flagged, state)
     today._followup_cache.clear()  # the Flagged follow-ups change at once
-    return {"ok": True}
+    token = None
+    if before is not None:
+        token = secrets.token_urlsafe(16)
+        _flag_undo[token] = {"id": id, "state": before, "expires": now + 600}
+    return {"ok": True, "restore": token}
 
 
 @app.post("/api/outlook/open")
