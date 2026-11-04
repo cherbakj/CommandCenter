@@ -287,8 +287,9 @@ def inventory() -> list[dict]:
     add("side-window", "Side window (second screen)", "Work",
         "Nothing new: it shows the same tabs as the main window, from the same data.",
         "Whether it's open, which tabs are pinned to it, whether Teams is pinned whole and where it sits on a single "
-        "screen (kv window:side); the docked Outlook window's handle and process id, to dock it again after a restart "
-        "(kv outlook:dock). No content.", "None (not sensitive: tab names, a window position, a window handle)", "Until changed",
+        "screen (kv window:side); the docked Outlook window's handle, process id and its own window styles, to dock it "
+        "again after a restart and put it back as it was (kv outlook:dock, and data/dockguard-<port>.json for the dock "
+        "guard, emptied when Outlook is let go of). No content.", "None (not sensitive: tab names, a window position, a window handle)", "Until changed",
         connected=None, state=("Open" if side.get("open") else "Closed") + f" · {len(side.get('tabs') or [])} pinned tab(s)")
 
     try:
