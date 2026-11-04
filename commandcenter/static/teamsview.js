@@ -68,6 +68,7 @@
       : "Stay Available off: Teams can go Away after about 5 minutes with no input");
   }).then(showKeep);  // what the server holds, if it refused
   keepBox.addEventListener("change", () => setKeep(keepBox.checked));
+  CC.keepAvailable = { get: () => keep, set: setKeep };  // the header's Tools menu
   CC.addPaletteSource(() => keep?.available ? [{ group: "Commands", label: `Stay Available in Teams: turn ${keep.on ? "off" : "on"}`, hint: `now ${keep.on ? "on" : "off"}`, run: () => setKeep(!keep.on) }] : []);
 
   async function load() {

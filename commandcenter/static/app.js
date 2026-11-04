@@ -399,23 +399,23 @@ window.addEventListener("resize", () => {
   else if (layout.split) applySplit();
 });
 
-// The header stays one row as long as it can (the next meeting takes the room that's left, down to its minimum).
-// Each step is tried until the tabs fit, and the last one is kept whatever happens:
-//   1) everything, with the labels on the right ("Search", "Outlook", "Teams"); 2) without those labels;
-//   3) COMMS and WORK as dropdowns (navDrops), with the labels again; 4) dropdowns without the labels;
-//   5) also just the JC mark for a logo; 6) the dropdowns and the next meeting on a second row.
-// Always one row (Joe's call 2026-11-04): the last two steps squeeze the next meeting and the buttons, then hide the
-// next meeting; past that the dropdowns scroll sideways.
+// The header is always one row (Joe's call 2026-11-04). Each step is tried until the tabs fit, and the last one is kept
+// whatever happens. The tabs fold into the COMMS / WORK dropdowns last (Joe's call 2026-11-04: show the tabs whenever
+// they fit): first the labels on the right go ("Search", "Snip"), then the logo's words, then the tabs sit closer
+// (hdr-snug), then the next meeting shows only its time (hdr-min); only then the dropdowns, which give the room back to
+// all of that and take it away again in the same order; last the next meeting hides (hdr-none), and past that the
+// dropdowns scroll sideways.
 const COLLAPSED = ["nav-collapsed", "hdr-tight", "hdr-compact"];
-const HEADER_STEPS = [[], ["hdr-tight"], ["nav-collapsed"], ["nav-collapsed", "hdr-tight"], COLLAPSED,
-  [...COLLAPSED, "hdr-min"], [...COLLAPSED, "hdr-min", "hdr-none"]];
+const HEADER_STEPS = [[], ["hdr-tight"], ["hdr-tight", "hdr-compact"], ["hdr-tight", "hdr-compact", "hdr-snug"],
+  ["hdr-tight", "hdr-compact", "hdr-snug", "hdr-min"],
+  ["nav-collapsed"], ["nav-collapsed", "hdr-tight"], COLLAPSED, [...COLLAPSED, "hdr-min"], [...COLLAPSED, "hdr-min", "hdr-none"]];
 let headerFrame = 0;
 function fitHeader() {
   cancelAnimationFrame(headerFrame);
   headerFrame = requestAnimationFrame(() => {
     const h = document.querySelector("header"), n = document.querySelector(".navs");
     for (const step of HEADER_STEPS) {
-      h.classList.remove("hdr-tight", "hdr-compact", "nav-collapsed", "hdr-min", "hdr-none");
+      h.classList.remove("hdr-tight", "hdr-compact", "hdr-snug", "nav-collapsed", "hdr-min", "hdr-none");
       h.classList.add(...step);
       if (n.scrollWidth <= n.clientWidth + 4) break;  // sub-pixel rounding (85% text) read as overflow
     }
@@ -3045,6 +3045,37 @@ if (SIDE) {
     : { group: "Commands", label: "Open side window (second screen)", hint: "pinned tabs on your other screen", run: () => setSideOpen(true) }]);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) loadSide(); });
 }
+// ---- Tools ▾ (Joe's call 2026-11-04): Snip, the side window and the switches in one menu on the right, so the header's
+// room goes to the tabs. Their own buttons stay in the page, hidden (style.css), with all their logic: the menu shows
+// each one's state and clicks it. Focus mode shows in the header only while it's on (its countdown chip).
+function toolItems() {
+  const shown = (sel) => { const b = $(sel); return b && !b.hidden ? b : null; };
+  const pressed = (b) => b?.getAttribute("aria-pressed") === "true";
+  const toggle = (b, label, hint) => b && el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(pressed(b)),
+    title: hint || b.title || "", onclick: () => b.click() }, label);
+  const plain = (label, run, hint = "") => el("button", { type: "button", title: hint, onclick: run }, label);
+  const keep = CC.keepAvailable?.get();
+  const split = shown("#layout-toggle"), side = shown("#side-toggle"), focusLayout = shown("#focus-layout");
+  return [
+    plain("✂ Snip screen", () => $("#snip-btn")?.click(), "Copy part of the screen to the clipboard (Win+Shift+S)"),
+    plain("✂ Snip in 3 seconds", () => CC.snip?.(3), "Time to open a menu first"),
+    side && toggle(side, "⧉ Side window (second screen)"),
+    split && toggle(split, "◧ Split: COMMS | WORK side by side"),
+    focusLayout && toggle(focusLayout, "⧉ Pulse | Code layout"),
+    el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(!!focusInfo.active), onclick: focusDialog,
+      title: "Only high-priority alerts pop up" }, focusInfo.active ? `◐ Focus mode: on until ${timeOf(focusInfo.until)}…` : "◐ Focus mode…"),
+    keep?.available && el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(!!keep.on), onclick: () => CC.keepAvailable.set(!keep.on),
+      title: "Teams won't go Away while Command Center is open and Windows is unlocked" }, "● Stay Available in Teams"),
+    CC.shortcuts && plain("⌨ Keyboard shortcuts", () => CC.shortcuts(), "?"),
+  ].filter(Boolean);
+}
+{
+  const tools = menuButton("", "Tools: snip, side window, layout and other switches", toolItems, "small subtle tools-btn", "right");
+  tools.id = "tools-btn";
+  tools.append("⚙", el("span", { class: "tools-word" }, " Tools"), el("span", { class: "nav-drop-caret", "aria-hidden": "true" }, " ▾"));
+  $("#search-btn").after(tools);
+}
+
 // Main window: open it again after a Lock or a restart if it was open (Joe left it open; the server remembers).
 loadSide().then((info) => { if (!SIDE && info?.available && info.open && !info.shown) setSideOpen(true); });
 

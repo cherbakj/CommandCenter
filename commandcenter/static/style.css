@@ -1090,6 +1090,17 @@ body > header.hdr-min .search-btn kbd { display: none; }
 body > header.hdr-min .search-btn::before { content: "⌕"; }
 body > header.hdr-min .layout-toggle { display: none; }
 body > header.hdr-none .next-meeting { display: none; }
+/* Tools ▾ holds these (app.js toolItems): their buttons stay in the page for their logic, never on show. Focus mode
+   shows only while it's on. */
+.header-right #snip-btn, .header-right #layout-toggle, .header-right #focus-layout, .header-right #side-toggle { display: none !important; }
+.header-right .focus-chip.subtle { display: none; }
+body > header.hdr-tight .tools-word { display: none; }
+/* Tabs closer together, before they fold into dropdowns: smaller padding, and the COMMS / WORK labels go (each group
+   keeps its own outline, and the group's name stays on its nav for screen readers). */
+body > header.hdr-snug nav button { padding: .38rem .5rem; }
+body > header.hdr-snug .navs { gap: .35rem; }
+body > header.hdr-snug .nav-group .nav-label { display: none; }
+body > header.hdr-snug:not(.hdr-min) .next-meeting { min-width: 10rem; }  /* the subject, cut short, before it goes */
 @media (max-width: 1919px) {
   body > header { padding: .45rem 1rem; }
 }
