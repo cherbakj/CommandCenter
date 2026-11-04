@@ -409,29 +409,94 @@ def _no_shell():
     return JSONResponse({"error": "Only in the desktop app"}, status_code=409)
 
 
+# The side window (desktop.open_side) runs the same page with ?view=side, and its requests say so (app.js api()). The
+# window routes answer it as if there were no desktop window: it never places, moves or full-screens the main
+# window's native views (Pulse, Teams web, Websites, SSMS, VS Code), which live in the main window only. Same page,
+# same session: this keeps the two windows apart, it isn't a security boundary.
+def _from_side(request: Request) -> bool:
+    return request.headers.get("x-cc-view") == "side"
+
+
+def _main_shell(request: Request):
+    return None if _from_side(request) else shell
+
+
+# Tabs the side window can show: the ones built from the page alone. Pulse, Websites, VS Code and SQL are native
+# windows inside the main window; Voice holds the microphone permission, which is the main window's.
+SIDE_TABS = ("today", "alerts", "mail", "calendar", "teams", "pulse-feedback", "personal", "toolkit")
+SIDE_DEFAULT = ["mail", "teams"]
+
+
+def _side_record() -> dict:
+    from . import db
+    rec = db.kv_get("window:side") or {}
+    return rec if isinstance(rec, dict) else {}
+
+
+@router.get("/api/window/side", include_in_schema=False)
+async def side_window_state():
+    """{available, open (wanted), shown, monitors, tabs, pinnable}. tabs work without the desktop app too (a browser
+    page at /?view=side), opening the window doesn't."""
+    rec = _side_record()
+    tabs = [t for t in rec.get("tabs", SIDE_DEFAULT) if t in SIDE_TABS] if isinstance(rec.get("tabs", SIDE_DEFAULT), list) else []
+    st = await asyncio.to_thread(shell.side_state) if shell and hasattr(shell, "side_state") else {"available": False, "shown": False, "monitors": 1}
+    return {**st, "open": bool(rec.get("open")), "tabs": tabs, "pinnable": list(SIDE_TABS)}
+
+
+@router.post("/api/window/side", include_in_schema=False)
+async def side_window_set(request: Request):
+    """{open: bool} opens or closes the side window; {tabs: [...]} sets what's pinned to it."""
+    from . import db
+    try:
+        body = await _small_json(request)
+        if not isinstance(body, dict):
+            raise ValueError("expected an object")
+        rec = _side_record()
+        if "tabs" in body:
+            tabs = body["tabs"]
+            if not isinstance(tabs, list) or len(tabs) > len(SIDE_TABS) or not all(t in SIDE_TABS for t in tabs):
+                raise ValueError("unknown tab")
+            rec["tabs"] = list(dict.fromkeys(tabs))
+            db.kv_set("window:side", rec)
+        if "open" in body:
+            if not shell or not hasattr(shell, "open_side"):
+                return _no_shell()
+            if body["open"] is True:
+                db.kv_set("window:side", {**_side_record(), "open": True})
+                if not await asyncio.to_thread(shell.open_side):
+                    return JSONResponse({"error": "The side window opens once Command Center is unlocked"}, status_code=409)
+            else:
+                await asyncio.to_thread(shell.close_side, False)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return await side_window_state()
+
+
 @router.get("/api/window/state", include_in_schema=False)
-async def window_state():
+async def window_state(request: Request):
+    if _from_side(request):
+        return {"desktop": False, "side": True, "fullscreen": False}
     return shell.window_state() if shell else {"desktop": False, "fullscreen": False}
 
 
 @router.post("/api/window/minimize", include_in_schema=False)
-async def window_minimize():
-    if not shell:
+async def window_minimize(request: Request):
+    if not _main_shell(request):
         return _no_shell()
     shell.minimize()
     return {"ok": True}
 
 
 @router.post("/api/window/fullscreen", include_in_schema=False)
-async def window_fullscreen():
-    if not shell:
+async def window_fullscreen(request: Request):
+    if not _main_shell(request):
         return _no_shell()
     return {"fullscreen": shell.toggle_fullscreen()}
 
 
 @router.post("/api/window/hide", include_in_schema=False)
-async def window_hide():
-    if not shell:
+async def window_hide(request: Request):
+    if not _main_shell(request):
         return _no_shell()
     shell.hide()
     return {"ok": True}
@@ -440,7 +505,9 @@ async def window_hide():
 # Native windows over dashboard tabs (overlay.py): the Pulse and Teams site views (siteview.py) and the docked SSMS
 # (ssmsdock.SsmsDock). The page reports where a tab's stage is and what is on top of it; each view has its own state
 # and buttons. Nothing here returns page content beyond the host, path and title of what the Pulse view shows.
-def _overlay(name: str):
+def _overlay(name: str, request: Request = None):
+    if request is not None and _from_side(request):
+        return None  # the side window has no native views (see _from_side)
     return (getattr(shell, "overlays", None) or {}).get(name) if shell else None
 
 
@@ -456,7 +523,7 @@ async def _small_json(request: Request, limit: int = 8192):
 
 @router.post("/api/window/{name}/bounds", include_in_schema=False)
 async def overlay_bounds(name: str, request: Request):
-    view = _overlay(name)
+    view = _overlay(name, request)
     if not view:
         return _no_shell()
     from .overlay import parse_bounds
@@ -468,10 +535,10 @@ async def overlay_bounds(name: str, request: Request):
 
 
 @router.get("/api/window/{name}", include_in_schema=False)
-async def overlay_state(name: str):
+async def overlay_state(name: str, request: Request):
     """A native view's state for its tab: pulse / teams (site views: host, path and title of the page shown) or
     ssms (the dock)."""
-    view = _overlay(name)
+    view = _overlay(name, request)
     if not view:
         if name == "ssms":
             from .ssmsdock import ssms_path
@@ -485,7 +552,7 @@ async def overlay_action(name: str, request: Request):
     """The tab's buttons. Pulse: back / forward / reload / home / open / navigate (Pulse pages only). Teams: the same
     plus chat (a checked Teams deep link, opened in the view) and app (the Teams app). SSMS: start / dock (pid: an
     SSMS of this user, the installed and signed one) / undock / redock."""
-    view = _overlay(name)
+    view = _overlay(name, request)
     if not view:
         return _no_shell()
     try:

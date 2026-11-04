@@ -1171,3 +1171,12 @@ button.send-btn:focus-visible { color: #001418; }
 /* ---- skeleton shimmer (loading placeholders) ---- */
 .skeleton { border-radius: .4rem; background: linear-gradient(90deg, rgb(255 255 255 / .05) 25%, rgb(255 255 255 / .11) 50%, rgb(255 255 255 / .05) 75%) 0 0 / 200% 100%; animation: shimmer 1.4s linear infinite; color: transparent !important; }
 @keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ---- side window (app.js SIDE: /?view=side) ----
+   Only the pinned tabs' buttons; a group with none goes; no window buttons, focus layout or Split (Windows' own frame). */
+.cc-side .nav-group button[data-tab].side-off, .cc-side .nav-group.side-off { display: none !important; }
+.cc-side #focus-layout, .cc-side #win-controls, .cc-side #side-toggle { display: none !important; }
+.side-empty { position: absolute; inset: 0; margin: auto; width: min(32rem, calc(100% - 2rem)); height: fit-content; padding: 1.4rem 1.6rem;
+  display: grid; gap: .7rem; justify-items: start; }
+.side-empty h2 { margin: 0; }
+.side-empty p { margin: 0; color: var(--muted); }

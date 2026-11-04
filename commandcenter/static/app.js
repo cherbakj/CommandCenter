@@ -17,12 +17,19 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+// The side window (a second window for another screen, desktop.open_side) runs this page at /?view=side: only the tabs
+// pinned to it, no native views, no window buttons. Its requests say so (X-CC-View), and the server's window routes
+// answer it as if there were no desktop window (security._from_side).
+const SIDE = new URLSearchParams(location.search).get("view") === "side";
+if (SIDE) document.documentElement.classList.add("cc-side");
+
 async function api(path, body) {
   const opts = body === undefined ? {} : {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CommandCenter": "1" },
     body: JSON.stringify(body),
   };
+  if (SIDE) opts.headers = { ...(opts.headers || {}), "X-CC-View": "side" };
   const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || data.detail || res.statusText);
@@ -157,10 +164,15 @@ function confirmDialog(title, text, okLabel = "OK") {
 
 const loaders = {};
 
+// The side window keeps its own layout (tabs, split, splitter) under cc.side.*: both windows share this storage.
+const storeKey = (k) => (SIDE && k.startsWith("cc.layout.") ? `cc.side.${k.slice(3)}` : k);
 const store = {
-  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
-  set(k, v) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* storage blocked */ } },
+  get(k) { try { return localStorage.getItem(storeKey(k)); } catch { return null; } },
+  set(k, v) { try { v === null ? localStorage.removeItem(storeKey(k)) : localStorage.setItem(storeKey(k), v); } catch { /* storage blocked */ } },
 };
+// Side window: the pinned tabs (GET /api/window/side). The main window shows every tab.
+const side = { tabs: new Set(), ready: !SIDE };
+const tabAllowed = (id) => !SIDE || side.tabs.has(id);
 
 const SPLIT_MIN_WIDTH = 1600;
 const SPLIT_DEFAULT = 0.44;
@@ -198,17 +210,21 @@ const layout = (() => {
 
 const navButton = (id) => document.querySelector(`.nav-group button[data-tab="${CSS.escape(id)}"]`);
 const paneOf = (id) => navButton(id)?.closest(".nav-group")?.dataset.pane || PANE_OF[id] || null;
-const tabsIn = (pane) => [...document.querySelectorAll(`#pane-${pane} .pane-body > section.tab`)].map((s) => s.id.slice(4));
+const tabsIn = (pane) => [...document.querySelectorAll(`#pane-${pane} .pane-body > section.tab`)].map((s) => s.id.slice(4)).filter(tabAllowed);
 
 function saveLayoutTabs() {
   store.set("cc.layout.tabs", JSON.stringify({ comms: layout.active.comms, work: layout.active.work, shown: layout.shown }));
 }
 
 // Focus layout is available once both its tabs are registered (pulseview.js, vscode.js).
-const focusReady = () => !!($(`#tab-${FOCUS_LEFT}`) && $(`#tab-${FOCUS_RIGHT}`) && navButton(FOCUS_LEFT));
+const focusReady = () => !SIDE && !!($(`#tab-${FOCUS_LEFT}`) && $(`#tab-${FOCUS_RIGHT}`) && navButton(FOCUS_LEFT));
 const focusOn = () => !!layout.focus && focusReady();
 
+// Split / Single: not in a narrow window, nor in the focus layout (always two panes), nor in a side window pinned to
+// one group only.
+const splitToggleHidden = () => window.innerWidth < SPLIT_MIN_WIDTH || focusOn() || (SIDE && !(tabsIn("comms").length && tabsIn("work").length));
 function wantSplit() {
+  if (SIDE && !(tabsIn("comms").length && tabsIn("work").length)) return false;  // pins in one group only: one pane
   return window.innerWidth >= SPLIT_MIN_WIDTH && (focusOn() || store.get("cc.layout.mode") !== "single");
 }
 
@@ -265,13 +281,19 @@ function applyLayout() {
   main.classList.toggle("ws-focus", focusOn());
   document.body.classList.toggle("split-view", layout.split);
   const nowVisible = new Set();
+  if (SIDE) {  // only the pinned tabs' buttons, and a pane with none never shows
+    document.querySelectorAll(".nav-group button[data-tab]").forEach((b) => b.classList.toggle("side-off", !tabAllowed(b.dataset.tab)));
+    document.querySelectorAll(".nav-group").forEach((g) => g.classList.toggle("side-off", !tabsIn(g.dataset.pane).length));
+    if (!tabsIn(layout.shown).length && tabsIn(layout.shown === "comms" ? "work" : "comms").length) layout.shown = layout.shown === "comms" ? "work" : "comms";
+  }
   for (const pane of ["comms", "work"]) {
     const ids = tabsIn(pane);
     if (!ids.includes(layout.active[pane])) layout.active[pane] = ids[0] || layout.active[pane];
-    const show = layout.split || layout.shown === pane;
+    const show = (layout.split || layout.shown === pane) && ids.length > 0;
     $(`#pane-${pane}`).classList.toggle("shown", show);
-    for (const id of ids) {
-      const on = show && id === layout.active[pane];
+    const every = [...document.querySelectorAll(`#pane-${pane} .pane-body > section.tab`)].map((s) => s.id.slice(4));
+    for (const id of every) {  // every tab, so one not pinned to the side window never stays active
+      const on = show && id === layout.active[pane] && ids.includes(id);
       $(`#tab-${id}`).classList.toggle("active", on);
       navButton(id)?.classList.toggle("active", on);
       navButton(id)?.setAttribute("aria-current", on ? "page" : "false");
@@ -281,7 +303,7 @@ function applyLayout() {
   const fresh = [...nowVisible].filter((id) => !layout.visible.has(id));
   layout.visible = nowVisible;
   const toggle = $("#layout-toggle");
-  toggle.hidden = window.innerWidth < SPLIT_MIN_WIDTH || focusOn();  // the focus layout is always two panes
+  toggle.hidden = splitToggleHidden();
   toggle.textContent = layout.split ? "◧ Split" : "▭ Single";
   toggle.setAttribute("aria-pressed", String(layout.split));
   toggle.title = layout.split ? "Two panes: COMMS left, WORK right. Click for a single pane." : "One pane at a time. Click to show COMMS and WORK side by side.";
@@ -315,7 +337,7 @@ const tabBadges = (b) => [...b.querySelectorAll(".badge:not([hidden])")].map((n)
   c.removeAttribute("id");
   return c;
 });
-const navDropItems = (group) => [...group.querySelectorAll("button[data-tab]")].map((b) => el("button", {
+const navDropItems = (group) => [...group.querySelectorAll("button[data-tab]")].filter((b) => tabAllowed(b.dataset.tab)).map((b) => el("button", {
   type: "button", role: "menuitemradio", "aria-checked": String(b.classList.contains("active")), onclick: () => openTab(b.dataset.tab),
 }, b.dataset.label || b.textContent.trim(), tabBadges(b)));
 const navDropButtons = ["comms", "work"].map((pane) => {
@@ -344,6 +366,10 @@ function runLoaders(ids) { for (const id of ids) loaders[id]?.(); }
 function openTab(name) {
   const pane = paneOf(name);
   if (!pane || !$(`#tab-${name}`)) return;
+  if (!tabAllowed(name)) {  // side window: not pinned here
+    toast(`${navButton(name)?.dataset.label || name} isn't pinned to this window: 📌 Pin adds it, or use the main window`);
+    return;
+  }
   layout.active[pane] = name;
   layout.shown = pane;
   saveLayoutTabs();
@@ -369,8 +395,7 @@ $("#layout-toggle").after(el("button", {
 
 window.addEventListener("resize", () => {
   if (!layout.ready) return;
-  const toggleHidden = window.innerWidth < SPLIT_MIN_WIDTH || focusOn();
-  if (wantSplit() !== layout.split || $("#layout-toggle").hidden !== toggleHidden) runLoaders(applyLayout());
+  if (wantSplit() !== layout.split || $("#layout-toggle").hidden !== splitToggleHidden()) runLoaders(applyLayout());
   else if (layout.split) applySplit();
 });
 
@@ -2876,7 +2901,7 @@ async function refresh() {
 
 let isFullscreen = null, windowStateAsked = false;
 function renderWindowControls(st) {
-  const desktop = st.desktop === true;
+  const desktop = st.desktop === true && !SIDE;  // the side window has Windows' own frame and buttons
   $("#win-controls").hidden = !desktop;
   if (!desktop) { setDragRegions(false); return; }
   if (!windowStateAsked) {
@@ -2952,7 +2977,79 @@ setInterval(refresh, 5000);
 // A module adds its own tab and palette entries without editing this file:
 //   CC.registerTab({ id: "toolkit", label: "Toolkit", render(section) {...}, onShow() {...} })
 //   CC.addPaletteSource(() => [{ group: "Toolkit", label: "...", hint: "...", run() {...} }])
+// ---- side window: a second window for another screen with the tabs pinned to it (Joe's call 2026-11-04) ----------
+// Main window: ⧉ Side in the header (with two screens, or while it's open) and Ctrl+K open or close it; after a Lock
+// or a restart the dashboard opens it again if it was open. Side window: 📌 Pin picks its tabs (security.SIDE_TABS).
+const SIDE_LABELS = { today: "Today", alerts: "Alerts", mail: "Mail", calendar: "Calendar", teams: "Teams (list)",
+  "pulse-feedback": "Pulse Feedback", personal: "Personal", toolkit: "Toolkit" };
+let sideInfo = null;
+async function loadSide() {
+  try { sideInfo = await api("/api/window/side"); } catch { sideInfo = null; }
+  if (SIDE) {
+    side.tabs = new Set(sideInfo?.tabs || []);
+    side.ready = true;
+    if (layout.ready) runLoaders(applyLayout());
+    renderSideEmpty();
+  }
+  renderSideButton();
+  return sideInfo;
+}
+async function setSidePins(tabs) {
+  await guarded(async () => {
+    sideInfo = await api("/api/window/side", { tabs });
+    side.tabs = new Set(sideInfo.tabs);
+    runLoaders(applyLayout());
+    renderSideEmpty();
+  });
+}
+async function setSideOpen(open) {
+  await guarded(async () => { sideInfo = await api("/api/window/side", { open }); renderSideButton(); });
+}
+function renderSideEmpty() {
+  if (!SIDE) return;
+  let note = $("#side-empty");
+  if (side.tabs.size) { note?.remove(); return; }
+  if (!note) {
+    note = el("div", { id: "side-empty", class: "side-empty panel" },
+      el("h2", {}, "Side window"),
+      el("p", {}, "Pin the tools you want on this screen: Mail, Teams, Calendar, Alerts, Today and more. They stay in the main window too."),
+      el("button", { type: "button", class: "primary", onclick: () => $("#side-pin")?.click() }, "📌 Pin tabs"));
+    $("#workspace").append(note);
+  }
+}
+const sidePinItems = () => (sideInfo?.pinnable || Object.keys(SIDE_LABELS)).map((id) => el("button", {
+  type: "button", role: "menuitemcheckbox", "aria-checked": String(side.tabs.has(id)),
+  onclick: () => setSidePins(side.tabs.has(id) ? [...side.tabs].filter((t) => t !== id) : [...side.tabs, id]),
+}, side.tabs.has(id) ? "✓ " : "　", SIDE_LABELS[id] || id));
+function renderSideButton() {
+  if (SIDE) return;
+  let b = $("#side-toggle");
+  const show = !!sideInfo?.available && (sideInfo.monitors > 1 || sideInfo.shown);
+  if (!b) {
+    b = el("button", { id: "side-toggle", type: "button", class: "layout-toggle small subtle", onclick: () => setSideOpen(!sideInfo?.shown) });
+    $("#layout-toggle").before(b);
+  }
+  b.hidden = !show;
+  b.setAttribute("aria-pressed", String(!!sideInfo?.shown));
+  b.textContent = sideInfo?.shown ? "⧉ Side ✓" : "⧉ Side";
+  b.title = sideInfo?.shown ? "Close the side window" : "Open a side window on your other screen, with the tabs you pin to it";
+}
+if (SIDE) {
+  document.title = "Command Center · side";
+  const pin = menuButton("📌 Pin", "Pin tabs to this window", sidePinItems, "small subtle side-pin", "right");
+  pin.id = "side-pin";
+  $("#search-btn").before(pin);
+} else {
+  extraPaletteSources.push(() => !sideInfo?.available ? [] : [sideInfo.shown
+    ? { group: "Commands", label: "Close side window", hint: "the second-screen window", run: () => setSideOpen(false) }
+    : { group: "Commands", label: "Open side window (second screen)", hint: "pinned tabs on your other screen", run: () => setSideOpen(true) }]);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadSide(); });
+}
+// Main window: open it again after a Lock or a restart if it was open (Joe left it open; the server remembers).
+loadSide().then((info) => { if (!SIDE && info?.available && info.open && !info.shown) setSideOpen(true); });
+
 window.CC = {
+  side: SIDE,  // this page is the side window (pinned tabs only; no native views, no pop-ups)
   $, el, api, guarded, fill, when, timeOf, duration, srcTag, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
   prepDialog,  // the Prep card for a meeting
   replyDialog,  // verified reply: compose -> review (recipients, subject, text) -> Send

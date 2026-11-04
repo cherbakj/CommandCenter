@@ -164,6 +164,12 @@ def _set_window_icon(hwnd):
 # ---- WebView2 hardening ---------------------------------------------------------------
 MIC_STATE_WAIT = 5  # seconds
 _nav = {"origin": None, "action": None, "leaving": None, "core": None}
+SIDE_QUERY = "?view=side"  # the side window's page (app.js SIDE): pinned tabs only, no native views
+
+
+def _is_side(window) -> bool:
+    """The side window (a second window for another screen) is told apart by the page it was created for."""
+    return SIDE_QUERY in str(getattr(window, "original_url", None) or "")
 
 
 def _harden_webview():
@@ -189,11 +195,18 @@ def _harden_webview():
         if args.IsSuccess:  # before pywebview's handler loads the first page
             _no_autofill(sender.CoreWebView2.Settings, sender.CoreWebView2)
         original_ready(self, sender, args)
-        if args.IsSuccess:
-            sender.CoreWebView2.NavigationStarting += _on_navigation
-            sender.CoreWebView2.PermissionRequested += _on_permission
-            _nav["core"] = sender.CoreWebView2
-            _deny_mic()  # WebView2 remembers the last state across starts
+        if not args.IsSuccess:
+            return
+        if _is_side(getattr(self, "pywebview_window", None)):
+            # The side window: only this app's pages, never the lock page's actions, no permissions at all, and its
+            # page loading doesn't hide the main window's native views. The microphone state stays the main window's.
+            sender.CoreWebView2.NavigationStarting += _on_side_navigation
+            sender.CoreWebView2.PermissionRequested += _deny_permission
+            return
+        sender.CoreWebView2.NavigationStarting += _on_navigation
+        sender.CoreWebView2.PermissionRequested += _on_permission
+        _nav["core"] = sender.CoreWebView2
+        _deny_mic()  # WebView2 remembers the last state across starts
 
     def on_new_window_request(self, sender, args):
         args.set_Handled(True)  # never open a second WebView2 window
@@ -229,6 +242,23 @@ def _on_permission(sender, args):
         ok = voice.mic_on() and str(args.Uri).startswith(_nav["origin"] or "\0")
         args.SavesInProfile = False
         args.State = CoreWebView2PermissionState.Allow if ok else CoreWebView2PermissionState.Deny
+
+
+def _deny_permission(sender, args):
+    from Microsoft.Web.WebView2.Core import CoreWebView2PermissionState
+    args.SavesInProfile = False
+    args.State = CoreWebView2PermissionState.Deny
+
+
+def _on_side_navigation(sender, args):
+    uri = str(args.Uri)
+    if uri.startswith(_nav["origin"] or "\0") or uri == "about:blank":
+        return
+    args.Cancel = True
+    if uri.lower().startswith(("https://", "http://")) and not uri.startswith(ACTION_URL):
+        webbrowser.open(uri)
+    elif not uri.startswith(ACTION_URL):
+        log.warning("Side window: blocked navigation to %s", uri[:80])
 
 
 def _on_navigation(sender, args):
@@ -399,6 +429,8 @@ class DesktopApp:
         self.ssms.hotkey_factory = GlobalHotkey
         self.code = CodeDock(self)    # desktop VS Code docked in the VS Code tab
         self.overlays = {"pulse": self.pulse, "teams": self.teams, "websites": self.websites, "ssms": self.ssms, "code": self.code}
+        self.side = None  # the side window (open_side), for a second screen
+        self._side_lock = threading.Lock()
 
     # ---- window (security.shell uses these for the /api/window/* routes) ----
     def show(self):
@@ -568,6 +600,99 @@ class DesktopApp:
         except Exception:
             return size
 
+    # ---- side window: a second window for another screen, showing the tabs pinned to it (Joe's call 2026-11-04) ----
+    # kv window:side {open, tabs, geometry}: open = Joe wants it (kept through Lock, Restart and Quit, so it comes back);
+    # tabs = the pinned tab ids (security.SIDE_TABS); geometry = where it was on a single screen. No personal data.
+    def side_state(self) -> dict:
+        import win32api
+        try:
+            monitors = len(win32api.EnumDisplayMonitors())
+        except Exception:
+            monitors = 1
+        return {"available": True, "shown": self.side is not None, "monitors": monitors}
+
+    def open_side(self) -> bool:
+        """Opens the side window (server thread). Not while locked or quitting; one at a time."""
+        with self._side_lock:
+            if self.side is not None:
+                self._side_front()
+                return True
+            if not self.window or self.quitting or not self.unlocked or self.lock_showing:
+                return False
+            area = self._side_area()
+            self.side = webview.create_window(
+                f"{TITLE} · side", url=self.url + SIDE_QUERY, **area, min_size=(420, 360),
+                background_color="#05070d", text_select=True)
+        self.side.events.closed += self._on_side_closed
+        self.side.events.shown += lambda: _set_window_icon(self._side_hwnd())
+        self.side.events.moved += self._remember_side
+        self.side.events.resized += self._remember_side
+        log.info("Side window opened (%s)", "maximized on the other screen" if area.get("maximized") else "windowed")
+        return True
+
+    def close_side(self, keep_open: bool):
+        """keep_open: Lock / Restart / Quit (it comes back with the next unlock or start); else Joe closed it."""
+        with self._side_lock:
+            side, self.side = self.side, None
+        if not keep_open:
+            db.kv_set("window:side", {**(db.kv_get("window:side") or {}), "open": False})
+        if side is not None:
+            try:
+                side.destroy()
+            except Exception as e:
+                log.warning("Side window: couldn't close it (%s)", type(e).__name__)
+
+    def _on_side_closed(self):
+        if self.side is not None and not self.quitting:  # Joe closed it himself (its X or Alt+F4)
+            self.side = None
+            db.kv_set("window:side", {**(db.kv_get("window:side") or {}), "open": False})
+            log.info("Side window closed")
+
+    def _side_hwnd(self) -> int:
+        try:
+            return int(self.side.native.Handle.ToInt64())
+        except Exception:
+            return _find_own_window(f"{TITLE} · side")
+
+    def _side_front(self):
+        hwnd = self._side_hwnd()
+        if hwnd:
+            if ctypes.windll.user32.IsIconic(hwnd):
+                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            set_pos, flags = ctypes.windll.user32.SetWindowPos, 0x0001 | 0x0002
+            set_pos(ctypes.c_void_p(hwnd), ctypes.c_void_p(-1), 0, 0, 0, 0, flags)
+            set_pos(ctypes.c_void_p(hwnd), ctypes.c_void_p(-2), 0, 0, 0, 0, flags)
+
+    def _remember_side(self, *_):
+        w = self.side
+        if not w or ctypes.windll.user32.IsIconic(self._side_hwnd()) or ctypes.windll.user32.IsZoomed(self._side_hwnd()):
+            return
+        if w.width > 300 and w.height > 300:
+            db.kv_set("window:side", {**(db.kv_get("window:side") or {}),
+                                      "geometry": {"width": w.width, "height": w.height, "x": w.x, "y": w.y}})
+
+    def _side_area(self) -> dict:
+        """Another monitor than the main window's: maximized on it. One screen: where it was last, else the right
+        40% of the work area. Logical px (pywebview's), as _start_area."""
+        import win32api
+        import win32con
+        scale = ctypes.windll.user32.GetDpiForSystem() / 96
+        try:
+            main = win32api.MonitorFromWindow(self._hwnd(), win32con.MONITOR_DEFAULTTOPRIMARY)
+            others = [m[0] for m in win32api.EnumDisplayMonitors() if int(m[0]) != int(main)]
+            if others:
+                left, top, right, bottom = win32api.GetMonitorInfo(others[0])["Work"]
+                return {"x": int(left / scale), "y": int(top / scale), "width": int((right - left) / scale),
+                        "height": int((bottom - top) / scale), "maximized": True}
+            left, top, right, bottom = win32api.GetMonitorInfo(main)["Work"]
+        except Exception:
+            left, top, right, bottom = 0, 0, 1600, 1000
+        geo = (db.kv_get("window:side") or {}).get("geometry") or {}
+        if all(isinstance(geo.get(k), int) for k in ("x", "y", "width", "height")):
+            return {k: geo[k] for k in ("x", "y", "width", "height")}
+        width = int((right - left) * 0.4 / scale)
+        return {"x": int(right / scale) - width, "y": int(top / scale), "width": width, "height": int((bottom - top) / scale)}
+
     def window_state(self) -> dict:
         return {"desktop": True, "fullscreen": self.fullscreen, "locked": not self.unlocked, "pulse_view": True,
                 "teams_view": True, "ssms_dock": True, "code_dock": True}
@@ -580,6 +705,7 @@ class DesktopApp:
         self.code.on_lock()  # VS Code windows too
         for view in self.overlays.values():
             view.forget()  # no site view or SSMS stays over the lock screen
+        self.close_side(keep_open=True)  # back once unlocked (the dashboard asks for it)
         if self.window:
             self.lock_showing, self.gate_showing = True, False
             self.window.load_html(_lock_page("Locked. Select Unlock to confirm it's you."))
@@ -772,6 +898,7 @@ class DesktopApp:
             self.server.should_exit = True
         if self.tray:
             self.tray.stop()
+        self.close_side(keep_open=True)  # comes back with the next start if it was open
         if self.window:
             self.window.destroy()
 
@@ -814,8 +941,9 @@ class DesktopApp:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
         ensure_icon_file()
         from . import forcequit
-        forcequit.register_jump_list(APP_ID, str(ICON_PATH))  # "Force quit Command Center" on the taskbar button
-        threading.Thread(target=heal_shortcuts, name="shortcuts", daemon=True).start()  # the taskbar's icon
+        if not os.environ.get("CC_PORT"):  # a test copy leaves Joe's taskbar alone
+            forcequit.register_jump_list(APP_ID, str(ICON_PATH))  # "Force quit Command Center" on the taskbar button
+            threading.Thread(target=heal_shortcuts, name="shortcuts", daemon=True).start()  # the taskbar's icon
         security.harden_folders()
         if not self._start_server():
             return

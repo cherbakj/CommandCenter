@@ -281,6 +281,13 @@ def inventory() -> list[dict]:
         "The zip codes' place names and the latest forecast.", "None (not sensitive: zip codes only)", "Forecast: 10 minutes",
         connected=bool(zips), state=f"{len(zips)} location(s)")
 
+    side = _try(lambda: db.kv_get("window:side"), None) or {}
+    add("side-window", "Side window (second screen)", "Work",
+        "Nothing new: it shows the same tabs as the main window, from the same data.",
+        "Whether it's open, which tabs are pinned to it and where it sits on a single screen (kv window:side). No "
+        "content.", "None (not sensitive: tab names and a window position)", "Until changed",
+        connected=None, state=("Open" if side.get("open") else "Closed") + f" · {len(side.get('tabs') or [])} pinned tab(s)")
+
     try:
         from . import spam
         n_blocks = len(_try(spam.blocks, []) or [])

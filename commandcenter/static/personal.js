@@ -337,6 +337,7 @@
 
   let polling = false;
   async function poll() {
+    if (CC.side) return;  // pop-ups show in the main window only (the side window would be a second copy)
     if (polling) return;
     polling = true;
     try {
