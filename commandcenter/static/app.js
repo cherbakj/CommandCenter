@@ -201,6 +201,8 @@ const side = { tabs: new Set(), ready: !SIDE };
 const tabAllowed = (id) => !SIDE || side.tabs.has(id);
 
 const SPLIT_MIN_WIDTH = 1600;
+// The side window splits from a narrower width: Teams | Outlook on a second screen at 150% (1280 px) still fits.
+const splitMin = () => (SIDE ? 1100 : SPLIT_MIN_WIDTH);
 const SPLIT_DEFAULT = 0.44;
 const PANE_OF = {
   today: "comms", alerts: "comms", mail: "comms", calendar: "comms", teams: "comms", "pulse-feedback": "comms", personal: "comms",
@@ -248,10 +250,10 @@ const focusOn = () => !!layout.focus && focusReady();
 
 // Split / Single: not in a narrow window, nor in the focus layout (always two panes), nor in a side window pinned to
 // one group only.
-const splitToggleHidden = () => window.innerWidth < SPLIT_MIN_WIDTH || focusOn() || (SIDE && !(tabsIn("comms").length && tabsIn("work").length));
+const splitToggleHidden = () => window.innerWidth < splitMin() || focusOn() || (SIDE && !(tabsIn("comms").length && tabsIn("work").length));
 function wantSplit() {
   if (SIDE && !(tabsIn("comms").length && tabsIn("work").length)) return false;  // pins in one group only: one pane
-  return window.innerWidth >= SPLIT_MIN_WIDTH && (focusOn() || store.get("cc.layout.mode") !== "single");
+  return window.innerWidth >= splitMin() && (focusOn() || store.get("cc.layout.mode") !== "single");
 }
 
 // Moves the Pulse tab (section + nav button) into COMMS for the focus layout, or back to its place in WORK.
@@ -297,8 +299,35 @@ function renderFocusButton() {
     : "Focus layout: the Pulse site on the left and VS Code on the right; the header and alerts stay";
 }
 
+// Side window, split in two (Joe's call 2026-11-04): its two panes are LEFT and RIGHT, and any pinned tab can sit in
+// either, whatever its group in the main window. By default Outlook (the whole app) is on the right and the rest on the
+// left, so Teams | Outlook side by side; ⇄ Flip swaps every tab to the other side. Remembered per viewer
+// (localStorage cc.side.layout.sidePanes, through store's cc.layout.* mapping).
+const sidePanes = (() => { try { return JSON.parse(store.get("cc.layout.sidePanes") || "{}") || {}; } catch { return {}; } })();
+const sidePaneOf = (id) => (sidePanes[id] === "comms" || sidePanes[id] === "work" ? sidePanes[id] : id === "outlook" ? "work" : "comms");
+function placeSideTabs() {
+  for (const sec of document.querySelectorAll("#workspace .pane-body > section.tab")) {
+    const id = sec.id.slice(4), pane = sidePaneOf(id), btn = navButton(id);
+    const body = $(`#pane-${pane}-body`), nav = $(`#nav-${pane}`);
+    if (sec.parentElement !== body) body.append(sec);
+    if (btn && btn.parentElement !== nav) nav.append(btn);
+  }
+}
+function flipSides() {
+  for (const sec of document.querySelectorAll("#workspace .pane-body > section.tab")) {
+    const id = sec.id.slice(4);
+    sidePanes[id] = sidePaneOf(id) === "comms" ? "work" : "comms";
+  }
+  store.set("cc.layout.sidePanes", JSON.stringify(sidePanes));
+  Object.assign(layout.active, { comms: layout.active.work, work: layout.active.comms });
+  layout.shown = layout.shown === "comms" ? "work" : "comms";
+  saveLayoutTabs();
+  runLoaders(applyLayout());
+}
+
 // Puts the classes in line with the layout state. Returns the tabs that just became visible.
 function applyLayout() {
+  if (SIDE) placeSideTabs();
   placeFocusTab();
   layout.split = wantSplit();
   const main = $("#workspace");
@@ -2772,7 +2801,8 @@ function paletteSources() {
     const label = `Go to ${b.dataset.label || b.textContent.trim()}`;
     if (!out.some((i) => i.label === label)) add("Commands", label, `${b.closest(".nav-group").dataset.pane === "work" ? "WORK" : "COMMS"} tab`, () => openTab(b.dataset.tab));
   }
-  if (window.innerWidth >= SPLIT_MIN_WIDTH && !focusOn()) add("Commands", layout.split ? "Single pane" : "Split panes", "layout", () => $("#layout-toggle").click());
+  if (window.innerWidth >= splitMin() && !focusOn()) add("Commands", layout.split ? "Single pane" : "Split panes", "layout", () => $("#layout-toggle").click());
+  if (SIDE && layout.split) add("Commands", "Flip sides", "swap the side window's left and right", flipSides);
   if (focusReady()) add("Commands", layout.focus ? "Leave focus layout" : "Focus layout: Pulse + VS Code", "Pulse left, VS Code right", () => setFocusLayout(!layout.focus));
   for (const p of proj.list) add("Projects", `Work on: ${p.name}`, p.path, () => { setActiveProject(p.path); openTab("vscode"); });
   add("Commands", "New task", "Outlook or Asana", () => newTaskDialog());
@@ -3098,6 +3128,13 @@ function renderSideButton() {
 }
 if (SIDE) {
   document.title = "Command Center · side";
+  $("#nav-comms .nav-label").textContent = "LEFT";
+  $("#nav-work .nav-label").textContent = "RIGHT";
+  // ⇄ Flip, while it's split: the two sides swap (Teams | Outlook becomes Outlook | Teams)
+  const flip = el("button", { id: "side-flip", type: "button", class: "small subtle", title: "Swap the left and right sides",
+    onclick: flipSides }, "⇄", el("span", { class: "tools-word" }, " Flip"));
+  $("#search-btn").before(flip);
+  document.addEventListener("cc:layout", (e) => { flip.hidden = !e.detail?.split; });
   const pin = menuButton("📌 Pin", "Pin tabs to this window", sidePinItems, "small subtle side-pin", "right");
   pin.id = "side-pin";
   $("#search-btn").before(pin);

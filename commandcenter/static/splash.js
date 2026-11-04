@@ -14,6 +14,8 @@
   const signedIn = !gate && location.hash === "#signed-in";
   if (signedIn) history.replaceState(null, "", location.pathname + location.search);
   if (!gate) {
+    // The side window (/?view=side) never plays it: it would cover its Teams and Outlook views as they come up.
+    if (new URLSearchParams(location.search).get("view") === "side") return;
     try {
       if (localStorage.getItem("cc-splash-off")) return;  // Profile > Launch animation off
     } catch { /* storage blocked: play it */ }
