@@ -426,13 +426,20 @@ def _main_shell(request: Request):
 # side window). Pulse, Websites, VS Code and SQL stay native windows of the main window; Voice holds the microphone
 # permission, which is the main window's.
 SIDE_TABS = ("today", "alerts", "mail", "calendar", "teams", "pulse-feedback", "personal", "toolkit", "outlook")
-SIDE_DEFAULT = ["mail", "teams"]
+SIDE_DEFAULT = ["teams", "outlook"]  # Joe's call 2026-11-04: Teams (the whole app) | Outlook, side by side
 
 
 def _side_record() -> dict:
+    """kv window:side. Version 2 (2026-11-04): Teams (the whole app) and Outlook are pinned by default; a record from
+    before gets them added once, keeping whatever else was pinned (Joe's Mail stays)."""
     from . import db
     rec = db.kv_get("window:side") or {}
-    return rec if isinstance(rec, dict) else {}
+    rec = rec if isinstance(rec, dict) else {}
+    if rec.get("v", 1) < 2:
+        tabs = rec.get("tabs") if isinstance(rec.get("tabs"), list) else []
+        rec.update(v=2, tabs=list(dict.fromkeys([*SIDE_DEFAULT, *tabs])), full_teams=True)
+        db.kv_set("window:side", rec)
+    return rec
 
 
 @router.get("/api/window/side", include_in_schema=False)
