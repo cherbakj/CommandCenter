@@ -1114,7 +1114,7 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
     for item in _iter_inbox(200):
         if _local_time(item.ReceivedTime) < since:
             break
-        mail = _summary(item)
+        mail = _summary(item) | _thread(item)  # conv: one alert per conversation (alerts.raise_mail_alert)
         if db.seen("mail:" + mail["id"]):
             continue
         # A Hoxhunt phishing test comes first (it may borrow an urgent person's name, or a spam-blocked sender's):
@@ -1215,14 +1215,8 @@ async def watch_loop():
                                        "high", {"type": "hoxhunt", "id": mail["id"]}, toast="phishing test, report it")
                     new_tests += 1
                     continue
-                alerts.raise_alert(
-                    "Outlook",
-                    f"{rule.get('name', 'Mail')}: {mail['subject']}",
-                    f"From {mail['sender_name']} - {mail['preview'][:150]}",
-                    rule.get("priority", "normal"),
-                    {"type": "mail", "id": mail["id"]},
-                    toast="important new mail" if rule.get("priority") == "high" else "new mail",
-                )
+                alerts.raise_mail_alert(rule.get("name", "Mail"), mail, rule.get("priority", "normal"),
+                                        toast="important new mail" if rule.get("priority") == "high" else "new mail")
             if new_tests and on_hoxhunt:  # the pop-up, and the window in front (hoxhunt.py)
                 await asyncio.to_thread(on_hoxhunt, new_tests)
             for m, minutes in await call(scan_meetings):

@@ -215,9 +215,32 @@ def action_alerts(kind: str) -> list[tuple[int, dict]]:
 
 
 def mail_alerts() -> list[tuple[int, str]]:
-    """(alert id, EntryID) of the alerts whose action opens an email, newest first. Not Hoxhunt tests' (type
-    "hoxhunt"): reading one doesn't end its reminders, reporting it does (hoxhunt.py)."""
-    return [(i, a["id"]) for i, a in action_alerts("mail") if isinstance(a.get("id"), str)]
+    """(alert id, EntryID) of the alerts whose action opens an email, newest first: for a conversation's alert, one
+    pair per email it covers (action ids; alerts.raise_mail_alert). Not Hoxhunt tests' (type "hoxhunt"): reading one
+    doesn't end its reminders, reporting it does (hoxhunt.py)."""
+    out = []
+    for i, a in action_alerts("mail"):
+        ids = [x for x in (a.get("ids") or []) if isinstance(x, str)]
+        if isinstance(a.get("id"), str) and a["id"] not in ids:
+            ids.append(a["id"])
+        out += [(i, x) for x in ids]
+    return out
+
+
+def unread_conv_alert(conv: str):
+    """(alert id, action, priority) of the newest unread mail alert for this Outlook conversation, or None."""
+    if not conv:
+        return None
+    with _lock:
+        rows = _db().execute("SELECT id, action, priority FROM alerts WHERE read = 0 AND action IS NOT NULL ORDER BY id DESC").fetchall()
+    for alert_id, action, priority in rows:
+        try:
+            a = json.loads(unseal(action))
+        except (SealError, ValueError):
+            continue
+        if isinstance(a, dict) and a.get("type") == "mail" and a.get("conv") == conv:
+            return alert_id, a, priority
+    return None
 
 
 def delete_mail_alerts(entry_id: str) -> int:

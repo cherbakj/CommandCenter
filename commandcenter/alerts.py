@@ -84,7 +84,7 @@ def toast_text(source: str, title: str, body: str, toast: str | None, detail: st
 
 
 def raise_alert(source: str, title: str, body: str = "", priority: str = "normal", action: dict | None = None,
-                toast: str | None = None):
+                toast: str | None = None, quiet: bool = False):
     """priority: low | normal | high. action: optional dict the dashboard turns into a button.
     toast: short fixed category for the Windows toast in generic mode (e.g. "meeting starting"); no item text.
     In focus mode only high-priority alerts pop up; everything still lands in the feed."""
@@ -92,10 +92,35 @@ def raise_alert(source: str, title: str, body: str = "", priority: str = "normal
     alert_id = db.add_alert(source, title, body, priority, action)
     # Titles and bodies can be email subjects, names or ticket text: the log gets only the id, source and priority.
     log.info("Alert %s raised (source=%s, priority=%s)", alert_id, source, priority)
-    if priority != "high" and focus_state()["active"]:
-        return
+    if quiet or (priority != "high" and focus_state()["active"]):
+        return alert_id
     if settings.get("toast", True) and priority != "low":
         detail = "full" if str(settings.get("toast_detail", "generic")).strip().lower() == "full" else "generic"
         _toast(*toast_text(source, title, body, toast, detail))
     if priority in settings.get("sound_for", ["high"]):
         _sound()
+    return alert_id
+
+
+_PRIORITY = {"low": 0, "normal": 1, "high": 2}
+
+
+def raise_mail_alert(label: str, mail: dict, priority: str = "normal", toast: str | None = None):
+    """One alert per conversation (Joe's call 2026-11-04). A new email in a conversation that already has an unread
+    alert replaces it: the new alert says how many came ("(3 new)"), opens the newest email and remembers them all
+    (action ids), so reading or answering any of them closes it (db.mail_alerts). No second toast or sound unless
+    the new email raises the priority. Once Joe has read the alert, the next email starts a new one."""
+    conv = mail.get("conv") or ""
+    old = db.unread_conv_alert(conv) if conv else None
+    ids, quiet = [mail["id"]], False
+    if old:
+        alert_id, prev_action, prev_priority = old
+        prev_ids = prev_action.get("ids") or [prev_action.get("id")]
+        ids = [i for i in prev_ids if isinstance(i, str) and i != mail["id"]][-19:] + [mail["id"]]
+        quiet = _PRIORITY.get(priority, 1) <= _PRIORITY.get(prev_priority, 1)
+        priority = max(priority, prev_priority, key=lambda p: _PRIORITY.get(p, 1))
+        db.delete_alerts([alert_id])
+    n = len(ids)
+    title = f"{label}: {mail['subject']}" + (f" ({n} new)" if n > 1 else "")
+    return raise_alert("Outlook", title, f"From {mail['sender_name']} - {mail['preview'][:150]}", priority,
+                       {"type": "mail", "id": mail["id"], "conv": conv, "ids": ids}, toast=toast, quiet=quiet)
