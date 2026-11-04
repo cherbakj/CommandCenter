@@ -51,9 +51,13 @@ class NativeOverlay:
     NAME = "native view"
     SITES = ("main",)
     MIN_SIZE = 40  # physical px: smaller than this and the view stays hidden
+    # The windows this view can live in: "main" (the Command Center window) and / or "side" (the side window,
+    # desktop.open_side; 2026-11-04). It lives in one at a time (self.host); only that window's page places it.
+    HOSTS = ("main",)
 
     def __init__(self, app):
         self.app = app
+        self.host = self.HOSTS[0]
         self.want = {"visible": False, "site": self.SITES[0], "rect": None, "cuts": []}
         self.page, self.seq = None, -1
         self._gone: list[str] = []  # pages that went away (reload, lock): their late reports are dropped
@@ -91,14 +95,25 @@ class NativeOverlay:
 
     # ---- UI thread ----
     def _form(self):
+        """The form of the window this view lives in (self.host), or None while that window doesn't exist."""
         try:
-            form = self.app.window.native if self.app.window else None
+            w = self.app.window if self.host == "main" else getattr(self.app, "side", None)
+            form = w.native if w else None
             return form if form is not None and form.browser is not None else None
         except Exception:
             return None
 
+    def _ui_form(self):
+        """Any of Command Center's forms, to reach the UI thread: pywebview creates every window on the main
+        window's thread, so the main window's form serves even for a view in the side window."""
+        try:
+            form = self.app.window.native if self.app.window else None
+            return form if form is not None else self._form()
+        except Exception:
+            return self._form()
+
     def _invoke(self, fn):
-        form = self._form()
+        form = self._ui_form()
         if form is None:
             return
         from System import Action

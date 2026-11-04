@@ -421,9 +421,11 @@ def _main_shell(request: Request):
     return None if _from_side(request) else shell
 
 
-# Tabs the side window can show: the ones built from the page alone. Pulse, Websites, VS Code and SQL are native
-# windows inside the main window; Voice holds the microphone permission, which is the main window's.
-SIDE_TABS = ("today", "alerts", "mail", "calendar", "teams", "pulse-feedback", "personal", "toolkit")
+# Tabs the side window can show: the ones built from the page alone, plus "outlook" (classic Outlook docked there,
+# outlookdock.py) and Teams, which shows the whole Teams on the web there with full_teams (the Teams view moves to the
+# side window). Pulse, Websites, VS Code and SQL stay native windows of the main window; Voice holds the microphone
+# permission, which is the main window's.
+SIDE_TABS = ("today", "alerts", "mail", "calendar", "teams", "pulse-feedback", "personal", "toolkit", "outlook")
 SIDE_DEFAULT = ["mail", "teams"]
 
 
@@ -440,7 +442,8 @@ async def side_window_state():
     rec = _side_record()
     tabs = [t for t in rec.get("tabs", SIDE_DEFAULT) if t in SIDE_TABS] if isinstance(rec.get("tabs", SIDE_DEFAULT), list) else []
     st = await asyncio.to_thread(shell.side_state) if shell and hasattr(shell, "side_state") else {"available": False, "shown": False, "monitors": 1}
-    return {**st, "open": bool(rec.get("open")), "tabs": tabs, "pinnable": list(SIDE_TABS)}
+    return {**st, "open": bool(rec.get("open")), "tabs": tabs, "pinnable": list(SIDE_TABS),
+            "full_teams": bool(rec.get("full_teams")) and "teams" in tabs}
 
 
 @router.post("/api/window/side", include_in_schema=False)
@@ -458,6 +461,16 @@ async def side_window_set(request: Request):
                 raise ValueError("unknown tab")
             rec["tabs"] = list(dict.fromkeys(tabs))
             db.kv_set("window:side", rec)
+        if "full_teams" in body:
+            if not isinstance(body["full_teams"], bool):
+                raise ValueError("full_teams must be true or false")
+            rec = _side_record()
+            rec["full_teams"] = body["full_teams"]
+            if body["full_teams"] and "teams" not in (rec.get("tabs") or []):
+                rec["tabs"] = [*(rec.get("tabs") or []), "teams"]
+            db.kv_set("window:side", rec)
+        if ("tabs" in body or "full_teams" in body) and shell and hasattr(shell, "side_pins_changed"):
+            await asyncio.to_thread(shell.side_pins_changed)
         if "open" in body:
             if not shell or not hasattr(shell, "open_side"):
                 return _no_shell()
@@ -542,10 +555,18 @@ async def window_hide(request: Request):
 # Native windows over dashboard tabs (overlay.py): the Pulse and Teams site views (siteview.py) and the docked SSMS
 # (ssmsdock.SsmsDock). The page reports where a tab's stage is and what is on top of it; each view has its own state
 # and buttons. Nothing here returns page content beyond the host, path and title of what the Pulse view shows.
-def _overlay(name: str, request: Request = None):
-    if request is not None and _from_side(request):
-        return None  # the side window has no native views (see _from_side)
-    return (getattr(shell, "overlays", None) or {}).get(name) if shell else None
+def _overlay(name: str, request: Request = None, placing: bool = True):
+    """The native view for a request. A view lives in one window at a time (overlay.NativeOverlay.host): only the page
+    in that window may place it or read its state (placing); its buttons (actions) work from any window it can live in."""
+    view = (getattr(shell, "overlays", None) or {}).get(name) if shell else None
+    if view is None:
+        return None
+    window = "side" if request is not None and _from_side(request) else "main"
+    if window not in getattr(view, "HOSTS", ("main",)):
+        return None
+    if placing and getattr(view, "host", "main") != window:
+        return None
+    return view
 
 
 async def _small_json(request: Request, limit: int = 8192):
@@ -577,6 +598,9 @@ async def overlay_state(name: str, request: Request):
     ssms (the dock)."""
     view = _overlay(name, request)
     if not view:
+        other = _overlay(name, request, placing=False)
+        if other is not None:  # it lives in the other window just now (Teams pinned whole to the side window)
+            return {"available": False, "elsewhere": getattr(other, "host", "main")}
         if name == "ssms":
             from .ssmsdock import ssms_path
             return {"available": False, "installed": ssms_path().is_file()}
@@ -589,7 +613,7 @@ async def overlay_action(name: str, request: Request):
     """The tab's buttons. Pulse: back / forward / reload / home / open / navigate (Pulse pages only). Teams: the same
     plus chat (a checked Teams deep link, opened in the view) and app (the Teams app). SSMS: start / dock (pid: an
     SSMS of this user, the installed and signed one) / undock / redock."""
-    view = _overlay(name, request)
+    view = _overlay(name, request, placing=False)
     if not view:
         return _no_shell()
     try:

@@ -86,9 +86,9 @@ async function setTeamsCalls(on) {
   });
 }
 async function joinMeeting(url) {
-  if (teamsCalls.on && (SIDE ? CC.sideDesktop : CC.teamsWeb?.available)) {
+  if (teamsCalls.on && CC.teamsWeb?.available) {
     try {
-      if (SIDE) await api("/api/window/side/chat", { link: url, kind: "meeting" });
+      if (CC.teamsWeb.elsewhere) await api("/api/window/side/chat", { link: url, kind: "meeting" });  // the view is in the other window
       else { await api("/api/window/teams/action", { action: "meeting", link: url }); CC.teamsWeb.reveal(); }
       return;
     } catch (e) { toast(`Opening it in the Teams app (${e.message})`); }
@@ -3032,7 +3032,7 @@ setInterval(refresh, 5000);
 // Main window: ⧉ Side in the header (with two screens, or while it's open) and Ctrl+K open or close it; after a Lock
 // or a restart the dashboard opens it again if it was open. Side window: 📌 Pin picks its tabs (security.SIDE_TABS).
 const SIDE_LABELS = { today: "Today", alerts: "Alerts", mail: "Mail", calendar: "Calendar", teams: "Teams (list)",
-  "pulse-feedback": "Pulse Feedback", personal: "Personal", toolkit: "Toolkit" };
+  "pulse-feedback": "Pulse Feedback", personal: "Personal", toolkit: "Toolkit", outlook: "Outlook (whole app: Mail & Calendar)" };
 let sideInfo = null;
 async function loadSide() {
   try { sideInfo = await api("/api/window/side"); } catch { sideInfo = null; }
@@ -3068,10 +3068,21 @@ function renderSideEmpty() {
     $("#workspace").append(note);
   }
 }
-const sidePinItems = () => (sideInfo?.pinnable || Object.keys(SIDE_LABELS)).map((id) => el("button", {
-  type: "button", role: "menuitemcheckbox", "aria-checked": String(side.tabs.has(id)),
-  onclick: () => setSidePins(side.tabs.has(id) ? [...side.tabs].filter((t) => t !== id) : [...side.tabs, id]),
-}, side.tabs.has(id) ? "✓ " : "　", SIDE_LABELS[id] || id));
+// Outlook only in the desktop app (it docks classic Outlook); "Teams: the whole app here" moves the Teams view here.
+const sidePinItems = () => [
+  ...(sideInfo?.pinnable || Object.keys(SIDE_LABELS)).filter((id) => id !== "outlook" || sideInfo?.available).map((id) => el("button", {
+    type: "button", role: "menuitemcheckbox", "aria-checked": String(side.tabs.has(id)),
+    onclick: () => setSidePins(side.tabs.has(id) ? [...side.tabs].filter((t) => t !== id) : [...side.tabs, id]),
+  }, SIDE_LABELS[id] || id)),
+  sideInfo?.available && el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(!!sideInfo.full_teams),
+    title: "Teams on the web moves to this window (the main window's Teams tab keeps its list); chats and Join open here",
+    onclick: () => guarded(async () => {
+      sideInfo = await api("/api/window/side", { full_teams: !sideInfo.full_teams });
+      side.tabs = new Set(sideInfo.tabs);
+      runLoaders(applyLayout());
+      if (sideInfo.full_teams) openTab("teams");
+    }) }, "Teams: the whole app here"),
+].filter(Boolean);
 function renderSideButton() {
   if (SIDE) return;
   let b = $("#side-toggle");

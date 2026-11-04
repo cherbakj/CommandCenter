@@ -33,6 +33,7 @@ from PIL import Image, ImageDraw
 from . import alerts, config, db, security, starterror
 from .siteview import PulseView, TeamsView, _no_autofill
 from .codedock import CodeDock
+from .outlookdock import OutlookDock
 from .ssmsdock import SsmsDock
 from .websites import WebsiteView
 
@@ -428,7 +429,9 @@ class DesktopApp:
         self.ssms = SsmsDock(self)    # the SQL tab's docked SSMS
         self.ssms.hotkey_factory = GlobalHotkey
         self.code = CodeDock(self)    # desktop VS Code docked in the VS Code tab
-        self.overlays = {"pulse": self.pulse, "teams": self.teams, "websites": self.websites, "ssms": self.ssms, "code": self.code}
+        self.outlook = OutlookDock(self)  # classic Outlook docked in the side window's Outlook tab
+        self.overlays = {"pulse": self.pulse, "teams": self.teams, "websites": self.websites, "ssms": self.ssms, "code": self.code,
+                         "outlook": self.outlook}
         self.side = None  # the side window (open_side), for a second screen
         self._side_lock = threading.Lock()
         self._screens = self._screen_count()  # how many screens now (docking: _screens_changed)
@@ -607,7 +610,7 @@ class DesktopApp:
         try:
             if n < 2 <= was and self.side is not None:
                 log.info("Side window: one screen left, closed until a second one is back")
-                self.close_side(keep_open=True)
+                self.close_side(keep_open=True, why="one screen left")
             elif was < 2 <= n and self.side is None and (db.kv_get("window:side") or {}).get("open"):
                 log.info("Side window: a second screen is back, opening it")
                 self.open_side()
@@ -656,24 +659,74 @@ class DesktopApp:
             self.side = webview.create_window(
                 f"{TITLE} · side", url=self.url + SIDE_QUERY, **area, min_size=(420, 360),
                 background_color="#05070d", text_select=True)
+        self._side_closing_ok = False
+        self.side.events.closing += self._on_side_closing
         self.side.events.closed += self._on_side_closed
-        self.side.events.shown += lambda: _set_window_icon(self._side_hwnd())
+        self.side.events.shown += self._on_side_shown
         self.side.events.moved += self._remember_side
         self.side.events.resized += self._remember_side
         log.info("Side window opened (%s)", "maximized on the other screen" if area.get("maximized") else "windowed")
         return True
 
-    def close_side(self, keep_open: bool):
-        """keep_open: Lock / Restart / Quit (it comes back with the next unlock or start); else Joe closed it."""
+    def close_side(self, keep_open: bool, why: str = "closed"):
+        """keep_open: Lock / Restart / Quit / one screen left (it comes back with the next unlock, start or second
+        screen); else Joe closed it. Never from the UI thread (it waits for it). In order: docked Outlook goes back to
+        a normal window (docked again later when kept open), the Teams view moves back to the main window (its page
+        carries on), then the window closes."""
         with self._side_lock:
-            side, self.side = self.side, None
+            side = self.side
         if not keep_open:
             db.kv_set("window:side", {**(db.kv_get("window:side") or {}), "open": False})
-        if side is not None:
+        if side is None:
+            return
+        if keep_open:
+            self.outlook.release_keep(f"side window: {why}", front=True)
+        else:
+            self.outlook.release_forget("side window closed")
+        self._teams_home("main")
+        with self._side_lock:
+            self.side = None
+        self._side_closing_ok = True
+        try:
+            side.destroy()
+        except Exception as e:
+            log.warning("Side window: couldn't close it (%s)", type(e).__name__)
+
+    def _teams_home(self, host: str, wait: float = 5):
+        """Moves the Teams view to the main or side window and waits until it's there (not from the UI thread)."""
+        done = threading.Event()
+
+        def move(_form):
             try:
-                side.destroy()
-            except Exception as e:
-                log.warning("Side window: couldn't close it (%s)", type(e).__name__)
+                self.teams._move_to(host)
+            finally:
+                done.set()
+        self._on_ui(move)
+        done.wait(wait)
+
+    def side_teams(self) -> bool:
+        """Teams is pinned whole to the side window (kv window:side full_teams) and the side window is open."""
+        rec = db.kv_get("window:side") or {}
+        return self.side is not None and bool(rec.get("full_teams")) and "teams" in (rec.get("tabs") or [])
+
+    def side_pins_changed(self):
+        """The side window's pins changed (server thread): the Teams view goes where it belongs, and Outlook, if no
+        longer pinned, goes back to a normal window."""
+        self._teams_home("side" if self.side_teams() else "main")
+        if "outlook" not in ((db.kv_get("window:side") or {}).get("tabs") or []):
+            self.outlook.release_forget("Outlook unpinned from the side window")
+
+    def _on_side_shown(self):
+        _set_window_icon(self._side_hwnd())
+        if self.side_teams():
+            threading.Thread(target=self._teams_home, args=("side",), daemon=True).start()
+
+    def _on_side_closing(self):
+        """Its X or Alt+F4: held back, then closed in order by close_side (Outlook let go of, Teams back home)."""
+        if self._side_closing_ok or self.quitting:
+            return True
+        threading.Thread(target=self.close_side, args=(False,), name="side-close", daemon=True).start()
+        return False
 
     def open_chat_in_main(self, link: str, kind: str = "chat") -> dict:
         """A chat picked in the side window opens in the main window's Teams view (the side window has no native
@@ -682,14 +735,19 @@ class DesktopApp:
         if not self.window or not self.unlocked or self.lock_showing or self.quitting:
             raise ValueError("Command Center is locked")
         result = self.teams.handle_action({"action": "meeting" if kind == "meeting" else "chat", "link": link})
-        self.show()
-        self.window.run_js("window.CC && CC.teamsWeb && CC.teamsWeb.reveal && CC.teamsWeb.reveal()")
+        # wherever the Teams view lives: the main window, or the side window while Teams is pinned whole there
+        target = self.side if self.teams.host == "side" and self.side is not None else self.window
+        if target is self.window:
+            self.show()
+        else:
+            self._side_front()
+        target.run_js("window.CC && CC.teamsWeb && CC.teamsWeb.reveal && CC.teamsWeb.reveal()")
         return result
 
     def _on_side_closed(self):
-        if self.side is not None and not self.quitting:  # Joe closed it himself (its X or Alt+F4)
+        if self.side is not None and not self.quitting:  # closed some other way than close_side
             self.side = None
-            db.kv_set("window:side", {**(db.kv_get("window:side") or {}), "open": False})
+            self.outlook.release_keep("side window closed")
             log.info("Side window closed")
 
     def _side_hwnd(self) -> int:
@@ -749,7 +807,8 @@ class DesktopApp:
         self.code.on_lock()  # VS Code windows too
         for view in self.overlays.values():
             view.forget()  # no site view or SSMS stays over the lock screen
-        self.close_side(keep_open=True)  # back once unlocked (the dashboard asks for it)
+        self.outlook.release_keep("Lock", minimize=True)  # docked again after unlock, with the side window
+        threading.Thread(target=self.close_side, args=(True, "Lock"), daemon=True).start()  # back once unlocked (the dashboard asks for it)
         if self.window:
             self.lock_showing, self.gate_showing = True, False
             self.window.load_html(_lock_page("Locked. Select Unlock to confirm it's you."))
@@ -942,7 +1001,8 @@ class DesktopApp:
             self.server.should_exit = True
         if self.tray:
             self.tray.stop()
-        self.close_side(keep_open=True)  # comes back with the next start if it was open
+        self.outlook.release_keep("restart" if self.restarting else "quit", minimize=self.restarting)
+        self.close_side(keep_open=True, why="quit")  # comes back with the next start if it was open
         if self.window:
             self.window.destroy()
 
@@ -1012,6 +1072,7 @@ class DesktopApp:
             self.window.events.shown += self._on_shown
             self.ssms.install_hooks()
             self.code.install_hooks()
+            self.outlook.install_hooks()
             try:  # the taskbar moved or resized, a monitor came or went (docking the laptop): fit full screen again
                 from Microsoft.Win32 import SystemEvents, UserPreferenceChangedEventHandler
                 from System import EventHandler

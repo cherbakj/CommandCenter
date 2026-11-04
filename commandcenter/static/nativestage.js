@@ -65,7 +65,8 @@
 
   function send(s, m, keepalive = false) {
     return fetch(`/api/window/${s.opts.view}/bounds`, {
-      method: "POST", keepalive, headers: { "Content-Type": "application/json", "X-CommandCenter": "1" },
+      // the side window says so: a view living there takes only its reports (security._overlay)
+      method: "POST", keepalive, headers: { "Content-Type": "application/json", "X-CommandCenter": "1", ...(CC.side ? { "X-CC-View": "side" } : {}) },
       body: JSON.stringify({ page, seq: ++s.seq, site: s.opts.site?.(), visible: !!m.visible, rect: m.rect, cuts: m.cuts }),
     }).then((r) => { if (!r.ok) throw new Error(String(r.status)); });
   }

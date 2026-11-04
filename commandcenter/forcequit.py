@@ -7,8 +7,8 @@ without losing Joe's docked VS Code or SSMS windows.
    it started before the instance file was written (a recycled pid started later).
 2. Asks it to quit the normal way (POST /api/app/quit with the handoff secret). A copy whose server still answers then
    puts its docked windows back itself and records them for the next start. Up to GRACE seconds.
-3. Still running: puts back, from outside, every docked window (the top window of an installed, signed Code.exe or
-   Ssms.exe of this user whose parent is one of Command Center's windows) as a normal top-level window: the one showing
+3. Still running: puts back, from outside, every docked window (the top window of an installed, signed Code.exe,
+   Ssms.exe or Outlook.exe of this user whose parent is one of Command Center's windows) as a normal top-level window: the one showing
    maximized, the others minimized. Each call is bounded (a hung parent can't hold this up), and if one still can't be
    put back the force quit goes ahead (that window would then close, as with Task Manager's End task).
 4. Ends the process, then its leftover helpers that are ours alone (image under the app folder, or a command line
@@ -45,7 +45,7 @@ TASK_TITLE = "Force quit Command Center"
 SYNCHRONIZE, PROCESS_TERMINATE = 0x00100000, 0x0001
 OVERLAPPED = (win32con.WS_CAPTION | win32con.WS_THICKFRAME | win32con.WS_SYSMENU | win32con.WS_MINIMIZEBOX
               | win32con.WS_MAXIMIZEBOX)
-KEEP = {"code.exe", "ssms.exe", "windowsterminal.exe", "wt.exe", "openconsole.exe"}
+KEEP = {"code.exe", "ssms.exe", "outlook.exe", "windowsterminal.exe", "wt.exe", "openconsole.exe"}
 
 
 # ---- the jump list (registered by the desktop app) ----------------------------------------------
@@ -171,8 +171,10 @@ def _bounded(fn, *args) -> bool:
 
 def docked_windows(pid: int) -> list[tuple[int, int]]:
     """(hwnd, owner pid) of every window docked into Command Center's windows: the top foreign window of an installed
-    VS Code or SSMS of this user, i.e. whose parent belongs to Command Center's process."""
+    VS Code or SSMS, or Outlook (the side window's dock), of this user, i.e. whose parent belongs to Command Center's
+    process."""
     from .codedock import is_our_code
+    from .outlookdock import is_our_outlook
     from .ssmsdock import is_our_ssms
     tops = []
     win32gui.EnumWindows(lambda h, _: tops.append(h) or True, None)
@@ -190,7 +192,7 @@ def docked_windows(pid: int) -> list[tuple[int, int]]:
             if owner == pid or win32process.GetWindowThreadProcessId(win32gui.GetParent(h))[1] != pid:
                 continue
             if owner not in checked:
-                checked[owner] = is_our_code(owner) or is_our_ssms(owner)
+                checked[owner] = is_our_code(owner) or is_our_ssms(owner) or is_our_outlook(owner)
             if checked[owner]:
                 found.append((h, owner))
     return found

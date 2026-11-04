@@ -75,6 +75,7 @@
     try {
       const s = await api("/api/window/teams");
       st.available = !!s.available;
+      st.elsewhere = s.elsewhere || null;  // the view lives in the other window (Teams pinned whole to the side window)
       st.v = (s.views || {}).web || {};
       st.error = s.error || null;
     } catch { st.available = st.available === null ? false : st.available; }
@@ -139,15 +140,22 @@
     // The desktop app, after a chat was picked in the side window: show it here (desktop.open_chat_in_main).
     reveal() { setMode("web"); CC.openTab("teams"); setTimeout(load, 600); },
   };
-  // The side window has no Teams view of its own: its chats open in the main window's (which comes forward), or in
-  // the Teams app if that fails.
-  if (CC.side) {
+  // The Teams view lives in one window at a time: the main one, or the side window while Teams is pinned whole there.
+  // From the other window, chats (and Join, app.js joinMeeting) open in it wherever it is, and that window comes
+  // forward (POST /api/window/side/chat, desktop.open_chat_in_main); the Teams app if that fails.
+  {
+    const here = CC.teamsWeb;
+    const remote = () => !st.available && (CC.side ? !!CC.sideDesktop : !!st.elsewhere);
     CC.teamsWeb = {
-      get available() { return !!CC.sideDesktop; },
+      get available() { return here.available || remote(); },
+      get elsewhere() { return remote(); },
       async open(link) {
+        if (st.available === null) await load();
+        if (st.available || !remote()) return here.open(link);
         try { await api("/api/window/side/chat", { link }); } catch { openExternal(link); }
       },
-      app(link) { return openExternal(link || "msteams:"); },
+      app: (link) => (st.available ? here.app(link) : openExternal(link || "msteams:")),
+      reveal: here.reveal,
     };
   }
 

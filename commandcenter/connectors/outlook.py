@@ -70,6 +70,21 @@ async def call(fn, *args):
     return await asyncio.get_running_loop().run_in_executor(_executor, _guarded, fn, args)
 
 
+def call_sync(fn, *args, timeout: float = 30):
+    """call() for a worker thread (not the event loop): runs fn on the COM thread and waits for it."""
+    return _executor.submit(_guarded, fn, args).result(timeout)
+
+
+def show_folder(kind: str):
+    """The side window's docked Outlook (outlookdock.py): its main window shows the Inbox ("mail") or the Calendar."""
+    folder = _ns().GetDefaultFolder(OL_FOLDER_INBOX if kind == "mail" else 9)  # 9 = olFolderCalendar
+    app = _ns().Application
+    exp = app.ActiveExplorer() or (app.Explorers.Item(1) if app.Explorers.Count else None)
+    if exp is None:
+        raise ValueError("Outlook has no main window")
+    exp.CurrentFolder = folder
+
+
 def _guarded(fn, args):
     try:
         return fn(*args)

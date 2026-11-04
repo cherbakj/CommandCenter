@@ -162,7 +162,47 @@ class SiteView(NativeOverlay):
         site = self.action(site, str(body.get("action") or ""), url if isinstance(url, str) and len(url) <= 2000 else None)
         return {"ok": True, "site": site}
 
+    def set_host(self, host: str):
+        """Moves the view to the other window (server thread): "side" while Teams is pinned whole to the side window,
+        else "main". The page in it carries on (its WebView2 is re-parented, not reloaded)."""
+        if host not in self.HOSTS:
+            raise ValueError("this view can't live there")
+        self._invoke(lambda: self._move_to(host))
+
     # ---- UI thread ----
+    def _move_to(self, host: str):
+        if host == self.host:
+            return
+        if host == "side" and getattr(self.app, "side", None) is None:
+            return
+        old_host = self.host
+        with self._lock:  # hidden until the page in the new window places it
+            self.want = {**self.want, "visible": False}
+            if self.page:
+                self._gone = [*self._gone[-7:], self.page]
+            self.page, self.seq = None, -1
+        self.host = host
+        if self._form() is None:
+            self.host = old_host
+            return
+        for v in list(self.views.values()):
+            old = v.panel
+            if old is not None and old.ContainsFocus:
+                try:
+                    old.FindForm().browser.webview.Focus()
+                except Exception:
+                    pass
+            panel = self._new_panel()
+            panel.Resize += lambda *_, v=v: self._fit(v)
+            if v.controller is not None:
+                v.controller.IsVisible = False
+                v.controller.ParentWindow = panel.Handle
+            v.panel, v.region = panel, None
+            if old is not None:
+                old.Dispose()
+        log.info("%s: moved to the %s window", self.NAME, host)
+        self._apply()
+
     def _panels(self):
         return [v.panel for v in self.views.values()]
 
@@ -642,6 +682,7 @@ class TeamsView(SiteView):
     NAME = "Teams view"
     PROFILE = "webview-teams"
     SITES = ("web",)
+    HOSTS = ("main", "side")  # the side window shows it while Teams is pinned whole there (desktop.side_teams)
     # Joe's call (2026-10-27). Without it, Teams on the web asks for a sign-in pop-up when its session lapses, and the
     # view never opens a second window (it went to the browser, where it can't hand the sign-in back): "Sign in" did
     # nothing. With it, Teams signs in silently with the Windows work account, as in Edge (tested in a stand-in
