@@ -2,6 +2,48 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-11-03 (8:25 AM - 7:30 PM local)
+
+**Summary:** The spam rule failure was found and fixed, then seven quality-of-life features landed in one push: Show pictures, a ? shortcut sheet, Undo, the Health light, Ctrl+K searching everything, Back from snooze, and End-of-day carry over. Joe restarted at 10:01 AM, after the last commit, so all of it is loaded.
+
+### Done
+- `0e405a8` **Spam rule failure, root cause.** Outlook's `Rules.Save()` writes back every rule. 32 of Joe's 89 rules read back through the object model with the display name where the address type belongs, so the save was refused (0x80020009). Had it gone through, it would have saved those rules broken.
+  - **Fix:** `spam._unreadable_rules` checks first (read-only, about 3 s), and nothing is created or saved if any rule fails. Spam blocks shows an amber "can't be used on this mailbox" line, with **Copy the list** (for Outlook's own Blocked Senders) and **Check again**. CC's own filter still blocks while CC runs.
+  - **Tested** read-only on Joe's real Outlook, plus a fake-COM unit test.
+- `f00d4ab` **Show pictures in Mail** (`connectors/webimages.py`, `GET /api/mail/webimage`). Web pictures load only on a click, per email, and nothing is remembered. Fetches go to public addresses only (pinned, redirects re-checked), no cookies or Referer, raster types only. Never on Hoxhunt tests, never tracking pixels.
+  - **Tested** read-only on the newest 150 emails: 69 had web pictures, 462 were placed, and all text stayed intact.
+- `cbf10df` **? shortcut sheet** (`keys.js`) and **Undo** for Dismiss, Snooze, Done and Unflag: a note for 8 s, plus Ctrl+Z (`CC.undoable`). Unflag's Undo puts the flag back with its dates.
+- `ddd6e54` **Health light** (`health.py`, `health.js`): one header dot in place of the Outlook / Teams / Websites dots. A click lists every check with what to do about it. A background job that ends and ERROR lines in the log are counted too.
+- `0411e57` **Ctrl+K searches everything:** mail text (Inbox and Sent, about 4 s), the next 14 days of meetings, Teams recent chats and Pulse tickets (`GET /api/search`).
+- `7b1ac1b` **Back from snooze:** a snoozed email is out of Mail and Follow-ups until its time, then comes back as its own group under Urgent, with an alert, until it's answered, Done, re-snoozed or 7 days old. 💤 on Mail rows and in the reader.
+- `d068159` **End-of-day carry over** (`today.carry_over`, `carryover.js`): from the wrap-up alert, Ctrl+K or Manage ▾. Replies owed are snoozed to the next workday's start; tasks due today or overdue move to that day (Outlook and Asana); Pulse tickets are listed only. The morning briefing then says what was carried over.
+- **Testing for the batch:** unit tests with fake Outlook and Asana, the preview harness in Edge, and a full test copy on port 8817 (all routes 200, no page errors, no ERROR lines). Nothing was written to real Outlook or Asana.
+
+### Decisions
+- Joe picked items 1-7 of my nine suggestions, spam fix first. The two he didn't pick weren't built.
+- **Stay Available on Close:** Joe asked whether to be prompted about it when closing CC. It only works while CC runs, so closing stops it anyway. Joe: "if it turns off that's perfect." No prompt or checkbox was added.
+- **SSMS after a restart:** Joe thought it had been force-closed, but it was docked and hidden in the SQL tab (no taskbar button). He dropped it; no change.
+
+### Settings changed (config.yaml, not in git)
+- None.
+
+### Waiting on a restart
+- Nothing. CC started at 10:01:54 AM, after `d068159` (9:39 AM). The tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] **Spam blocks with CC closed:** if he wants them, Mail > Spam blocks > **Copy the list**, then paste into Outlook's Home > Junk > Junk E-mail Options > Blocked Senders. There are 4 blocks.
+- [ ] Try **Unflag, then Undo** on a real flagged email, and **Carry over** from the wrap-up alert near the end of a day. I couldn't test either on his real data.
+- [ ] Close the extra SSMS copy, if one is still open.
+- [ ] Carried over: OpenAI billing for Voice (see 11-02); look at the Calendar grid with real meetings and a header dropdown over docked VS Code; try the Websites tab on a real site.
+
+### Known issues
+- **The preview harness** (`tools/preview/mock.js`) lacks endpoints from earlier sessions (`/teams/recent`, `/meetings/next`, `/voice` ...), so an error dialog opens on load. This is test tooling only, not the app.
+- **Spam blocks rely on CC's filter on Joe's mailbox**: they don't apply while CC is closed unless he copies them into Outlook's Blocked Senders (above).
+- **Carried over from 11-02:** Voice's first call was refused (429; on hold for billing); Voice's mic permission on Lock was tested by reload only; at 480 px the header scrolls sideways.
+
+### Incidents
+- None. Test servers ran on port 8817 with their own data folder, with Teams and toasts off, and were stopped. Outlook was used read-only.
+
 ## 2026-11-02 (8:39 AM - 3:40 PM local)
 
 **Summary:** Next meeting in the header, collapsing tab groups, the Calendar as a time grid, cleaner reminders and Schedule, and a read-only Voice test tab. Voice is on hold: OpenAI refused its first call with a 429 and Joe is sorting out billing.
