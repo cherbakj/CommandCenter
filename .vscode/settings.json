@@ -1,0 +1,7 @@
+{
+  // data/ is CC's private runtime folder: the web VS Code's mirrored extensions (1,100+ .py files), browser profiles,
+  // the database and logs. None of it is CC's code, so Pylance, the file watcher and search leave it alone.
+  "python.analysis.exclude": ["data/**", "tools/preview/out/**"],
+  "files.watcherExclude": { "**/data/**": true, "**/tools/preview/out/**": true },
+  "search.exclude": { "data/**": true, "tools/preview/out/**": true }
+}
