@@ -752,6 +752,12 @@ function mailThreads(mail) {
     if (!from) return;
     const topic = mailTopic(m);
     if (topic.length >= 4 && topic !== "(no subject)") join(`t:${from}|${topic}`, i);
+    // Automated mail: repeats are one row even when each names its own job, ticket, date or time ("ZZ_GEN30 (#6655746)
+    // failed", "Document Processing Error ... 2026-11-04 14:05:49"). Words and names still have to match.
+    if (m.automated) {
+      const shape = topic.replace(/\d{1,4}([-/:.]\d{1,4}){1,5}/g, "#").replace(/#?\b\d{4,}\b/g, "#").replace(/\s+/g, " ");
+      if (shape.length >= 4) join(`a:${from}|${shape}`, i);
+    }
     for (const ref of new Set(String(m.subject || "").match(MAIL_REF) || [])) join(`r:${from}|${ref.toLowerCase()}`, i);
   });
   const groups = new Map();
@@ -842,6 +848,11 @@ function mailRow(m, g = null, member = false) {
     el("div", { class: "mr-acts" },
       g && unreadN > 0 && el("button", { type: "button", class: "icon subtle", title: `Mark all ${unreadN} unread in this conversation read`,
         "aria-label": `Mark the conversation "${m.subject}" read`, onclick: (e) => { e.stopPropagation(); markThreadRead(g); } }, "✓"),
+      // The whole conversation: its newest unread email (else the newest) is snoozed and the others go with it; one
+      // comes back, as Back from snooze.
+      g && !sent && !g.some((x) => x.hoxhunt) && el("button", { type: "button", class: "icon subtle mr-snooze", title: `Snooze the conversation (${n} emails): back at the top of Needs you later`,
+        "aria-label": `Snooze the conversation "${m.subject}"`, onclick: (e) => { e.stopPropagation();
+          snoozeDialog({ id: target.id, subject: `${target.subject} (${n} emails)`, who: target.sender_name, kind: "mail", also: g.map((x) => x.id).filter((id) => id !== target.id) }, () => loaders.mail()); } }, "💤"),
       !g && !sent && !m.hoxhunt && el("button", { type: "button", class: "icon subtle mr-snooze", title: "Snooze: back at the top of Needs you later",
         "aria-label": `Snooze "${m.subject}"`, onclick: (e) => { e.stopPropagation(); snoozeDialog({ id: m.id, subject: m.subject, who: m.sender_name, kind: "mail" }, () => loaders.mail()); } }, "💤"),
       mailActions(m, "row")));
@@ -865,13 +876,27 @@ function renderMail() {
   const listed = mail.filter((m) => !m.pinned);
   const groups = (mailState.threads ? mailThreads(listed) : listed.map((m) => [m])).map((g) => g.sort(byDate))
     .sort((a, b) => byDate(a[0], b[0]));
-  const unread = groups.filter((g) => g.some(unreadish)), rest = groups.filter((g) => !g.some(unreadish));
+  // Automated mail (no-reply senders, mailing lists) gets a section of its own at the bottom, collapsed unless opened
+  // (localStorage cc.mail.autoOpen), so what people sent stays on top. Not in a search or the Sent folder.
+  const isAuto = (g) => !r.query && !sent && g.every((m) => m.automated);
+  const auto = groups.filter(isAuto), people = groups.filter((g) => !isAuto(g));
+  const unread = people.filter((g) => g.some(unreadish)), rest = people.filter((g) => !g.some(unreadish));
   const rowsOf = (g) => (g.length === 1 ? [mailRow(g[0])]
     : [mailRow(g[0], g), ...(threadOpen(g) ? g.map((m) => mailRow(m, null, true)) : [])]);
   const rows = [];
   if (pinned.length) rows.push(mailGroup("Opened"), ...pinned.map((m) => mailRow(m)));
   if (unread.length) rows.push(mailGroup("Unread", unread.flat().filter((m) => m.unread).length), ...unread.flatMap(rowsOf));
   if (rest.length) rows.push(mailGroup(r.query ? (unread.length ? "Other results" : "Results") : sent ? "Sent" : "Earlier"), ...rest.flatMap(rowsOf));
+  if (auto.length) {
+    const open = store.get("cc.mail.autoOpen") === "1", unreadAuto = auto.flat().filter((m) => m.unread).length;
+    rows.push(el("li", { class: "mail-group mail-auto-head", role: "presentation" },
+      el("button", { type: "button", class: "mail-auto-toggle", "aria-expanded": String(open),
+        title: open ? "Hide the automated mail" : "Show the automated mail: no-reply senders, notifications, newsletters",
+        onclick: () => { store.set("cc.mail.autoOpen", open ? null : "1"); renderMail(); } },
+        el("span", { "aria-hidden": "true" }, open ? "▾ " : "▸ "), "Automated",
+        el("span", { class: "chip" }, String(auto.length)), unreadAuto ? el("span", { class: "chip has-unread" }, `${unreadAuto} unread`) : "")));
+    if (open) rows.push(...auto.flatMap(rowsOf));
+  }
   const empty = r.query ? `Nothing in the Inbox or Sent Items matches “${r.query}”.` : sent ? "No sent mail"
     : mailState.filter === "unread" ? "No unread mail. Inbox zero." : "No mail";
   fill($("#mail-list"), rows, empty);
@@ -1932,7 +1957,7 @@ function snoozeDialog(item, onDone) {
   const custom = el("input", { type: "datetime-local", step: "300", value: localInput(t.tomorrow), "aria-label": "Snooze until" });
   const go = (d) => guardedIn(err, async () => {
     if (isNaN(d) || d <= new Date()) throw new Error("Pick a time in the future.");
-    await api("/api/snooze", { id: item.id, until: localIso(d), subject: item.subject || "", who: item.who || "", kind: item.kind });
+    await api("/api/snooze", { id: item.id, until: localIso(d), subject: item.subject || "", who: item.who || "", kind: item.kind, also: item.also || [] });
     $("#dialog").close();
     undoable(`Snoozed until ${dayTime(d)}`, async () => { await api("/api/unsnooze", { id: item.id }); onDone?.(); });
     loaders.today();

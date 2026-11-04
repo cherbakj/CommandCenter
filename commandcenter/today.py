@@ -128,6 +128,17 @@ def active_snoozes() -> dict:
     return {k: v for k, v in snoozes().items() if not v.get("back")}
 
 
+def snoozed_ids(now=None) -> set[str]:
+    """Every email snoozed now: each record's own id and, for a snoozed conversation, the other emails in it ("also")."""
+    now = now or datetime.now().isoformat(timespec="seconds")
+    out = set()
+    for k, v in snoozes().items():
+        if not v.get("back") and v.get("until", "") > now:
+            out.add(k)
+            out.update(v.get("also") or [])
+    return out
+
+
 def back_ids() -> list[str]:
     """Emails back from snooze, newest back first."""
     return [k for k, v in sorted(snoozes().items(), key=lambda kv: kv[1].get("back") or "", reverse=True) if v.get("back")]
@@ -145,6 +156,8 @@ def snooze(item_id, until, info):
     s = snoozes()
     was_back = (s.get(item_id) or {}).get("back")
     s[item_id] = {"until": until, **{k: info.get(k, "") for k in ("subject", "who", "kind")}}
+    if info.get("also"):  # a whole conversation (Mail tab): its other emails are out of the way too; one comes back
+        s[item_id]["also"] = [str(x) for x in info["also"] if x and x != item_id][:100]
     if was_back:
         s[item_id]["was_back"] = was_back  # so Unsnooze (Undo) puts it back in "Back from snooze"
     db.kv_set("snoozes", s)
@@ -251,7 +264,7 @@ async def _followups(todo, refresh=False) -> dict:
         _followup_cache["at"] = time.time()
     raw = _followup_cache["data"]
     now = datetime.now().isoformat(timespec="seconds")
-    hidden_ids = set(dismissed()) | {i for i, v in snoozes().items() if v["until"] > now}
+    hidden_ids = set(dismissed()) | {i for i, v in snoozes().items() if v["until"] > now} | snoozed_ids(now)
     mutes = muted()
     # Spam blocks apply to the cached scan too, so a new block hides its mail at once (sent mail never matches).
     blocked = outlook._blocked() or False

@@ -138,6 +138,28 @@ def _summary(item) -> dict:
     }
 
 
+_auto_cache: dict = {}  # EntryID -> bool (a received email's sender and headers don't change)
+
+
+def _automated(item, sender) -> bool:
+    """Mail from a machine (no-reply / notification addresses, mailing lists): the Mail tab bundles it in its own
+    section and groups repeats regardless of numbers (app.js). Sonance senders are judged by address only (no header
+    read: their automated mail comes from no-reply addresses)."""
+    key = item.EntryID
+    if key not in _auto_cache:
+        s = (sender or "").lower()
+        if re.search(r"no-?reply|donotreply|notifications?@|mailer-daemon", s):
+            found = True
+        elif people.is_internal(s):
+            found = False
+        else:
+            found = _is_bulk(item, s)
+        if len(_auto_cache) > 5000:
+            _auto_cache.clear()
+        _auto_cache[key] = found
+    return _auto_cache[key]
+
+
 def _thread(item) -> dict:
     """What the Mail tab groups rows by (Joe's call 2026-11-04): Outlook's conversation id, and the conversation topic
     (the subject without RE: / FW:) so notifications about the same thing group even when each starts a new
@@ -210,6 +232,8 @@ def recent_mail(limit=50, unread_only=False) -> list[dict]:
         m["important"] = people.is_important(m["sender"], important)  # the star on Mail rows
         if _hoxhunt_row(item, m["sender"]):
             m.update(hoxhunt=True, important=False)  # tagged "Hoxhunt test"; no star, Spam or Mark important
+        else:
+            m["automated"] = _automated(item, m["sender"])
         out.append(m)
         if len(out) >= limit:
             break
@@ -244,6 +268,8 @@ def _summaries(entry_ids, folder="Inbox") -> list[dict]:
             if folder == "Sent":
                 m["to"] = item.To or ""  # the list shows who it went to
             hox = folder == "Inbox" and _hoxhunt_row(item, m["sender"])
+            if folder == "Inbox" and not hox:
+                m["automated"] = _automated(item, m["sender"])
         except pywintypes.com_error:
             continue  # moved or deleted meanwhile
         m["important"] = not hox and people.is_important(m["sender"], important)

@@ -596,8 +596,9 @@ async def mail(unread_only: bool = False, limit: int = 50, q: str = "", folder: 
         raise HTTPException(400, "folder must be inbox or sent")
     view = await outlook.call(outlook.mail_view, min(max(limit, 1), 200), unread_only, q, folder)
     snoozed = today.active_snoozes()
-    if snoozed and not q:  # snoozed mail is out of the list until it's back (a search still finds it)
-        view["mail"] = [m for m in view["mail"] if m["id"] not in snoozed]
+    if snoozed and not q:  # snoozed mail (a whole snoozed conversation too) is out of the list until it's back (a search still finds it)
+        hidden = today.snoozed_ids()
+        view["mail"] = [m for m in view["mail"] if m["id"] not in hidden]
         view["snoozed"] = sum(1 for v in snoozed.values() if v.get("kind") != "task")
     return view
 
@@ -813,8 +814,10 @@ async def get_snoozes():
 
 
 @app.post("/api/snooze")
-async def snooze(id: str = Body(...), until: str = Body(...), subject: str = Body(""), who: str = Body(""), kind: str = Body("mail")):
-    today.snooze(id, until, {"subject": subject, "who": who, "kind": kind})
+async def snooze(id: str = Body(...), until: str = Body(...), subject: str = Body(""), who: str = Body(""), kind: str = Body("mail"),
+                 also: list[str] = Body([])):
+    """also: the other emails of a conversation snoozed as one (the Mail tab's conversation rows)."""
+    today.snooze(id, until, {"subject": subject, "who": who, "kind": kind, "also": also[:100]})
     return {"ok": True}
 
 
