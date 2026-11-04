@@ -300,11 +300,13 @@ function renderFocusButton() {
 }
 
 // Side window, split in two (Joe's call 2026-11-04): its two panes are LEFT and RIGHT, and any pinned tab can sit in
-// either, whatever its group in the main window. By default Outlook (the whole app) is on the right and the rest on the
-// left, so Teams | Outlook side by side; ⇄ Flip swaps every tab to the other side. Remembered per viewer
-// (localStorage cc.side.layout.sidePanes, through store's cc.layout.* mapping).
+// either, whatever its group in the main window. By default Outlook, Mail and Calendar are on the right and the rest
+// (Teams first) on the left, so Teams | Outlook (or Teams | Mail) side by side as soon as both are pinned; ⇄ Flip swaps
+// every tab to the other side. Remembered per viewer (localStorage cc.side.layout.sidePanes, through store's
+// cc.layout.* mapping).
+const SIDE_RIGHT = new Set(["outlook", "mail", "calendar"]);
 const sidePanes = (() => { try { return JSON.parse(store.get("cc.layout.sidePanes") || "{}") || {}; } catch { return {}; } })();
-const sidePaneOf = (id) => (sidePanes[id] === "comms" || sidePanes[id] === "work" ? sidePanes[id] : id === "outlook" ? "work" : "comms");
+const sidePaneOf = (id) => (sidePanes[id] === "comms" || sidePanes[id] === "work" ? sidePanes[id] : SIDE_RIGHT.has(id) ? "work" : "comms");
 function placeSideTabs() {
   for (const sec of document.querySelectorAll("#workspace .pane-body > section.tab")) {
     const id = sec.id.slice(4), pane = sidePaneOf(id), btn = navButton(id);
