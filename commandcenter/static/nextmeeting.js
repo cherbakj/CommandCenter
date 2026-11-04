@@ -22,7 +22,7 @@
   };
   const main = el("button", { type: "button", class: "nm-main", onclick: () => shown && CC.prepDialog(shown.id, shown) },
     parts.when, parts.subject, parts.time, parts.then);
-  const join = el("button", { type: "button", class: "small primary nm-join", onclick: () => shown?.join_url && CC.openExternal(shown.join_url) }, "Join");
+  const join = el("button", { type: "button", class: "small primary nm-join", onclick: () => shown?.join_url && CC.joinMeeting(shown.join_url) }, "Join");
   const chip = el("div", { class: "nm-chip" }, main, join);
   box.append(chip);
 

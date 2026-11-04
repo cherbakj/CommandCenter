@@ -61,7 +61,9 @@ REPLIED_VERBS = (102, 103, 104)  # reply, reply all, forward
 
 _executor = ThreadPoolExecutor(1, initializer=pythoncom.CoInitialize, thread_name_prefix="outlook")
 _local = threading.local()
-TEAMS_LINK = re.compile(r"https://teams\.microsoft\.com/l/meetup-join/[^\s\"'<>]+")
+# Teams join links: the older /l/meetup-join/... and the newer /meet/<number>?p=<passcode> (all of Joe's invites since
+# 2026; before 2026-11-04 those had no Join button in CC).
+TEAMS_LINK = re.compile(r"https://teams\.microsoft\.com/(?:l/meetup-join/[^\s\"'<>]+|meet/\d{6,20}(?:\?p=[A-Za-z0-9]{1,40})?)")
 
 
 async def call(fn, *args):

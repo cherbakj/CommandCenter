@@ -85,7 +85,7 @@
     else main = el("div", { class: "dc-main", title: tip }, ...text);
     const node = el("div", { class: `dc-ev k-${ev.kind} ${past ? "past" : ""} ${live ? "live" : ""} ${short ? "short" : ""}` },
       main, ev.m?.join_url && !past ? el("button", { type: "button", class: "small primary dc-join", title: "Join the Teams meeting",
-        "aria-label": `Join ${ev.title}`, onclick: () => CC.openExternal(ev.m.join_url) }, "Join") : null);
+        "aria-label": `Join ${ev.title}`, onclick: () => CC.joinMeeting(ev.m.join_url) }, "Join") : null);
     node.style.setProperty("--t", String(ev.s - startH));
     node.style.setProperty("--h", String(Math.max(ev.e - ev.s, 0.25)));
     node.style.setProperty("--col", String(ev.col));

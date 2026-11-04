@@ -431,6 +431,8 @@ class DesktopApp:
         self.overlays = {"pulse": self.pulse, "teams": self.teams, "websites": self.websites, "ssms": self.ssms, "code": self.code}
         self.side = None  # the side window (open_side), for a second screen
         self._side_lock = threading.Lock()
+        self._screens = self._screen_count()  # how many screens now (docking: _screens_changed)
+        self._screens_timer = None
 
     # ---- window (security.shell uses these for the /api/window/* routes) ----
     def show(self):
@@ -580,6 +582,37 @@ class DesktopApp:
     def _refit(self, *_):
         if self.fullscreen and self.window:
             self._on_ui(self._fill)
+        # Display changes come in bursts while a laptop docks or undocks: look at the screens once they've settled.
+        if self._screens_timer:
+            self._screens_timer.cancel()
+        self._screens_timer = threading.Timer(2.0, self._screens_changed)
+        self._screens_timer.daemon = True
+        self._screens_timer.start()
+
+    @staticmethod
+    def _screen_count() -> int:
+        try:
+            import win32api
+            return len(win32api.EnumDisplayMonitors())
+        except Exception:
+            return 1
+
+    def _screens_changed(self):
+        """Docking (Joe's call 2026-11-04): down to one screen, the side window closes but stays wanted; back to two
+        or more, it opens again if it was open. Closing it himself (its X) still forgets it."""
+        n, was = self._screen_count(), self._screens
+        self._screens = n
+        if was is None or n == was or self.quitting:
+            return
+        try:
+            if n < 2 <= was and self.side is not None:
+                log.info("Side window: one screen left, closed until a second one is back")
+                self.close_side(keep_open=True)
+            elif was < 2 <= n and self.side is None and (db.kv_get("window:side") or {}).get("open"):
+                log.info("Side window: a second screen is back, opening it")
+                self.open_side()
+        except Exception as e:
+            log.warning("Side window: couldn't follow the screen change (%s)", type(e).__name__)
 
     def _start_area(self, geo: dict) -> dict:
         """create_window's geometry: the work area of the monitor the window was last on (logical px), so full screen
@@ -641,6 +674,17 @@ class DesktopApp:
                 side.destroy()
             except Exception as e:
                 log.warning("Side window: couldn't close it (%s)", type(e).__name__)
+
+    def open_chat_in_main(self, link: str, kind: str = "chat") -> dict:
+        """A chat picked in the side window opens in the main window's Teams view (the side window has no native
+        views): the view checks the link (siteview.teams_web_link) and goes there, the main window comes forward and
+        its page shows the Teams tab. The page call carries no data from the link."""
+        if not self.window or not self.unlocked or self.lock_showing or self.quitting:
+            raise ValueError("Command Center is locked")
+        result = self.teams.handle_action({"action": "meeting" if kind == "meeting" else "chat", "link": link})
+        self.show()
+        self.window.run_js("window.CC && CC.teamsWeb && CC.teamsWeb.reveal && CC.teamsWeb.reveal()")
+        return result
 
     def _on_side_closed(self):
         if self.side is not None and not self.quitting:  # Joe closed it himself (its X or Alt+F4)

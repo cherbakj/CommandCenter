@@ -136,7 +136,20 @@
       } catch { openExternal(link); }
     },
     app(link) { return st.available ? act("app", link ? { link } : {}) : openExternal(link || "msteams:"); },
+    // The desktop app, after a chat was picked in the side window: show it here (desktop.open_chat_in_main).
+    reveal() { setMode("web"); CC.openTab("teams"); setTimeout(load, 600); },
   };
+  // The side window has no Teams view of its own: its chats open in the main window's (which comes forward), or in
+  // the Teams app if that fails.
+  if (CC.side) {
+    CC.teamsWeb = {
+      get available() { return !!CC.sideDesktop; },
+      async open(link) {
+        try { await api("/api/window/side/chat", { link }); } catch { openExternal(link); }
+      },
+      app(link) { return openExternal(link || "msteams:"); },
+    };
+  }
 
   // The core Teams loader (counts, Recent list) runs after the view's status, so its rows know whether to offer "Open chat".
   const coreLoader = CC.loaders.teams;

@@ -472,6 +472,43 @@ async def side_window_set(request: Request):
     return await side_window_state()
 
 
+@router.get("/api/teams/calls", include_in_schema=False)
+async def teams_calls_state():
+    """Join meetings in CC (siteview.calls_on): available only in the desktop app (the Teams view)."""
+    from .siteview import calls_on
+    return {"available": bool(shell and "teams" in (getattr(shell, "overlays", None) or {})), "on": calls_on()}
+
+
+@router.post("/api/teams/calls", include_in_schema=False)
+async def teams_calls_set(request: Request):
+    from . import db
+    try:
+        body = await _small_json(request)
+        if not isinstance(body, dict) or not isinstance(body.get("on"), bool):
+            raise ValueError("expected {on: true|false}")
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    db.kv_set("teams:calls", body["on"])
+    log.info("Join meetings in CC: %s", "on" if body["on"] else "off")
+    return await teams_calls_state()
+
+
+@router.post("/api/window/side/chat", include_in_schema=False)
+async def side_window_chat(request: Request):
+    """{link}: a Teams chat picked in the side window, opened in the main window's Teams view (desktop.open_chat_in_main)."""
+    if not shell or not hasattr(shell, "open_chat_in_main"):
+        return _no_shell()
+    try:
+        body = await _small_json(request)
+        link = body.get("link") if isinstance(body, dict) else None
+        kind = body.get("kind", "chat") if isinstance(body, dict) else "chat"
+        if not isinstance(link, str) or len(link) > 2000 or kind not in ("chat", "meeting"):
+            raise ValueError("expected a link")
+        return await asyncio.to_thread(shell.open_chat_in_main, link, kind)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
 @router.get("/api/window/state", include_in_schema=False)
 async def window_state(request: Request):
     if _from_side(request):

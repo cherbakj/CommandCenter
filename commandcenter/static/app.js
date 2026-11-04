@@ -71,6 +71,32 @@ function linkButton(url, label, cls = "small") {
   return el("button", { type: "button", class: cls, onclick: () => openExternal(url) }, label);
 }
 
+// Join on a Teams meeting (every Join button): with "Join meetings in CC" on (Tools ▾; siteview.calls_on), the
+// meeting opens in the Teams tab's view, which may then use the microphone and camera; from the side window, in the
+// main window's. Otherwise, or if that fails, the Teams app as before.
+const teamsCalls = { available: false, on: false };
+async function loadTeamsCalls() {
+  try { Object.assign(teamsCalls, await api("/api/teams/calls")); } catch { /* serve mode, server restarting */ }
+}
+async function setTeamsCalls(on) {
+  await guarded(async () => {
+    Object.assign(teamsCalls, await api("/api/teams/calls", { on }));
+    toast(on ? "Join meetings in CC: on. Join opens the meeting in the Teams tab, with your microphone and camera when the meeting asks."
+      : "Join meetings in CC: off. Join opens the Teams app.");
+  });
+}
+async function joinMeeting(url) {
+  if (teamsCalls.on && (SIDE ? CC.sideDesktop : CC.teamsWeb?.available)) {
+    try {
+      if (SIDE) await api("/api/window/side/chat", { link: url, kind: "meeting" });
+      else { await api("/api/window/teams/action", { action: "meeting", link: url }); CC.teamsWeb.reveal(); }
+      return;
+    } catch (e) { toast(`Opening it in the Teams app (${e.message})`); }
+  }
+  openExternal(url);
+}
+const joinButton = (url, cls = "small primary") => el("button", { type: "button", class: cls, title: "Join the Teams meeting", onclick: () => joinMeeting(url) }, "Join");
+
 // Short, non-blocking confirmation in the corner.
 function toast(text) {
   let box = $("#toast");
@@ -585,7 +611,7 @@ function alertAction(a) {
     onclick: () => guarded(() => api("/api/outlook/open", { id: act.id })) }, "Open in Outlook to report");
   if (act.type === "url") return linkButton(act.url, "Open site");
   if (act.type === "meeting") return [
-    act.join_url && linkButton(act.join_url, "Join", "small primary"),
+    act.join_url && joinButton(act.join_url),
     act.prep && el("button", { class: "small alt", onclick: () => prepDialog(act.id) }, "Prep"),
     el("button", { class: "small", onclick: () => guarded(() => api("/api/outlook/open", { id: act.id })) }, "Open"),
   ];
@@ -1441,7 +1467,7 @@ async function prepDialog(id, meta) {
           p.location && el("span", {}, el("b", {}, "Where "), p.location),
           p.organizer && el("span", {}, el("b", {}, "Organizer "), p.organizer))),
       el("div", { class: "actions" },
-        p.join_url && linkButton(p.join_url, "Join", "primary"),
+        p.join_url && joinButton(p.join_url, "primary"),
         meetingActions({ id, subject: p.subject, start: meta?.start || p.start, end: meta?.end || p.end }, "prep"),
         el("button", { type: "button", onclick: () => guarded(() => api("/api/outlook/open", { id })) }, "Open in Outlook"))),
     el("div", { class: "prep-grid" },
@@ -1794,7 +1820,7 @@ function renderAgenda(agenda) {
         el("div", { class: "title" }, m.subject, live && el("span", { class: "tag live" }, "Live")),
         el("div", { class: "muted src-line" }, srcTag(m.join_url ? "meeting" : "calendar"), [m.location, m.organizer && `organizer ${m.organizer}`].filter(Boolean).join(" · "))),
       el("div", { class: "actions" },
-        m.join_url && end > now && linkButton(m.join_url, "Join", "small primary"),
+        m.join_url && end > now && joinButton(m.join_url),
         end > now && el("button", { class: "small alt", title: "Attendees, recent mail and notes", onclick: () => prepDialog(m.id, m) }, "Prep"),
         meetingActions(m, "agenda"),
         el("button", { class: "small m-open", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open"))) };
@@ -2765,7 +2791,7 @@ function paletteSources() {
     const now = new Date();
     const agenda = Array.isArray(todayData.agenda) ? todayData.agenda : [];
     const next = agenda.find((m) => m.join_url && new Date(m.end) > now);
-    if (next) add("Commands", `Join next meeting: ${next.subject}`, timeOf(next.start), () => openExternal(next.join_url));
+    if (next) add("Commands", `Join next meeting: ${next.subject}`, timeOf(next.start), () => joinMeeting(next.join_url));
     for (const m of agenda) add("Agenda", m.subject, timeOf(m.start), () => guarded(() => api("/api/outlook/open", { id: m.id })));
     for (const m of agenda.filter((m) => !m.lunch && new Date(m.end) > now)) add("Agenda", `Prep: ${m.subject}`, timeOf(m.start), () => prepDialog(m.id, m));
     for (const t of todayData.tasks.items) add("Tasks", t.subject, dueText(t.due), () => t.url ? openExternal(t.url) : guarded(() => api("/api/outlook/open", { id: t.id })));
@@ -3089,6 +3115,8 @@ function toolItems() {
     focusLayout && toggle(focusLayout, "⧉ Pulse | Code layout"),
     el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(!!focusInfo.active), onclick: focusDialog,
       title: "Only high-priority alerts pop up" }, focusInfo.active ? `◐ Focus mode: on until ${timeOf(focusInfo.until)}…` : "◐ Focus mode…"),
+    teamsCalls.available && el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(teamsCalls.on), onclick: () => setTeamsCalls(!teamsCalls.on),
+      title: "Join opens Teams meetings in the Teams tab, which may then use your microphone and camera (Teams' own pages only, asked each time; Lock ends a meeting there)" }, "🎥 Join meetings in CC (mic & camera)"),
     keep?.available && el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(!!keep.on), onclick: () => CC.keepAvailable.set(!keep.on),
       title: "Teams won't go Away while Command Center is open and Windows is unlocked" }, "● Stay Available in Teams"),
     CC.shortcuts && plain("⌨ Keyboard shortcuts", () => CC.shortcuts(), "?"),
@@ -3102,10 +3130,16 @@ function toolItems() {
 }
 
 // Main window: open it again after a Lock or a restart if it was open (Joe left it open; the server remembers).
+loadTeamsCalls();
+document.addEventListener("visibilitychange", () => { if (!document.hidden) loadTeamsCalls(); });
+extraPaletteSources.push(() => teamsCalls.available ? [{ group: "Commands", label: `Join meetings in CC: turn ${teamsCalls.on ? "off" : "on"}`,
+  hint: teamsCalls.on ? "now on: meetings open in the Teams tab" : "now off: meetings open in the Teams app", run: () => setTeamsCalls(!teamsCalls.on) }] : []);
 loadSide().then((info) => { if (!SIDE && info?.available && info.open && !info.shown) setSideOpen(true); });
 
 window.CC = {
+  joinMeeting,  // Join on a Teams meeting: the Teams tab's view (Join meetings in CC on) or the Teams app
   side: SIDE,  // this page is the side window (pinned tabs only; no native views, no pop-ups)
+  get sideDesktop() { return !!sideInfo?.available; },  // ...in the desktop app: its Teams chats open in the main window
   $, el, api, guarded, fill, when, timeOf, duration, srcTag, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,
   prepDialog,  // the Prep card for a meeting
   replyDialog,  // verified reply: compose -> review (recipients, subject, text) -> Send

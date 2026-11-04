@@ -172,7 +172,9 @@ def inventory() -> list[dict]:
     for vid, vname, folder, what in (
             ("teams_view", "Teams on the web (Teams tab)", "webview-teams",
              "Teams on the web, signed in by you (Microsoft 365 / Okta), shown in the Teams tab to read and answer chats. "
-             "Separate from the background Teams reader's profile."),
+             "Separate from the background Teams reader's profile. With Tools ▾ > Join meetings in CC on (kv teams:calls, "
+             "off unless you turn it on), meetings open there too and Teams' own pages may use your microphone and camera, "
+             "asked each time and never remembered; Lock ends a meeting there."),
             ("pulse_view", "Pulse site (Pulse tab)", "webview-pulse",
              "pulse.sonance.com and dev.pulse.sonance.com, signed in by you (Okta), shown in the Pulse tab."),
             ("websites_view", "Sites in the Websites tab", "webview-websites",

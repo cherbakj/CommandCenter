@@ -62,7 +62,7 @@
         el("div", { class: "muted src-line" }, CC.srcTag(m.join_url ? "meeting" : "calendar", m.organizer ? `organizer ${m.organizer}` : ""),
           [m.all_day ? "" : `until ${clock(m.end)}`, m.location, m.status && m.status !== "busy" ? m.status : ""].filter(Boolean).join(" · "))),
       el("div", { class: "pl-acts" },
-        m.join_url && new Date(m.end) > now && el("button", { class: "small primary", onclick: () => CC.openExternal(m.join_url) }, "Join"),
+        m.join_url && new Date(m.end) > now && el("button", { class: "small primary", onclick: () => CC.joinMeeting(m.join_url) }, "Join"),
         !m.all_day && CC.meetingActions ? CC.meetingActions(m, "planner") : null,
         el("button", { class: "small subtle", title: "Open in Outlook", onclick: () => guarded(() => api("/api/outlook/open", { id: m.id })) }, "Open")));
   }
@@ -162,7 +162,7 @@
         el("span", { class: "dc-title" }, ev.kind === "lunch" ? "🍽 Lunch" : ev.title),
         el("span", { class: "dc-time" }, clock(ev.start), !short && el("span", { class: "pl-ev-end" }, ` – ${clock(ev.end)}`))),
       ev.m?.join_url && !past && el("button", { type: "button", class: "small primary dc-join", title: "Join the Teams meeting", "aria-label": `Join ${ev.title}`,
-        onclick: () => CC.openExternal(ev.m.join_url) }, "Join"));
+        onclick: () => CC.joinMeeting(ev.m.join_url) }, "Join"));
     node.style.setProperty("--t", String(ev.s - startH));
     node.style.setProperty("--h", String(Math.max(ev.e - ev.s, 0.25)));
     node.style.setProperty("--col", String(ev.col));

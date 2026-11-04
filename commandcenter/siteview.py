@@ -22,6 +22,7 @@ Keys: Ctrl+K (palette), Ctrl+Shift+P (Privacy mode) and F11 (full screen) inside
 import ctypes
 import logging
 import os
+import json
 import re
 import threading
 import time
@@ -132,8 +133,8 @@ class SiteView(NativeOverlay):
         """The site a navigate action may open this URL in (a page of the site itself, never a sign-in page)."""
         raise NotImplementedError
 
-    def on_permission(self, v, kind) -> bool:
-        """Allow this permission request? (Several downloads in a row only, by default.)"""
+    def on_permission(self, v, kind, uri: str = "") -> bool:
+        """Allow this permission request? (Several downloads in a row only, by default.) uri: the asking page."""
         from Microsoft.Web.WebView2.Core import CoreWebView2PermissionKind
         return kind == CoreWebView2PermissionKind.MultipleAutomaticDownloads
 
@@ -396,7 +397,8 @@ class SiteView(NativeOverlay):
 
     def _on_permission(self, v, args):
         from Microsoft.Web.WebView2.Core import CoreWebView2PermissionState
-        allow = self.on_permission(v, args.PermissionKind)
+        allow = self.on_permission(v, args.PermissionKind, str(args.Uri))
+        args.SavesInProfile = False  # asked again each time: a switch turned off takes effect at once
         args.State = CoreWebView2PermissionState.Allow if allow else CoreWebView2PermissionState.Deny
         if not allow:
             log.info("%s: refused a %s permission request", self.NAME, str(args.PermissionKind)[:30])
@@ -585,6 +587,48 @@ def teams_web_link(link: str) -> str | None:
     return f"https://teams.microsoft.com/_#/l/{kind}/{urllib.parse.quote(thread, safe=':@')}/{item}" + (f"?{q}" if q else "")
 
 
+_MEET = re.compile(r"https://teams\.microsoft\.com/meet/(\d{6,20})(?:\?p=([A-Za-z0-9]{1,40}))?")
+_MEETUP = re.compile(r"https://teams\.microsoft\.com/l/meetup-join/([^/?#\s]{1,300})/(\d{1,20})(?:\?([^#\s]{0,1500}))?")
+
+
+def teams_meeting_link(link: str) -> str | None:
+    """A Teams meeting's join link (from an Outlook invite) as the page Teams on the web joins it from, rebuilt from
+    checked parts: /meet/<number>?p=<passcode> as it is (Teams' own page then offers "Continue on this browser");
+    /l/meetup-join/<thread>/<id>?context={Tid, Oid} as https://teams.microsoft.com/_#/l/meetup-join/... (straight to
+    the meeting, as teams_web_link does for chats). None when anything doesn't fit."""
+    if not isinstance(link, str):
+        return None
+    m = _MEET.fullmatch(link)
+    if m:
+        return f"https://teams.microsoft.com/meet/{m.group(1)}" + (f"?p={m.group(2)}" if m.group(2) else "")
+    m = _MEETUP.fullmatch(link)
+    if not m:
+        return None
+    thread, item, query = urllib.parse.unquote(m.group(1)), m.group(2), m.group(3) or ""
+    if not _THREAD_ID.fullmatch(thread):
+        return None
+    ctx = {}
+    for k, v in urllib.parse.parse_qsl(query, keep_blank_values=False):
+        if k != "context":
+            return None
+        try:
+            data = json.loads(v)
+        except ValueError:
+            return None
+        if not isinstance(data, dict) or not all(isinstance(data.get(x), str) and _GUID.fullmatch(data[x]) for x in ("Tid", "Oid")):
+            return None
+        ctx = {"Tid": data["Tid"], "Oid": data["Oid"]}
+    q = f"?context={urllib.parse.quote(json.dumps(ctx, separators=(',', ':')))}" if ctx else ""
+    return f"https://teams.microsoft.com/_#/l/meetup-join/{urllib.parse.quote(thread, safe=':@')}/{item}{q}"
+
+
+def calls_on() -> bool:
+    """"Join meetings in CC" (Tools ▾; kv teams:calls, off unless turned on): the Teams view may use the microphone
+    and camera for Teams' own pages, and Join opens meetings there."""
+    from . import db
+    return db.kv_get("teams:calls") is True
+
+
 def teams_hosts() -> set[str]:
     return set(TEAMS_HOSTS) | _extra_hosts("teams", "view_hosts")
 
@@ -592,7 +636,9 @@ def teams_hosts() -> set[str]:
 class TeamsView(SiteView):
     """Teams on the web (teams.microsoft.com/v2) in the Teams tab, for reading and answering whole chats. Its own
     profile, data/webview-teams: not the background reader's Edge profile (data/browser/teams), which keeps working
-    on its own. Calls and meetings belong in the Teams app: camera, microphone and the rest are refused, with a hint."""
+    on its own. Calls and meetings: in the Teams app, unless "Join meetings in CC" is on (calls_on): then the camera
+    and microphone are allowed for Teams' own pages, each time asked (never remembered), and Lock ends a call there."""
+    _call_granted = False  # the camera or microphone was allowed since the last lock
     NAME = "Teams view"
     PROFILE = "webview-teams"
     SITES = ("web",)
@@ -624,12 +670,28 @@ class TeamsView(SiteView):
         # the page's own address up to the "#" (same document), then the deep link's "/l/..." part
         return urllib.parse.urlunsplit(("https", p.hostname.lower(), p.path, p.query, url.split("#", 1)[1]))
 
-    def on_permission(self, v, kind):
+    def on_permission(self, v, kind, uri: str = ""):
         from Microsoft.Web.WebView2.Core import CoreWebView2PermissionKind as K
         if kind in (K.Camera, K.Microphone):
-            self._note(v, "Calls and meetings: use the Teams app (Open in Teams app)")
+            p = urllib.parse.urlsplit(uri or "")
+            if calls_on() and p.scheme == "https" and (p.hostname or "").lower() in TEAMS_APP_HOSTS and not self.app.lock_showing:
+                self._call_granted = True
+                log.info("Teams view: allowed the %s for a meeting", "camera" if kind == K.Camera else "microphone")
+                return True
+            self._note(v, "Calls and meetings: turn on Tools ▾ > Join meetings in CC, or use the Teams app")
             v.state["call_hint_at"] = time.time()
-        return super().on_permission(v, kind)
+        return super().on_permission(v, kind, uri)
+
+    def _apply(self):
+        super()._apply()
+        # Locked: a meeting in the view ends (back to Teams' home page), so the camera and microphone are never left
+        # on behind the lock screen.
+        if self._call_granted and (not self.app.unlocked or self.app.lock_showing):
+            self._call_granted = False
+            for v in self.views.values():
+                if v.controller is not None:
+                    v.controller.CoreWebView2.Navigate(TEAMS_HOME)
+            log.info("Teams view: locked, so a meeting there was ended")
 
     def handle_action(self, body: dict) -> dict:
         name = str(body.get("action") or "")
@@ -642,6 +704,14 @@ class TeamsView(SiteView):
             target = "msteams:" + web[len("https://teams.microsoft.com/_#"):] if web else "msteams:"
             threading.Thread(target=os.startfile, args=(target,), daemon=True).start()
             return {"ok": True}
+        if name == "meeting":  # Join on a meeting (Join meetings in CC is on): the meeting in the view
+            if not calls_on():
+                raise ValueError("Join meetings in CC is off")
+            web = teams_meeting_link(body.get("link"))
+            if not web:
+                raise ValueError("not a Teams meeting link")
+            self.action("web", "navigate", web)
+            return {"ok": True, "site": "web"}
         if name == "chat":  # a chat / message from the Recent list, opened in the view
             web = teams_web_link(body.get("link"))
             if not web:
