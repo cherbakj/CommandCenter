@@ -37,7 +37,8 @@
         row(k("Esc"), "Clear the search"),
         row(k("↓"), "From the search box into the list"),
         row(k("↑", "/", "↓"), "Move along the list"),
-        row(k("Enter"), "Open the email"),
+        row(k("Enter"), "Open the email (on a conversation: its newest unread one)"),
+        row(k("→", "/", "←"), "List a conversation's emails / close the list"),
       ]],
       ["Replying", [
         row(k("Ctrl Enter"), "Review the reply. Nothing sends without a click on Send"),

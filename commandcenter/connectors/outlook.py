@@ -138,6 +138,16 @@ def _summary(item) -> dict:
     }
 
 
+def _thread(item) -> dict:
+    """What the Mail tab groups rows by (Joe's call 2026-11-04): Outlook's conversation id, and the conversation topic
+    (the subject without RE: / FW:) so notifications about the same thing group even when each starts a new
+    conversation. Ids and the subject only; nothing is stored."""
+    try:
+        return {"conv": item.ConversationID or "", "topic": item.ConversationTopic or ""}
+    except pywintypes.com_error:
+        return {"conv": "", "topic": ""}
+
+
 def _preview(body) -> str:
     """First ~300 characters of the body as one line, without tracking / Safe Links URLs."""
     text = PREVIEW_URL.sub(" ", (body or "")[:3000])
@@ -196,7 +206,7 @@ def recent_mail(limit=50, unread_only=False) -> list[dict]:
             continue
         if blocked and blocked.hit(_sender_smtp(item), lambda: item.Subject, item.SenderName):
             continue  # blocked as spam (Junk Email); the Outlook rule may not have moved it yet
-        m = _summary(item)
+        m = _summary(item) | _thread(item)
         m["important"] = people.is_important(m["sender"], important)  # the star on Mail rows
         if _hoxhunt_row(item, m["sender"]):
             m.update(hoxhunt=True, important=False)  # tagged "Hoxhunt test"; no star, Spam or Mark important
@@ -210,7 +220,7 @@ def sent_mail(limit=50) -> list[dict]:
     """The newest sent emails (Sent Items), with who they went to."""
     out = []
     for item in _iter_folder(OL_FOLDER_SENT, "[SentOn]", limit):
-        m = _summary(item)
+        m = _summary(item) | _thread(item)
         m.update(to=item.To or "", folder="Sent", important=False)
         out.append(m)
     return out
@@ -230,7 +240,7 @@ def _summaries(entry_ids, folder="Inbox") -> list[dict]:
                 continue
             if folder == "Inbox" and blocked and blocked.hit(_sender_smtp(item), lambda: item.Subject, item.SenderName):
                 continue
-            m = _summary(item)
+            m = _summary(item) | _thread(item)
             if folder == "Sent":
                 m["to"] = item.To or ""  # the list shows who it went to
             hox = folder == "Inbox" and _hoxhunt_row(item, m["sender"])

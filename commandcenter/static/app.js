@@ -700,7 +700,64 @@ function alertSource(a) {
 let pinnedMail = null;
 // Inbox | Sent picks the list (remembered in cc.mail.folder); All | Unread applies to the Inbox only.
 const mailState = { query: "", filter: store.get("cc.mail.filter") === "unread" ? "unread" : "all",
-  folder: store.get("cc.mail.folder") === "sent" ? "sent" : "inbox", sticky: new Set(), seq: 0, data: null };
+  folder: store.get("cc.mail.folder") === "sent" ? "sent" : "inbox", sticky: new Set(), seq: 0, data: null,
+  threads: store.get("cc.mail.threads") !== "off", open: new Set() };
+
+// Conversations (Joe's call 2026-11-04): one row with a count for the emails of one Outlook conversation, and for
+// notifications about the same thing: the same sender with the same topic (the subject without RE: / FW:), or the same
+// sender naming the same ticket / order / issue number (#4521, PULSE-123, 1234567) in the subject. The row shows the
+// newest email and everyone in it; a click opens the newest unread one (else the newest) and lists the rest under it;
+// the twist (or Right / Left) opens and closes the list without opening an email. Only what's in the list is grouped.
+// The Threads switch turns it off (localStorage cc.mail.threads). open: ids of the emails whose group is listed out.
+const MAIL_REF = /#\d{3,}|\b[A-Z][A-Z0-9]{1,9}-\d{1,7}\b|\b\d{5,}\b/g;
+const mailTopic = (m) => String(m.topic || m.subject || "").replace(/^\s*(?:\[external\]\s*|(?:re|fw|fwd|aw)\s*:\s*)+/i, "")
+  .replace(/\s+/g, " ").trim().toLowerCase();
+function mailThreads(mail) {
+  const parent = mail.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const first = new Map();
+  const join = (key, i) => { if (!first.has(key)) first.set(key, i); else parent[find(i)] = find(first.get(key)); };
+  mail.forEach((m, i) => {
+    if (m.conv) join(`c:${m.conv}`, i);
+    const from = (m.folder === "Sent" ? "me" : m.sender || m.sender_name || "").toLowerCase();
+    if (!from) return;
+    const topic = mailTopic(m);
+    if (topic.length >= 4 && topic !== "(no subject)") join(`t:${from}|${topic}`, i);
+    for (const ref of new Set(String(m.subject || "").match(MAIL_REF) || [])) join(`r:${from}|${ref.toLowerCase()}`, i);
+  });
+  const groups = new Map();
+  mail.forEach((m, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(m); });
+  return [...groups.values()];
+}
+// "Ana, Ben, Me +2": everyone in a conversation, newest first.
+function threadPeople(g) {
+  const names = [...new Set(g.map((m) => (m.folder === "Sent" ? "Me" : (m.sender_name || m.sender || "").split(/[,(]/)[0].trim())).filter(Boolean))];
+  return names.length > 3 ? `${names.slice(0, 3).join(", ")} +${names.length - 3}` : names.join(", ");
+}
+const threadOpen = (g) => g.some((m) => mailState.open.has(m.id));
+function setThreadOpen(ids, open, focusId) {
+  ids.forEach((id) => (open ? mailState.open.add(id) : mailState.open.delete(id)));
+  renderMail();
+  if (focusId) document.querySelector(`#mail-list li.thread[data-id="${CSS.escape(focusId)}"]`)?.focus();
+}
+// The list's selection: the email's own row, or its conversation's row while that is closed.
+function markMailSelected(id) {
+  document.querySelectorAll("#mail-list li.mail-row").forEach((li) => li.classList.toggle("selected", li.classList.contains("thread")
+    ? !li.classList.contains("open") && li.dataset.members.split(" ").includes(id) : li.dataset.id === id));
+}
+async function markThreadRead(g) {
+  await guarded(async () => {
+    let alertsRead = 0;
+    for (const m of g.filter((x) => x.unread)) {
+      const r = await api("/api/mail/read", { id: m.id, read: true });
+      alertsRead += r?.alerts_read || 0;
+      m.unread = false;
+      mailState.sticky.add(m.id);  // stays where it is until the list is refreshed, like an email read here
+    }
+    renderMail();
+    if (alertsRead) { refresh(); if ($("#tab-alerts").classList.contains("active")) loaders.alerts(); }
+  });
+}
 
 // Today: the time; this week: the weekday; this year: "Oct 21"; older: the date.
 function mailTime(iso) {
@@ -712,20 +769,39 @@ function mailTime(iso) {
   return d.toLocaleDateString([], { year: "2-digit", month: "numeric", day: "numeric" });
 }
 
-function mailRow(m) {
+// g: the row stands for a conversation (g, newest first; m is its newest email); member: one email listed under it.
+function mailRow(m, g = null, member = false) {
   const sent = m.folder === "Sent";
-  const who = sent ? `To: ${m.to || "(no recipients)"}` : m.sender_name || m.sender || "(unknown sender)";
+  const n = g ? g.length : 1, unreadN = g ? g.filter((x) => x.unread).length : 0;
+  const unread = g ? unreadN > 0 : m.unread, open = !!g && threadOpen(g);
+  const who = g ? threadPeople(g) : sent ? `To: ${m.to || "(no recipients)"}` : m.sender_name || m.sender || "(unknown sender)";
+  // A conversation's row opens its newest unread email (else the newest) and lists the others under it.
+  const target = g ? g.find((x) => x.unread) || m : m;
+  const opens = () => {
+    if (g && !open) g.forEach((x) => mailState.open.add(x.id));
+    showMail(target.id);
+    if (g && !open) renderMail();
+  };
+  const selected = g ? !open && g.some((x) => x.id === selectedMail) : m.id === selectedMail;
+  const countTitle = `${n} emails in this conversation${unreadN ? `, ${unreadN} unread` : ""}`;
+  const people = g ? [...new Set(g.map((x) => (x.folder === "Sent" ? "Me" : fromLine(x.sender_name, x.sender))))].join("\n") : null;
   return el("li", {
-      class: `mail-row clickable ${m.unread ? "unread" : ""} ${m.id === selectedMail ? "selected" : ""}`, "data-id": m.id, tabindex: "0",
-      "aria-label": `${m.unread ? "Unread. " : ""}${who}. ${m.subject}. ${when(m.received)}`,
-      onclick: () => showMail(m.id),
-      onkeydown: (e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); showMail(m.id); } },
+      class: `mail-row clickable ${unread ? "unread" : ""} ${selected ? "selected" : ""} ${g ? "thread" : ""} ${open ? "open" : ""} ${member ? "thread-member" : ""}`,
+      "data-id": m.id, "data-members": g ? g.map((x) => x.id).join(" ") : null, tabindex: "0",
+      "aria-expanded": g ? String(open) : null,
+      "aria-label": `${unread ? "Unread. " : ""}${g ? `Conversation, ${countTitle}. ` : ""}${who}. ${m.subject}. ${when(m.received)}`,
+      onclick: opens,
+      onkeydown: (e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); opens(); } },
     },
-    el("span", { class: "mr-dot", "aria-hidden": "true" }),
+    g ? el("button", { type: "button", class: "mr-twist", tabindex: "-1", "aria-hidden": "true",
+        title: open ? "Hide the emails in this conversation" : "List the emails in this conversation",
+        onclick: (e) => { e.stopPropagation(); setThreadOpen(g.map((x) => x.id), !open, m.id); } }, open ? "▾" : "▸")
+      : el("span", { class: "mr-dot", "aria-hidden": "true" }),
     el("div", { class: "mr-main" },
       el("div", { class: "mr-top" },
-        el("span", { class: "mr-from", title: sent ? m.to || "" : fromLine(m.sender_name, m.sender) }, m.important ? importantStar() : "", who),
-        !sent && m.sender && m.sender_name && el("span", { class: "mr-addr" }, m.sender),
+        el("span", { class: "mr-from", title: g ? people : sent ? m.to || "" : fromLine(m.sender_name, m.sender) }, !g && m.important ? importantStar() : "", who),
+        g && el("span", { class: `mr-count ${unreadN ? "has-unread" : ""}`, title: countTitle }, unreadN && unreadN < n ? `${unreadN}/${n}` : String(n)),
+        !g && !sent && m.sender && m.sender_name && el("span", { class: "mr-addr" }, m.sender),
         el("span", { class: "mr-icons" },
           sent && mailState.data?.query && el("span", { class: "tag" }, "Sent"), m.pinned && el("span", { class: "tag" }, "Opened"),
           m.hoxhunt && el("span", { class: "tag hoxhunt", title: "Hoxhunt phishing test: report it with the Hoxhunt button in Outlook" }, "Hoxhunt test"),
@@ -735,7 +811,9 @@ function mailRow(m) {
       el("div", { class: "mr-subj" }, m.subject),
       m.preview && el("div", { class: "mr-prev" }, m.preview.slice(0, 220))),
     el("div", { class: "mr-acts" },
-      !sent && !m.hoxhunt && el("button", { type: "button", class: "icon subtle mr-snooze", title: "Snooze: back at the top of Needs you later",
+      g && unreadN > 0 && el("button", { type: "button", class: "icon subtle", title: `Mark all ${unreadN} unread in this conversation read`,
+        "aria-label": `Mark the conversation "${m.subject}" read`, onclick: (e) => { e.stopPropagation(); markThreadRead(g); } }, "✓"),
+      !g && !sent && !m.hoxhunt && el("button", { type: "button", class: "icon subtle mr-snooze", title: "Snooze: back at the top of Needs you later",
         "aria-label": `Snooze "${m.subject}"`, onclick: (e) => { e.stopPropagation(); snoozeDialog({ id: m.id, subject: m.subject, who: m.sender_name, kind: "mail" }, () => loaders.mail()); } }, "💤"),
       mailActions(m, "row")));
 }
@@ -754,12 +832,17 @@ function renderMail() {
   if (mailState.filter === "unread" && !sent && !r.query) mail = mail.filter((m) => unreadish(m) || m.pinned);
   const byDate = (a, b) => String(b.received || "").localeCompare(String(a.received || ""));
   const pinned = mail.filter((m) => m.pinned);
-  const unread = mail.filter((m) => !m.pinned && unreadish(m)).sort(byDate);
-  const rest = mail.filter((m) => !m.pinned && !unreadish(m)).sort(byDate);
+  // Conversations (or one email each with Threads off), newest first; one with anything unread goes under Unread.
+  const listed = mail.filter((m) => !m.pinned);
+  const groups = (mailState.threads ? mailThreads(listed) : listed.map((m) => [m])).map((g) => g.sort(byDate))
+    .sort((a, b) => byDate(a[0], b[0]));
+  const unread = groups.filter((g) => g.some(unreadish)), rest = groups.filter((g) => !g.some(unreadish));
+  const rowsOf = (g) => (g.length === 1 ? [mailRow(g[0])]
+    : [mailRow(g[0], g), ...(threadOpen(g) ? g.map((m) => mailRow(m, null, true)) : [])]);
   const rows = [];
-  if (pinned.length) rows.push(mailGroup("Opened"), ...pinned.map(mailRow));
-  if (unread.length) rows.push(mailGroup("Unread", unread.filter((m) => m.unread).length), ...unread.map(mailRow));
-  if (rest.length) rows.push(mailGroup(r.query ? (unread.length ? "Other results" : "Results") : sent ? "Sent" : "Earlier"), ...rest.map(mailRow));
+  if (pinned.length) rows.push(mailGroup("Opened"), ...pinned.map((m) => mailRow(m)));
+  if (unread.length) rows.push(mailGroup("Unread", unread.flat().filter((m) => m.unread).length), ...unread.flatMap(rowsOf));
+  if (rest.length) rows.push(mailGroup(r.query ? (unread.length ? "Other results" : "Results") : sent ? "Sent" : "Earlier"), ...rest.flatMap(rowsOf));
   const empty = r.query ? `Nothing in the Inbox or Sent Items matches “${r.query}”.` : sent ? "No sent mail"
     : mailState.filter === "unread" ? "No unread mail. Inbox zero." : "No mail";
   fill($("#mail-list"), rows, empty);
@@ -794,6 +877,12 @@ loaders.mail = async () => {
 
 // Refresh, a new search or another filter starts the list over (emails read meanwhile leave the Unread section).
 function reloadMail() { mailState.sticky.clear(); return loaders.mail(); }
+function setMailThreads(on) {
+  mailState.threads = on;
+  store.set("cc.mail.threads", on ? null : "off");
+  $("#mail-threads").setAttribute("aria-pressed", String(on));
+  renderMail();
+}
 function setMailQuery(q) {
   mailState.query = q;
   if ($("#mail-search").value !== q) $("#mail-search").value = q;
@@ -887,7 +976,7 @@ async function showMail(id) {
   const view = $("#mail-view");
   view.className = "panel";
   view.replaceChildren(el("div", { class: "muted" }, "Loading…"));
-  document.querySelectorAll("#mail-list li.mail-row").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));
+  markMailSelected(id);
   await guarded(async () => {
     const m = await api(`/api/mail/item?id=${encodeURIComponent(id)}`);
     // Reading it closes its alerts too (server side, both ways); the badge follows.
@@ -934,13 +1023,14 @@ async function showMail(id) {
       mailContent(m),
     );
     view.scrollTop = 0;
-    const listed = [...document.querySelectorAll("#mail-list li.mail-row")].some((li) => li.dataset.id === id);
+    const listed = [...document.querySelectorAll("#mail-list li.mail-row")].some((li) => li.dataset.id === id
+      || (li.dataset.members || "").split(" ").includes(id));  // inside a closed conversation counts as listed
     if (!listed || pinnedMail?.id === id) {
       pinnedMail = { id, subject: m.subject, sender_name: m.sender_name, sender: m.sender, received: m.received,
         preview: (m.body || "").replace(/\s+/g, " "), flagged: m.flagged, high_importance: m.high_importance, important: m.important, hoxhunt: m.hoxhunt, pinned: true };
       if (!listed) { if (mailState.data) renderMail(); else await loaders.mail(); }
     }
-    document.querySelectorAll("#mail-list li.mail-row").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));
+    markMailSelected(id);
     document.querySelector("#mail-list li.selected")?.scrollIntoView({ block: "nearest" });
     renderOrderChips(orderChips, `${m.subject}\n${m.body}`, id);
   });
@@ -967,7 +1057,20 @@ async function showMail(id) {
   $("#mail-f-all").addEventListener("click", () => setMailFilter("all"));
   $("#mail-f-unread").addEventListener("click", () => setMailFilter("unread"));
   $("#mail-refresh").addEventListener("click", reloadMail);
+  $("#mail-threads").addEventListener("click", () => setMailThreads(!mailState.threads));
+  $("#mail-threads").setAttribute("aria-pressed", String(mailState.threads));
   $("#mail-list").addEventListener("keydown", (e) => {
+    // Right lists a conversation's emails, Left closes it again (from the conversation or one of its emails).
+    const li = document.activeElement;
+    if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && li?.matches?.("#mail-list li.mail-row")) {
+      const head = li.classList.contains("thread") ? li : li.classList.contains("thread-member")
+        ? [...document.querySelectorAll("#mail-list li.thread.open")].find((t) => t.dataset.members.split(" ").includes(li.dataset.id)) : null;
+      const open = e.key === "ArrowRight";
+      if (!head || (open && head.classList.contains("open"))) return;
+      e.preventDefault();
+      setThreadOpen(head.dataset.members.split(" "), open, head.dataset.id);
+      return;
+    }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     const rows = [...document.querySelectorAll("#mail-list li.mail-row")];
     const i = rows.indexOf(document.activeElement);

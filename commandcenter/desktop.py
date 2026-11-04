@@ -815,6 +815,7 @@ class DesktopApp:
         ensure_icon_file()
         from . import forcequit
         forcequit.register_jump_list(APP_ID, str(ICON_PATH))  # "Force quit Command Center" on the taskbar button
+        threading.Thread(target=heal_shortcuts, name="shortcuts", daemon=True).start()  # the taskbar's icon
         security.harden_folders()
         if not self._start_server():
             return
@@ -919,6 +920,98 @@ def _set_app_id(path: str):
         link.QueryInterface(pythoncom.IID_IPersistFile).Save(path, True)
     except Exception as e:
         log.warning("Shortcut app id not set (%s)", type(e).__name__)
+
+
+def _open_link(path: str, mode=0):
+    import pythoncom
+    from win32comext.shell import shell
+    link = pythoncom.CoCreateInstance(shell.CLSID_ShellLink, None, pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink)
+    link.QueryInterface(pythoncom.IID_IPersistFile).Load(path, mode)
+    return link
+
+
+def _link_app_id(link) -> str:
+    import pythoncom
+    from win32comext.propsys import propsys, pscon
+    try:
+        return link.QueryInterface(propsys.IID_IPropertyStore).GetValue(pscon.PKEY_AppUserModel_ID).GetValue() or ""
+    except pythoncom.com_error:
+        return ""
+
+
+def _shell_updated(path: str):
+    """Tells Explorer a shortcut changed, so the taskbar and Start menu redraw its icon."""
+    try:
+        from win32comext.shell import shell, shellcon
+        shell.SHChangeNotify(shellcon.SHCNE_UPDATEITEM, shellcon.SHCNF_PATHW | shellcon.SHCNF_FLUSHNOWAIT, path, None)
+    except Exception:
+        pass
+
+
+def heal_shortcuts(folders: dict | None = None, pinned: Path | None = None) -> list[str]:
+    """Run at each start, so the taskbar shows Command Center's own icon (Joe's call 2026-11-04).
+    1. The Start menu / desktop / Startup shortcuts made before the app id existed get it; without it, pinning the
+       running window can't find Command Center's shortcut.
+    2. A taskbar pin that carries Command Center's app id but starts some other program is pointed back at Command
+       Center. Windows makes one when the running window is pinned and no shortcut has the id: it pinned the bare
+       pythonw.exe, so the button showed Python's icon (and the pin started a plain Python, not Command Center).
+    Only shortcuts named Command Center or carrying its app id are touched. Returns what changed (names only)."""
+    import pythoncom
+    pythoncom.CoInitialize()
+    try:
+        changed = _heal_shortcuts(folders, pinned)  # its COM objects are released before CoUninitialize
+    except Exception as e:
+        log.warning("Shortcut check failed (%s)", type(e).__name__)
+        changed = []
+    finally:
+        pythoncom.CoUninitialize()
+    if changed:
+        log.info("Shortcuts healed: %s", "; ".join(changed))
+    return changed
+
+
+def _heal_shortcuts(folders, pinned) -> list[str]:
+    import pythoncom
+    changed = []
+    if folders is None:
+        import win32com.client
+        shell = win32com.client.Dispatch("WScript.Shell")
+        folders = {name: Path(shell.SpecialFolders(name)) for name in ("Programs", "Desktop", "Startup")}
+    for name, folder in folders.items():
+        path = folder / f"{TITLE}.lnk"
+        try:
+            if path.exists() and _link_app_id(_open_link(str(path))) != APP_ID:
+                _set_app_id(str(path))
+                _shell_updated(str(path))
+                changed.append(f"{name} shortcut: app id")
+        except Exception as e:
+            log.warning("Shortcut check failed (%s, %s)", name, type(e).__name__)
+    if pinned is None:
+        pinned = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar"
+    pythonw = config.ROOT / ".venv" / "Scripts" / "pythonw.exe"
+    if pinned.is_dir():
+        for path in pinned.glob("*.lnk"):
+            try:
+                link = _open_link(str(path), 2)  # STGM_READWRITE
+                if _link_app_id(link) != APP_ID:
+                    continue  # someone else's pin
+                target = link.GetPath(0)[0] or ""
+                args = link.GetArguments() or ""
+                icon = link.GetIconLocation()[0] or ""
+                if (target.lower() == str(pythonw).lower() and args.startswith("-m commandcenter app")
+                        and icon.lower() == str(ICON_PATH).lower()):
+                    continue  # already right
+                link.SetPath(str(pythonw))
+                link.SetArguments("-m commandcenter app")
+                link.SetWorkingDirectory(str(config.ROOT))
+                link.SetIconLocation(str(ICON_PATH), 0)
+                link.SetDescription("Outlook, Teams, tasks and alerts in one place")
+                link.QueryInterface(pythoncom.IID_IPersistFile).Save(str(path), True)
+                _shell_updated(str(path))
+                changed.append("taskbar pin: pointed at Command Center")
+            except Exception as e:
+                log.warning("Taskbar pin check failed (%s)", type(e).__name__)
+    return changed
 
 
 def uninstall_shortcuts():

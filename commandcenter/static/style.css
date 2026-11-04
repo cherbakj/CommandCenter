@@ -841,6 +841,20 @@ li.mail-row.unread .mr-time { color: var(--accent-2); font-weight: 600; }
 #mail-list li.mail-row:hover .mr-acts, #mail-list li.mail-row:focus-within .mr-acts { opacity: 1; pointer-events: auto; }
 @media (hover: none) { .mr-acts { position: static; transform: none; opacity: 1; pointer-events: auto; background: none; padding: .3rem 0 0; grid-column: 2; } }
 @container (max-width: 34rem) { .mr-addr { display: none; } }
+/* Conversations (app.js mailThreads): a twist where the unread dot goes, a count after the names, and the emails
+   listed under it indented. */
+#mail-list li.mail-row.thread { grid-template-columns: .9rem minmax(0, 1fr); }
+.mr-twist { all: unset; box-sizing: border-box; width: 1.1rem; margin-left: -.2rem; text-align: center; cursor: pointer;
+  font-size: .75rem; line-height: 1.4rem; color: var(--muted); border-radius: .25rem; }
+.mr-twist:hover { color: var(--text); background: rgb(var(--accent-rgb) / .12); }
+li.mail-row.thread.unread .mr-twist { color: var(--accent-2); }
+.mr-count { flex: none; min-width: 1.3rem; padding: 0 .38rem; border-radius: 1rem; text-align: center;
+  font: 600 .72rem/1.15rem var(--font-ui); font-variant-numeric: tabular-nums; color: var(--muted);
+  background: rgb(var(--accent-rgb) / .12); border: 1px solid rgb(var(--accent-rgb) / .28); }
+.mr-count.has-unread { color: var(--accent-2); background: rgb(var(--accent-2-rgb) / .12); border-color: rgb(var(--accent-2-rgb) / .45); }
+#mail-list li.mail-row.thread-member { padding-left: 2.1rem; background: rgb(var(--accent-rgb) / .035); }
+#mail-list li.mail-row.thread-member .mr-from { font-size: .88rem; }
+#mail-list li.mail-row.thread-member.unread { background: var(--sep), linear-gradient(90deg, rgb(var(--accent-2-rgb) / .06), transparent 80%); }
 
 #mail-view { min-height: 0; overflow: auto; overflow-wrap: anywhere; padding: 1.2rem 1.5rem 1.5rem; }
 #mail-view.empty { display: grid; place-items: center; color: var(--muted); }
