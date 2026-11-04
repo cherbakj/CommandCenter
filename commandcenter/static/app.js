@@ -379,16 +379,20 @@ window.addEventListener("resize", () => {
 //   1) everything, with the labels on the right ("Search", "Outlook", "Teams"); 2) without those labels;
 //   3) COMMS and WORK as dropdowns (navDrops), with the labels again; 4) dropdowns without the labels;
 //   5) also just the JC mark for a logo; 6) the dropdowns and the next meeting on a second row.
-const HEADER_STEPS = [[], ["hdr-tight"], ["nav-collapsed"], ["nav-collapsed", "hdr-tight"], ["nav-collapsed", "hdr-tight", "hdr-compact"], ["nav-collapsed", "nav-wrap"]];
+// Always one row (Joe's call 2026-11-04): the last two steps squeeze the next meeting and the buttons, then hide the
+// next meeting; past that the dropdowns scroll sideways.
+const COLLAPSED = ["nav-collapsed", "hdr-tight", "hdr-compact"];
+const HEADER_STEPS = [[], ["hdr-tight"], ["nav-collapsed"], ["nav-collapsed", "hdr-tight"], COLLAPSED,
+  [...COLLAPSED, "hdr-min"], [...COLLAPSED, "hdr-min", "hdr-none"]];
 let headerFrame = 0;
 function fitHeader() {
   cancelAnimationFrame(headerFrame);
   headerFrame = requestAnimationFrame(() => {
     const h = document.querySelector("header"), n = document.querySelector(".navs");
     for (const step of HEADER_STEPS) {
-      h.classList.remove("hdr-tight", "hdr-compact", "nav-collapsed", "nav-wrap");
+      h.classList.remove("hdr-tight", "hdr-compact", "nav-collapsed", "hdr-min", "hdr-none");
       h.classList.add(...step);
-      if (n.scrollWidth <= n.clientWidth + 1) break;
+      if (n.scrollWidth <= n.clientWidth + 4) break;  // sub-pixel rounding (85% text) read as overflow
     }
     navFade();
     navPill();
@@ -1523,7 +1527,7 @@ async function selectWeather(zip, button) {
 function renderWeather(w) {
   const panel = $("#weather");
   const head = (label) => el("div", { class: "weather-head" },
-    el("span", { class: "panel-label" }, label), el("span", { class: "spacer" }), weatherToggle(w));
+    el("span", { class: "panel-label", title: label }, label), el("span", { class: "spacer" }), weatherToggle(w));
   if (w.error) {
     panel.replaceChildren(head("ENV.WEATHER"), el("p", { class: "err" }, w.error));
     return;
