@@ -176,11 +176,17 @@ class SiteView(NativeOverlay):
         if host == "side" and getattr(self.app, "side", None) is None:
             return
         old_host = self.host
-        with self._lock:  # hidden until the page in the new window places it
-            self.want = {**self.want, "visible": False}
-            if self.page:
-                self._gone = [*self._gone[-7:], self.page]
-            self.page, self.seq = None, -1
+        with self._lock:
+            # Placed where the page in the new window last asked (its report was kept while the view was elsewhere);
+            # hidden until it reports if it never did. The other window's page hasn't gone away: not on the gone list
+            # (that made the side window's reports be dropped after Teams moved back and forth, 2026-11-04).
+            rep = self._reports.get(host)
+            if rep and rep["page"] not in self._gone:
+                self.page, self.seq = rep["page"], rep["seq"]
+                self.want = {k: rep[k] for k in ("visible", "site", "rect", "cuts")}
+            else:
+                self.page, self.seq = None, -1
+                self.want = {**self.want, "visible": False}
         self.host = host
         if self._form() is None:
             self.host = old_host

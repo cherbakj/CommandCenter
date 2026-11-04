@@ -61,6 +61,7 @@ class NativeOverlay:
         self.want = {"visible": False, "site": self.SITES[0], "rect": None, "cuts": []}
         self.page, self.seq = None, -1
         self._gone: list[str] = []  # pages that went away (reload, lock): their late reports are dropped
+        self._reports: dict[str, dict] = {}  # each window's latest report, kept even while the view lives elsewhere
         self._lock = threading.Lock()
         self._queued = False
 
@@ -79,6 +80,14 @@ class NativeOverlay:
             self.seq = report["seq"]
             self.want = {k: report[k] for k in ("visible", "site", "rect", "cuts")}
         self._queue()
+
+    def remember(self, window: str, report: dict):
+        """Keeps each window's latest report, accepted or not (the view may live in the other window just now), so a
+        view that moves there is placed at once (siteview._move_to), without waiting for that page to report again."""
+        with self._lock:
+            old = self._reports.get(window)
+            if old is None or report["page"] != old["page"] or report["seq"] > old["seq"]:
+                self._reports[window] = report
 
     def forget(self):
         """The dashboard page is going away (reload, lock, sign-out): hide until the next page reports."""

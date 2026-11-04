@@ -588,14 +588,20 @@ async def _small_json(request: Request, limit: int = 8192):
 
 @router.post("/api/window/{name}/bounds", include_in_schema=False)
 async def overlay_bounds(name: str, request: Request):
-    view = _overlay(name, request)
-    if not view:
+    any_view = _overlay(name, request, placing=False)
+    if not any_view:
         return _no_shell()
     from .overlay import parse_bounds
     try:
-        view.update(parse_bounds(await _small_json(request), view.SITES))
+        report = parse_bounds(await _small_json(request), any_view.SITES)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    window = "side" if _from_side(request) else "main"
+    if hasattr(any_view, "remember"):
+        any_view.remember(window, report)  # kept: if the view moves to this window, it's placed here at once
+    if getattr(any_view, "host", "main") != window:
+        return JSONResponse({"error": "lives in the other window", "elsewhere": True}, status_code=409)
+    any_view.update(report)
     return {"ok": True}
 
 

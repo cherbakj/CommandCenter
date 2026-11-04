@@ -68,7 +68,11 @@
       // the side window says so: a view living there takes only its reports (security._overlay)
       method: "POST", keepalive, headers: { "Content-Type": "application/json", "X-CommandCenter": "1", ...(CC.side ? { "X-CC-View": "side" } : {}) },
       body: JSON.stringify({ page, seq: ++s.seq, site: s.opts.site?.(), visible: !!m.visible, rect: m.rect, cuts: m.cuts }),
-    }).then((r) => { if (!r.ok) throw new Error(String(r.status)); });
+    }).then((r) => {
+      // 409: the view lives in the other window just now; the server kept this report and uses it if the view moves
+      // here, so it isn't sent again until something changes (no retry every second).
+      if (!r.ok && r.status !== 409) throw new Error(String(r.status));
+    });
   }
 
   // At most one report per 50 ms while it moves (splitter drags); hiding is never held back.

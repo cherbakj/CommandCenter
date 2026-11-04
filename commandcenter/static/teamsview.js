@@ -119,7 +119,7 @@
     clearInterval(poll);
     poll = setInterval(() => {  // title, back and notes, only while the tab is on screen
       if (!section.classList.contains("active")) { clearInterval(poll); return; }
-      if (st.available) load();
+      load();  // also notices the view moving to or from the side window
     }, 2000);
   }
 
