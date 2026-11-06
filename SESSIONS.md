@@ -2,6 +2,60 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-11-06 (8:25 AM - 2:35 PM local)
+
+**Summary:** WORK tabs can now sit side by side (Work | Work), Okta is in Websites with app tabs and ask-once sites, a new ScreenConnect tab docks remote sessions, and Stay Available turns itself off at 5 PM. Both of today's commits load at the next restart. The 11-04 session never closed, so its commits are listed here too.
+
+### Done
+- `50c3db2` **Work | Work:** any two WORK tabs side by side, replacing the Pulse | Code focus layout. Pick them from Tools ▾ > Pick two WORK tabs… or with Ctrl+K "Side by side: …"; ⇄ Swap sides flips them. VS Code never moves (the panes swap with CSS order instead). Remembered in `cc.layout.focus` and `cc.layout.pair`.
+- `50c3db2` **Okta in Websites:** `https://sonance.okta.com/` is added once as a site (`SEED_SITES`), and FastPass works in it.
+  - Clicking an app opens it as a tab in the strip, up to 12, memory only.
+  - A page on a site that isn't covered asks first: Allow / Open in browser / Not now (kv `websites:allowed`, the list under **Allowed sites**). On shared hosting (`SHARED_DOMAINS`) Allow covers the exact name only.
+  - ScreenConnect's `sc-…:` Join link goes to the installed client, on a click only.
+- `50c3db2` **ScreenConnect tab** (`screenconnectdock.py`, a floating dock like docked Outlook):
+  - A session Joe joins docks by itself and the tab opens, only while CC is on screen; sessions already open are left alone.
+  - Dock running session / Undock; several sessions at once.
+  - Lock, Restart and Quit put sessions back, and the next start docks them again (kv `screenconnect:dock`).
+  - The dock guard now holds every floating dock's windows (`dockguard.set_entries`, per owner).
+  - The signer must be ConnectWise, LLC (`verify_exe(org=)`).
+  - Tested with stand-in windows: 34 checks, plus a `taskkill /F` kill test.
+- `7a2cb8e` **Stay Available, work hours only** (`keeplive.follow_hours`):
+  - At `offhours.work_end` (17:00 weekdays) the switch turns off once. Turning it back on that evening is left alone.
+  - At the next work start it turns back on, only if the rule turned it off and the switch wasn't touched since.
+  - The Teams tab re-reads the switch each minute and shows a note when it flips.
+  - Opt-out: `teams.keep_available_after_hours: true`. State: kv `teams:keep_available_hours`.
+  - Tested with 15 fake-clock checks.
+- **From 11-04, never logged** (that session didn't close; already loaded, since the live app started after them):
+  - Side window for a second screen: pins, LEFT | RIGHT with Flip, Teams as the whole app, classic Outlook docked as a floating dock with the dock guard (`d8f7b1c` … `c44eed3`).
+  - Join meetings in CC (`f1ebde6`).
+  - One mail alert per conversation (`d234545`).
+  - Mail conversations and bundled automated mail (`3f20bc7`, `1dc9150`).
+  - Tools ▾ menu and a one-row header (`fce1c24`, `3d714a5`).
+  - The layout audit tool (`eab20c9`).
+  - VS Code's Pylance and the file watcher kept out of `data/` (`a1b02a2`).
+
+### Decisions
+- **ScreenConnect:** Joe chose session windows only. The web page stays in Edge (or a Websites tab); the client's session windows dock.
+- **Side by side:** Joe chose any two WORK tabs, over fixed pairs.
+- **Okta's other sites:** Joe chose ask once per site and remember, over allowing everything Okta links to or opening it all in the browser.
+- **Stay Available after 5 PM:** turns off if CC is left open. It goes back on at the next work start, which I added so the switch isn't left off for good; Joe didn't ask for that part.
+
+### Settings changed (config.yaml, not in git)
+- None.
+
+### Waiting on a restart
+- `50c3db2` and `7a2cb8e`: the live CC started at 8:53 AM, before both. The tree is clean and safe to restart on.
+- A restart after 5 PM turns Stay Available off at once (it's outside work hours); it comes back on Monday at 8 AM.
+
+### Waiting on Joe
+- [ ] After the restart: open Okta in Websites, click an app tile, answer an Allow prompt; try Tools ▾ > Pick two WORK tabs (e.g. Websites | ScreenConnect).
+- [ ] Join a real ScreenConnect session with CC on screen and check it docks. To bring in a session already open before the restart, use **Dock running session**. Watch whether the client's own full-screen or resize fights the dock.
+- [ ] Carried over from 11-03: Spam blocks > Copy the list into Outlook's Blocked Senders (optional); Unflag + Undo and Carry over on real data; OpenAI billing for Voice; the Calendar grid with real meetings.
+
+### Known issues
+- Neither Okta nor ScreenConnect has been tried for real yet. While a session has the keyboard, every key goes to the remote PC, Ctrl+K included (click CC's header for CC's shortcuts).
+- The preview harness (`tools/preview/mock.js`) still lacks newer endpoints (test tooling only).
+
 ## 2026-11-03 (8:25 AM - 7:30 PM local)
 
 **Summary:** The spam rule failure was found and fixed, then seven quality-of-life features landed in one push: Show pictures, a ? shortcut sheet, Undo, the Health light, Ctrl+K searching everything, Back from snooze, and End-of-day carry over. Joe restarted at 10:01 AM, after the last commit, so all of it is loaded.
