@@ -60,8 +60,19 @@
   const keepBox = el("input", { type: "checkbox" });
   const keepSwitch = el("label", { class: "tv-keep", title: "Teams won't go Away while Command Center is open and Windows is unlocked. Also holds off any screen saver, sleep or inactivity lock timer set on this PC." },
     keepBox, "Stay Available");
-  const showKeep = () => { keepBox.checked = !!keep?.on; };
-  const loadKeep = () => api("/api/teams/keep-available").then((k) => { keep = k; showKeep(); renderBar(); }).catch(() => {});
+  const keepTitle = "Teams won't go Away while Command Center is open and Windows is unlocked. Also holds off any screen saver, sleep or inactivity lock timer set on this PC.";
+  const showKeep = () => {
+    keepBox.checked = !!keep?.on;
+    keepSwitch.title = keepTitle + (keep?.hours_only ? ` Turns itself off at ${keep.work_end} (end of work hours) and back on when they start.` : "");
+  };
+  // The server turns it off when work hours end (keeplive.follow_hours): re-read it each minute, and say so when it flips.
+  const loadKeep = () => api("/api/teams/keep-available").then((k) => {
+    const was = keep;
+    keep = k;
+    if (was && was.on !== k.on) toast(k.on ? "Stay Available back on: work hours started" : "Stay Available off: work hours are over, Teams can go Away");
+    showKeep(); renderBar();
+  }).catch(() => {});
+  setInterval(() => { if (!document.hidden) loadKeep(); }, 60000);
   const setKeep = (on) => guarded(async () => {
     keep = await api("/api/teams/keep-available", { on });
     toast(on ? "Stay Available on: Teams won't go Away while Command Center is open and Windows is unlocked"
