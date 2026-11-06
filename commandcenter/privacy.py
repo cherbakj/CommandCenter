@@ -266,6 +266,18 @@ def inventory() -> list[dict]:
         "nothing from inside the windows.", dpapi,
         "Until the next start docks them again; Undock forgets a window")
 
+    sc = _try(lambda: db.kv_get("screenconnect:dock"), None) or []
+    sc_auto = _try(lambda: db.kv_get("screenconnect:autodock"), None) is not False
+    add("screenconnect", "ScreenConnect sessions (docked windows)", "Work",
+        "Which ScreenConnect session windows are docked in the ScreenConnect tab, so a restart docks them again, and "
+        "the \"Dock new sessions here\" switch. Nothing from the sessions themselves: their windows stay the "
+        "ScreenConnect client's own.",
+        "Each docked window's handle, process id and its own window styles and placement, to put it back as it was "
+        "(kv screenconnect:dock, and data/dockguard-<port>.json for the dock guard, emptied when the sessions are let "
+        "go of); the switch (kv screenconnect:autodock). Session names and command lines are never stored or logged.",
+        dpapi, "Until changed; Undock or the session closing removes a window", connected=None,
+        state=f"{len(sc) if isinstance(sc, list) else 0} recorded · new sessions {'docked here' if sc_auto else 'left alone'}")
+
     mons = _try(web.monitors, []) or []
     if mons:
         add("websites", "Websites", "Work", "The pages listed under websites: in config.yaml, read with a background browser.",
@@ -314,6 +326,12 @@ def inventory() -> list[dict]:
         f"({websites.KEYRING_SERVICE}), never in the database, config or logs.",
         f"List: {dpapi}; logins: Windows Credential Manager", "Until you remove the site", connected=None,
         state=f"{n_sites} site(s)")
+    n_allowed = _try(lambda: len(websites.allowed_list()), 0)
+    add("websites_allowed", "Websites tab: other sites you allowed", "Work",
+        "Domains you allowed to show in the Websites tab when a site or one of its tabs went there (an Okta app, a "
+        "sign-in page). The tabs themselves are kept in memory only and close when Command Center does.",
+        "Domain names only (kv websites:allowed), no pages or addresses.", dpapi,
+        "Until you remove it (Websites > Allowed sites)", connected=None, state=f"{n_allowed} site(s)")
 
     n_alerts = _table_count("alerts")
     add("alerts", "Alerts and log", "Work",

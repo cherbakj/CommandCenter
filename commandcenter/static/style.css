@@ -258,6 +258,17 @@ main.ws-single .pane:not(.shown), main.ws-single .splitter { display: none; }
 main.ws-single .pane-body { padding: 1.1rem 1.5rem 1.5rem; }
 main.ws-split .pane-comms .pane-body { padding-right: .6rem; }
 main.ws-split .pane-work .pane-body { padding-left: .6rem; }
+/* Work | Work with the sides swapped (app.js swapSides): the panes change places on screen only, nothing moves in the
+   page, so no view reloads. The splitter's --left is then the WORK pane's width. */
+main.ws-split.ws-swap .pane-work { order: 1; }
+main.ws-split.ws-swap .splitter { order: 2; }
+main.ws-split.ws-swap .pane-comms { order: 3; }
+main.ws-split.ws-swap .pane-comms .pane-body { padding-right: 1.25rem; padding-left: .6rem; }
+main.ws-split.ws-swap .pane-work .pane-body { padding-left: 1.25rem; padding-right: .6rem; }
+/* Work | Work's picker (workPairDialog) */
+.ww-pick { display: flex; align-items: flex-end; gap: .6rem; margin: .6rem 0; }
+.ww-pick label { flex: 1; display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
+.ww-pick select { width: 100%; }
 .tab { display: none; } .tab.active { display: block; animation: boot .2s var(--ease); }
 /* Tabs that fill the pane height (embedded terminal, VS Code iframe). */
 .pane-body > .tab.fill.active, .pane-body > #tab-vscode.active { display: flex; flex-direction: column; height: 100%; min-height: 24rem; }

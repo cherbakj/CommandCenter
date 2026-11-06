@@ -73,15 +73,41 @@ def ssms_path() -> Path:
 _sig_cache: dict[tuple, tuple[bool, str]] = {}
 
 
-def verify_exe(path: Path, what: str = "SSMS") -> tuple[bool, str]:
-    """(ok, why): the file exists and Windows says its Authenticode signature is valid and from Microsoft.
-    Inline PowerShell (no .ps1 file), the path passed in an environment variable, no console window.
-    `what` names the app in messages (SSMS, VS Code: codedock.py uses this too)."""
+def dn_field(subject: str, name: str) -> str:
+    """One field of a certificate subject, e.g. O from 'CN="ConnectWise, LLC", O="ConnectWise, LLC", C=US': a comma
+    inside quotes doesn't end the field, and the quotes come off. The first match only, "" if there's none."""
+    parts, cur, quoted = [], [], False
+    for ch in subject:
+        if ch == '"':
+            quoted = not quoted
+        if ch == "," and not quoted:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    for part in parts:
+        part = part.strip()
+        if part.startswith(f"{name}="):
+            value = part[len(name) + 1:].strip()
+            if len(value) >= 2 and value[0] == value[-1] == '"':
+                value = value[1:-1].replace('""', '"')
+            return value
+    return ""
+
+
+def verify_exe(path: Path, what: str = "SSMS", org: str = "Microsoft Corporation",
+               signer: str = "Microsoft") -> tuple[bool, str]:
+    """(ok, why): the file exists and Windows says its Authenticode signature is valid and from `org` (the signing
+    certificate's O=, exactly; Microsoft Corporation by default). Inline PowerShell (no .ps1 file), the path passed in
+    an environment variable, no console window.
+    `what` names the app in messages (SSMS, VS Code: codedock.py uses this too), `signer` the publisher
+    (screenconnectdock.py: org "ConnectWise, LLC")."""
     try:
         st = path.stat()
     except OSError:
         return False, f"{what} isn't installed at {path}"
-    key = (os.path.normcase(str(path)), st.st_size, st.st_mtime_ns)
+    key = (os.path.normcase(str(path)), st.st_size, st.st_mtime_ns, org)
     if key in _sig_cache:
         return _sig_cache[key]
     ps = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
@@ -95,10 +121,10 @@ def verify_exe(path: Path, what: str = "SSMS") -> tuple[bool, str]:
     except (OSError, ValueError, subprocess.SubprocessError) as e:
         return False, f"couldn't check {what}'s signature ({type(e).__name__})"
     subject, status = r.get("Subject") or "", r.get("Status") or "no signature"
-    org = next((part.strip()[2:] for part in subject.split(",") if part.strip().startswith("O=")), "")
-    ok = status == "Valid" and org == "Microsoft Corporation"
-    result = (True, "signed by Microsoft") if ok else (False, f"{path.name} isn't validly signed by Microsoft "
-                                                              f"({status}{', signed by ' + org if org else ''})")
+    found = dn_field(subject, "O")
+    ok = status == "Valid" and found == org
+    result = (True, f"signed by {signer}") if ok else (False, f"{path.name} isn't validly signed by {signer} "
+                                                              f"({status}{', signed by ' + found if found else ''})")
     _sig_cache[key] = result
     if not ok:
         log.warning("%s dock: %s", what, result[1])

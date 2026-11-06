@@ -66,6 +66,24 @@
 /* Websites tab (websites.js) uses the same bar and stage. */
 .ws-bar { flex-wrap: wrap; }
 .ws-bar .ws-pick { width: auto; max-width: 14rem; margin: 0; padding: .2rem .5rem; }
+/* The strip of sites and the tabs their links opened (Okta apps), like a browser's */
+.ws-tabs { display: flex; align-items: flex-end; gap: .25rem; margin-bottom: .45rem; overflow-x: auto; scrollbar-width: thin; min-width: 0; }
+.ws-tab { display: flex; align-items: center; flex: 0 1 auto; min-width: 4.5rem; max-width: 14rem; border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: .35rem .35rem 0 0; background: rgb(var(--accent-rgb) / .03); }
+.ws-tab.on { border-bottom-color: var(--accent); background: rgb(var(--accent-rgb) / .1); }
+.ws-tab-go { flex: 1; min-width: 0; border: 0; background: none; box-shadow: none; padding: .28rem .6rem; font-size: .82rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; color: var(--muted); }
+.ws-tab.on .ws-tab-go { color: var(--text); font-weight: 600; }
+.ws-x { flex: none; border: 0; background: none; box-shadow: none; padding: 0 .45rem; font-size: 1rem; line-height: 1; color: var(--muted); }
+.ws-x:hover, .ws-x:focus-visible { color: var(--red); }
+.ws-tabs .ws-add { flex: none; margin-left: .2rem; align-self: center; }
+/* "This page goes to <domain>. Show it here?" */
+.ws-ask { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin-bottom: .5rem; padding: .45rem .7rem;
+  border: 1px solid var(--amber); border-radius: .35rem; background: rgb(255 180 60 / .08); font-size: .88rem; }
+.ws-ask[hidden] { display: none; }
+.ws-ask-text { flex: 1 1 16rem; min-width: 0; overflow-wrap: anywhere; }
+.ws-allowed { list-style: none; margin: .5rem 0 1rem; padding: 0; max-height: 50vh; overflow-y: auto; }
+.ws-allowed li { display: flex; align-items: center; justify-content: space-between; gap: .6rem; padding: .3rem 0; border-bottom: 1px solid var(--line); }
 .ws-help { margin: .25rem 0 .6rem; font-size: .82rem; }
 .ws-check { display: flex; align-items: center; gap: .4rem; margin: .2rem 0 .6rem; font-size: .9rem; }
 .ws-check input { width: auto; margin: 0; }

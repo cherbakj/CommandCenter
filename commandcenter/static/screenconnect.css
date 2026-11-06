@@ -1,0 +1,6 @@
+/* ScreenConnect tab (static/screenconnect.js): the bar on top of ssms.css's .ss-bar / .ss-stage. In the desktop app
+   the docked session window covers .ss-hole. */
+.sc-bar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+.sc-bar > .sc-win { flex: 0 1 auto; min-width: 3rem; max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-auto { display: flex; align-items: center; gap: .35rem; font: 600 .8rem var(--font-ui); white-space: nowrap; cursor: pointer; }
+.sc-auto input { width: auto; margin: 0; }

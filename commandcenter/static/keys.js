@@ -62,7 +62,7 @@
         row(k("Esc"), "Close"),
       ]],
       ["Docked and site views", [
-        row(el("span", { class: "ks-note" }, "VS Code, SSMS"), "After a click inside, keys are theirs. Click Command Center's header to use these again. In SSMS, Ctrl Shift P still toggles Privacy mode."),
+        row(el("span", { class: "ks-note" }, "VS Code, SSMS, ScreenConnect"), "After a click inside, keys are theirs (a ScreenConnect session sends them to the remote PC). Click Command Center's header to use these again. In SSMS, Ctrl Shift P still toggles Privacy mode."),
         row(el("span", { class: "ks-note" }, "Pulse, Teams, Websites"), "Ctrl K, Ctrl Shift P and F11 work inside them."),
       ]],
     ];

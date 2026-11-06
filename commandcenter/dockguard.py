@@ -1,4 +1,4 @@
-"""Dock guard: gives a "floating"-docked window (outlookdock.py) its frame back if Command Center ends without letting go
+"""Dock guard: gives a "floating"-docked window (outlookdock.py, screenconnectdock.py) its frame back if Command Center ends without letting go
 of it (Task Manager, a crash, Force quit's kill). Joe's call 2026-11-04.
 
 Why it's needed: a floating-docked window is a normal top-level window of its own app, only stripped of its frame and
@@ -8,7 +8,8 @@ process outside Command Center's process tree, waits for Command Center to end a
 in the state file back as it was (styles, placement, no clipping region), as Undock does.
 
 State file: data/dockguard-<port>.json (private folder), written by Command Center (write_state) on every dock and
-release: {"cc_pid": <pid>, "windows": [{"hwnd", "pid", "image", "style", "exstyle", "placement"}]}. The guard acts only
+release: {"cc_pid": <pid>, "windows": [{"hwnd", "pid", "image", "style", "exstyle", "placement"}]}, every dock's
+windows merged into the one list (set_entries: each dock sets its own by owner name). The guard acts only
 on a file still naming its own Command Center pid (a newer copy after a restart has its own guard), and only on a window
 that still belongs to that process id with that program name. Standard library only, so it runs with `python -I`.
 
@@ -19,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from ctypes import wintypes
 
@@ -32,6 +34,40 @@ def write_state(path, cc_pid: int, windows: list):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"cc_pid": cc_pid, "windows": windows}, f)
     os.replace(tmp, path)
+
+
+# ---- Command Center side: one list per floating dock, merged into the one state file -------------------------
+# Several docks float windows (outlookdock.py: Outlook; screenconnectdock.py: ScreenConnect sessions). Each sets its
+# own entries by owner name and the file always holds every owner's, so one dock letting go never drops another's
+# windows from the guard. One guard process per Command Center process, started with the first entry.
+_owners: dict = {}         # owner -> [entry, ...]
+_launched: set = set()     # state files whose guard this process has started
+_reg_lock = threading.Lock()
+
+
+def set_entries(path, cc_pid: int, owner: str, windows: list, start=None):
+    """Replaces `owner`'s entries ([] or None: none) and writes the merged list. Starts the guard the first time
+    there's something to guard (start: the function that does it, launch by default; tests pass their own)."""
+    with _reg_lock:
+        if windows:
+            _owners[owner] = [dict(w) for w in windows]
+        else:
+            _owners.pop(owner, None)
+        merged = [w for name in sorted(_owners) for w in _owners[name]]
+        write_state(path, cc_pid, merged)
+        key = os.path.normcase(os.path.abspath(str(path)))
+        if merged and key not in _launched:
+            _launched.add(key)
+            (start or launch)(path, cc_pid)
+        return merged
+
+
+def entries(owner: str | None = None) -> list:
+    """What's registered now (one owner's, or all of them merged)."""
+    with _reg_lock:
+        if owner is not None:
+            return [dict(w) for w in _owners.get(owner, [])]
+        return [dict(w) for name in sorted(_owners) for w in _owners[name]]
 
 
 def launch(path, cc_pid: int):

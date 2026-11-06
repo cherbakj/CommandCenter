@@ -34,6 +34,7 @@ from . import alerts, config, db, security, starterror
 from .siteview import PulseView, TeamsView, _no_autofill
 from .codedock import CodeDock
 from .outlookdock import OutlookDock
+from .screenconnectdock import ScreenConnectDock
 from .ssmsdock import SsmsDock
 from .websites import WebsiteView
 
@@ -430,8 +431,9 @@ class DesktopApp:
         self.ssms.hotkey_factory = GlobalHotkey
         self.code = CodeDock(self)    # desktop VS Code docked in the VS Code tab
         self.outlook = OutlookDock(self)  # classic Outlook docked in the side window's Outlook tab
+        self.screenconnect = ScreenConnectDock(self)  # ScreenConnect session windows docked in the ScreenConnect tab
         self.overlays = {"pulse": self.pulse, "teams": self.teams, "websites": self.websites, "ssms": self.ssms, "code": self.code,
-                         "outlook": self.outlook}
+                         "outlook": self.outlook, "screenconnect": self.screenconnect}
         self.side = None  # the side window (open_side), for a second screen
         self._side_lock = threading.Lock()
         self._screens = self._screen_count()  # how many screens now (docking: _screens_changed)
@@ -808,6 +810,7 @@ class DesktopApp:
         for view in self.overlays.values():
             view.forget()  # no site view or SSMS stays over the lock screen
         self.outlook.release_keep("Lock", minimize=True)  # docked again after unlock, with the side window
+        self.screenconnect.release_keep("Lock", minimize=True)  # ScreenConnect sessions too, docked again after unlock
         threading.Thread(target=self.close_side, args=(True, "Lock"), daemon=True).start()  # back once unlocked (the dashboard asks for it)
         if self.window:
             self.lock_showing, self.gate_showing = True, False
@@ -1002,6 +1005,7 @@ class DesktopApp:
         if self.tray:
             self.tray.stop()
         self.outlook.release_keep("restart" if self.restarting else "quit", minimize=self.restarting)
+        self.screenconnect.release_keep("restart" if self.restarting else "quit", minimize=self.restarting)
         self.close_side(keep_open=True, why="quit")  # comes back with the next start if it was open
         if self.window:
             self.window.destroy()
@@ -1073,6 +1077,7 @@ class DesktopApp:
             self.ssms.install_hooks()
             self.code.install_hooks()
             self.outlook.install_hooks()
+            self.screenconnect.install_hooks()  # (also starts its watcher for new sessions)
             try:  # the taskbar moved or resized, a monitor came or went (docking the laptop): fit full screen again
                 from Microsoft.Win32 import SystemEvents, UserPreferenceChangedEventHandler
                 from System import EventHandler

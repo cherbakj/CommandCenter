@@ -8,13 +8,14 @@ without losing Joe's docked VS Code or SSMS windows.
 2. Asks it to quit the normal way (POST /api/app/quit with the handoff secret). A copy whose server still answers then
    puts its docked windows back itself and records them for the next start. Up to GRACE seconds.
 3. Still running: puts back, from outside, every docked window (the top window of an installed, signed Code.exe,
-   Ssms.exe of this user whose parent is one of Command Center's windows; docked Outlook floats outside it and the
-   dock guard, dockguard.py, gives it its frame back once Command Center has ended) as a normal top-level window: the one showing
-   maximized, the others minimized. Each call is bounded (a hung parent can't hold this up), and if one still can't be
-   put back the force quit goes ahead (that window would then close, as with Task Manager's End task).
+   Ssms.exe of this user whose parent is one of Command Center's windows; docked Outlook and ScreenConnect sessions
+   float outside it and the dock guard, dockguard.py, gives them their frame back once Command Center has ended) as a
+   normal top-level window: the one showing maximized, the others minimized. Each call is bounded (a hung parent can't
+   hold this up), and if one still can't be put back the force quit goes ahead (that window would then close, as with
+   Task Manager's End task).
 4. Ends the process, then its leftover helpers that are ours alone (image under the app folder, or a command line
-   naming the data folder: the Teams reader's Edge, the web VS Code server). Code.exe, SSMS and Windows Terminal are
-   never touched.
+   naming the data folder: the Teams reader's Edge, the web VS Code server). Code.exe, SSMS, Outlook, the
+   ScreenConnect client and Windows Terminal are never touched.
 
 The docked VS Code windows are already recorded (kv vscode:dock, written on every dock) and SSMS too (kv ssms:dock), so
 the next start docks them again. Windows' own "End task" in the taskbar menu, or Task Manager, kills outright: docked
@@ -46,7 +47,8 @@ TASK_TITLE = "Force quit Command Center"
 SYNCHRONIZE, PROCESS_TERMINATE = 0x00100000, 0x0001
 OVERLAPPED = (win32con.WS_CAPTION | win32con.WS_THICKFRAME | win32con.WS_SYSMENU | win32con.WS_MINIMIZEBOX
               | win32con.WS_MAXIMIZEBOX)
-KEEP = {"code.exe", "ssms.exe", "outlook.exe", "windowsterminal.exe", "wt.exe", "openconsole.exe"}
+KEEP = {"code.exe", "ssms.exe", "outlook.exe", "screenconnect.windowsclient.exe", "windowsterminal.exe", "wt.exe",
+        "openconsole.exe"}
 
 
 # ---- the jump list (registered by the desktop app) ----------------------------------------------

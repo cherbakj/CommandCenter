@@ -112,7 +112,6 @@ class OutlookDock(NativeOverlay):
         self._hooked = set()      # forms whose move / activate events are hooked
         self._dock_lock = threading.RLock()
         self._hooks = False
-        self._guard_started = False
 
     # ---- from the server thread ----------------------------------------------------------
     def status(self) -> dict:
@@ -160,11 +159,8 @@ class OutlookDock(NativeOverlay):
     # ---- the guard's list (any thread) --------------------------------------------------------
     def _guard(self, entry):
         """Tells the dock guard what to put back if Command Center ends now (entry None: nothing)."""
-        try:
-            dockguard.write_state(_guard_file(), os.getpid(), [entry] if entry else [])
-            if entry and not self._guard_started:
-                self._guard_started = True
-                dockguard.launch(_guard_file(), os.getpid())
+        try:  # Outlook's entry beside the other docks' (dockguard.set_entries merges them; starts the guard once)
+            dockguard.set_entries(_guard_file(), os.getpid(), "outlook", [entry] if entry else [])
         except Exception as e:
             log.warning("Outlook dock: dock guard not updated (%s)", type(e).__name__)
 

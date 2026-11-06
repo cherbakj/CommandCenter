@@ -206,18 +206,21 @@ const splitMin = () => (SIDE ? 1100 : SPLIT_MIN_WIDTH);
 const SPLIT_DEFAULT = 0.44;
 const PANE_OF = {
   today: "comms", alerts: "comms", mail: "comms", calendar: "comms", teams: "comms", "pulse-feedback": "comms", personal: "comms",
-  vscode: "work", toolkit: "work", sql: "work", pulse: "work", websites: "work",
+  vscode: "work", toolkit: "work", sql: "work", pulse: "work", websites: "work", screenconnect: "work", voice: "work",
 };
-const TAB_ORDER = { comms: ["today", "alerts", "mail", "calendar", "teams", "pulse-feedback", "personal"], work: ["vscode", "toolkit", "sql", "pulse", "websites"] };
+const TAB_ORDER = { comms: ["today", "alerts", "mail", "calendar", "teams", "pulse-feedback", "personal"], work: ["vscode", "toolkit", "sql", "pulse", "websites", "screenconnect", "voice"] };
 const TAB_ID = /^[a-z0-9_-]{1,40}$/i;
 // "projects" was the terminal Claude tab; Claude now lives in the VS Code tab.
 const pickTab = (v, d) => (v === "projects" ? "vscode" : typeof v === "string" && TAB_ID.test(v) ? v : d);
 
-// Focus layout: the Pulse site on the left, VS Code on the right; the header (nav, badges, status, clock) stays as
-// it is. While it's on, the Pulse tab and its nav button move to COMMS (VS Code stays put: moving its iframe would
-// reload it), so the other tabs still work: COMMS tabs replace Pulse on the left, WORK tabs replace VS Code.
-// It needs two panes; in a narrow window it falls back to one pane at a time, Pulse under COMMS.
-const FOCUS_LEFT = "pulse", FOCUS_RIGHT = "vscode";
+// Work | Work layout (was "focus layout", Pulse | VS Code only; any two WORK tabs since 2026-11-06, Joe's call): two
+// WORK tabs side by side, Pulse | VS Code by default; the header (nav, badges, status, clock) stays as it is. While
+// it's on, the left tab (`moved`) and its nav button move to COMMS, so the other tabs still work: COMMS tabs replace
+// it on the left, WORK tabs replace the right one. VS Code never moves (moving its iframe would reload it in serve
+// mode): with VS Code picked for the left, the other tab moves and the panes swap places on screen (`swap`, CSS
+// order only). ⇄ Swap sides does the same for any pair. It needs two panes; in a narrow window it falls back to one
+// pane at a time, the moved tab under COMMS. Stored in localStorage cc.layout.focus {on, prev, moved, swap}.
+const FOCUS_LEFT = "pulse", FOCUS_RIGHT = "vscode", PINNED_TAB = "vscode";
 const FOCUS_SPLIT_DEFAULT = 0.5;
 
 const layout = (() => {
@@ -225,12 +228,18 @@ const layout = (() => {
   try { saved = JSON.parse(store.get("cc.layout.tabs") || "{}") || {}; } catch { saved = {}; }
   try { focus = JSON.parse(store.get("cc.layout.focus") || "null"); } catch { focus = null; }
   const prev = focus && focus.on === true && focus.prev && typeof focus.prev === "object" ? focus.prev : null;
+  let pair = {};
+  try { pair = JSON.parse(store.get("cc.layout.pair") || "{}") || {}; } catch { pair = {}; }
   return {
     split: false,
     active: { comms: pickTab(saved.comms, "today"), work: pickTab(saved.work, "vscode") },
     shown: saved.shown === "work" ? "work" : "comms",   // the pane shown in single mode
-    // {prev: {comms, work, shown}}: on, with the tabs to go back to when it's turned off
-    focus: focus && focus.on === true ? { prev: { comms: pickTab(prev?.comms, "today"), work: pickTab(prev?.work, "vscode"), shown: prev?.shown === "work" ? "work" : "comms" } } : null,
+    // {prev: {comms, work, shown}, moved, swap}: on, with the tabs to go back to when it's turned off
+    focus: focus && focus.on === true ? {
+      prev: { comms: pickTab(prev?.comms, "today"), work: pickTab(prev?.work, "vscode"), shown: prev?.shown === "work" ? "work" : "comms" },
+      moved: pickTab(focus.moved, FOCUS_LEFT), swap: focus.swap === true } : null,
+    // the last pair picked, for the next time it's turned on: {left, right}
+    pair: { left: pickTab(pair.left, FOCUS_LEFT), right: pickTab(pair.right, FOCUS_RIGHT) },
     visible: new Set(),
     ready: false,
   };
@@ -244,9 +253,24 @@ function saveLayoutTabs() {
   store.set("cc.layout.tabs", JSON.stringify({ comms: layout.active.comms, work: layout.active.work, shown: layout.shown }));
 }
 
-// Focus layout is available once both its tabs are registered (pulseview.js, vscode.js).
-const focusReady = () => !SIDE && !!($(`#tab-${FOCUS_LEFT}`) && $(`#tab-${FOCUS_RIGHT}`) && navButton(FOCUS_LEFT));
-const focusOn = () => !!layout.focus && focusReady();
+// A tab's own group (where it goes back to): known ids by PANE_OF, module tabs by what they registered with.
+const homeOf = (id) => PANE_OF[id] || $(`#tab-${id}`)?.dataset.home || "work";
+const labelOf = (id) => navButton(id)?.dataset.label || id;
+// Every WORK tab there is, in WORK order (the moved one included, wherever it is now).
+function workTabs() {
+  const ids = [...document.querySelectorAll("#workspace .pane-body > section.tab")].map((s) => s.id.slice(4))
+    .filter((id) => homeOf(id) === "work" && navButton(id) && tabAllowed(id));
+  const rank = (id) => { const i = TAB_ORDER.work.indexOf(id); return i < 0 ? 99 : i; };
+  return ids.sort((a, b) => rank(a) - rank(b));
+}
+// Work | Work is there once two WORK tabs are registered; the moved tab must still exist.
+const focusReady = () => !SIDE && workTabs().length >= 2;
+const focusOn = () => !!layout.focus && focusReady() && workTabs().includes(layout.focus.moved);
+// The tab shown on the left / right just now, as Joe sees them (COMMS pane is the left one unless swapped).
+function focusSides() {
+  const swap = !!layout.focus?.swap;
+  return swap ? { left: layout.active.work, right: layout.active.comms } : { left: layout.active.comms, right: layout.active.work };
+}
 
 // Split / Single: not in a narrow window, nor in the focus layout (always two panes), nor in a side window pinned to
 // one group only.
@@ -256,47 +280,114 @@ function wantSplit() {
   return window.innerWidth >= splitMin() && (focusOn() || store.get("cc.layout.mode") !== "single");
 }
 
-// Moves the Pulse tab (section + nav button) into COMMS for the focus layout, or back to its place in WORK.
+// Moves the Work | Work layout's moved tab (section + nav button) into COMMS, and every other WORK tab back to its
+// place in WORK. (Not in the side window: placeSideTabs places its tabs.)
 function placeFocusTab() {
-  const sec = $(`#tab-${FOCUS_LEFT}`), btn = navButton(FOCUS_LEFT);
-  if (!sec || !btn) return;
-  const pane = focusOn() ? "comms" : "work";
-  const body = $(`#pane-${pane}-body`), nav = $(`#nav-${pane}`);
-  if (sec.parentElement !== body) body.append(sec);
-  if (btn.parentElement === nav) return;
-  const later = TAB_ORDER[pane].slice(TAB_ORDER[pane].indexOf(FOCUS_LEFT) + 1);
-  const ref = pane === "work" ? [...nav.querySelectorAll("button[data-tab]")].find((b) => later.includes(b.dataset.tab)) : null;
-  ref ? nav.insertBefore(btn, ref) : nav.append(btn);
+  if (SIDE) return;
+  const moved = focusOn() ? layout.focus.moved : null;
+  for (const id of workTabs()) {
+    const sec = $(`#tab-${id}`), btn = navButton(id);
+    const pane = id === moved ? "comms" : "work";
+    const body = $(`#pane-${pane}-body`), nav = $(`#nav-${pane}`);
+    if (sec.parentElement !== body) body.append(sec);
+    if (btn.parentElement === nav) continue;
+    const at = TAB_ORDER.work.indexOf(id);
+    const later = at < 0 ? [] : TAB_ORDER.work.slice(at + 1);
+    const ref = pane === "work" ? [...nav.querySelectorAll("button[data-tab]")].find((b) => later.includes(b.dataset.tab)) : null;
+    ref ? nav.insertBefore(btn, ref) : nav.append(btn);
+  }
 }
 
-function setFocusLayout(on) {
-  if (on === !!layout.focus || (on && !focusReady())) return;
+const saveFocus = () => store.set("cc.layout.focus", layout.focus
+  ? JSON.stringify({ on: true, prev: layout.focus.prev, moved: layout.focus.moved, swap: !!layout.focus.swap }) : null);
+function savePair(left, right) {
+  layout.pair = { left, right };
+  store.set("cc.layout.pair", JSON.stringify(layout.pair));
+}
+
+// On with a pair ({left, right}: WORK tab ids; the last pair by default), or off. While on, a new pair just
+// re-arranges the two sides.
+function setFocusLayout(on, pair = layout.pair) {
+  if (on && !focusReady()) return;
+  if (!on && !layout.focus) return;
   if (on) {
-    layout.focus = { prev: { comms: layout.active.comms, work: layout.active.work, shown: layout.shown } };
-    Object.assign(layout.active, { comms: FOCUS_LEFT, work: FOCUS_RIGHT });
+    const tabs = workTabs();
+    let { left, right } = pair || {};
+    if (!tabs.includes(left)) left = tabs.includes(FOCUS_LEFT) ? FOCUS_LEFT : tabs[0];
+    if (!tabs.includes(right) || right === left) right = tabs.includes(FOCUS_RIGHT) && left !== FOCUS_RIGHT ? FOCUS_RIGHT : tabs.find((t) => t !== left);
+    const swap = left === PINNED_TAB;  // VS Code stays in WORK: the other tab moves, and the panes swap places
+    const moved = swap ? right : left;
+    if (!layout.focus) layout.focus = { prev: { comms: layout.active.comms, work: layout.active.work, shown: layout.shown } };
+    Object.assign(layout.focus, { moved, swap });
+    Object.assign(layout.active, { comms: moved, work: swap ? left : right });
     layout.shown = "comms";
+    savePair(left, right);
   } else {
     const prev = layout.focus.prev;
     layout.focus = null;
-    // A pane still showing its focus tab goes back to the tab it had before; one Joe has since switched keeps it.
-    if (layout.active.comms === FOCUS_LEFT) layout.active.comms = prev.comms === FOCUS_LEFT ? "today" : prev.comms;
-    if (layout.active.work === FOCUS_RIGHT) layout.active.work = prev.work;
+    // The left goes back to the COMMS tab it had before (a WORK tab there goes home); the right keeps what it shows.
+    if (homeOf(layout.active.comms) !== "comms") layout.active.comms = homeOf(prev.comms) === "comms" ? prev.comms : "today";
     layout.shown = prev.shown;
   }
-  store.set("cc.layout.focus", layout.focus ? JSON.stringify({ on: true, prev: layout.focus.prev }) : null);
+  saveFocus();
   saveLayoutTabs();
   splitFrac = savedSplit();
   runLoaders(applyLayout());
+}
+
+// ⇄ Swap sides: the two panes change places on screen (CSS order only: nothing reloads).
+function swapSides() {
+  if (!focusOn()) return;
+  layout.focus.swap = !layout.focus.swap;
+  saveFocus();
+  splitFrac = 1 - splitFrac;  // each tab keeps its width
+  store.set(splitKey(), splitFrac.toFixed(4));
+  runLoaders(applyLayout());
+}
+
+// Pick the two tabs (Tools ▾, Ctrl+K).
+function workPairDialog() {
+  const tabs = workTabs();
+  if (tabs.length < 2) return;
+  const cur = focusOn() ? focusSides() : layout.pair;
+  const pick = (v, label) => el("select", { "aria-label": label },
+    tabs.map((id) => el("option", { value: id, selected: id === v }, labelOf(id))));
+  const left = pick(tabs.includes(cur.left) ? cur.left : tabs[0], "Left tab");
+  const right = pick(tabs.includes(cur.right) && cur.right !== left.value ? cur.right : tabs.find((t) => t !== left.value), "Right tab");
+  const err = el("div", { class: "err", role: "alert" });
+  const narrow = window.innerWidth < SPLIT_MIN_WIDTH;
+  const go = () => {
+    if (left.value === right.value) { err.textContent = "Pick two different tabs."; return; }
+    $("#dialog").close();
+    setFocusLayout(true, { left: left.value, right: right.value });
+  };
+  showDialog(el("h3", {}, "Work | Work"),
+    el("p", { class: "muted" }, "Two WORK tabs side by side. The header stays as it is: a COMMS tab you open shows on the left, in place of the left tab, and another WORK tab replaces the right one."),
+    narrow ? el("p", { class: "muted" }, "This window is too narrow for both: they take turns until it's wider.") : null,
+    el("div", { class: "ww-pick" },
+      el("label", {}, el("span", { class: "field-label" }, "Left"), left),
+      el("button", { type: "button", class: "small subtle", title: "Swap left and right", "aria-label": "Swap left and right",
+        onclick: () => { const l = left.value; left.value = right.value; right.value = l; } }, "⇄"),
+      el("label", {}, el("span", { class: "field-label" }, "Right"), right)),
+    err,
+    el("div", { class: "row" },
+      focusOn() ? el("button", { type: "button", class: "subtle", onclick: () => { $("#dialog").close(); setFocusLayout(false); } }, "Leave Work | Work") : null,
+      el("span", { class: "spacer" }),
+      el("button", { value: "cancel", class: "subtle" }, "Cancel"),
+      el("button", { type: "button", class: "primary", onclick: go }, "Show side by side")));
+  left.focus();
 }
 
 function renderFocusButton() {
   const b = $("#focus-layout");
   if (!b) return;
   const on = focusOn(), narrow = window.innerWidth < SPLIT_MIN_WIDTH;
+  const s = on ? focusSides() : layout.pair;
   b.hidden = !focusReady();
   b.setAttribute("aria-pressed", String(on));
-  b.title = on ? `Focus layout: Pulse left, VS Code right${narrow ? " (window too narrow for both: one pane at a time)" : ""}. Click to go back.`
-    : "Focus layout: the Pulse site on the left and VS Code on the right; the header and alerts stay";
+  b.textContent = "⧉ Work | Work";
+  b.title = on ? `Work | Work: ${labelOf(s.left)} left, ${labelOf(s.right)} right${narrow ? " (window too narrow for both: one pane at a time)" : ""}. Click to go back.`
+    : `Work | Work: ${labelOf(s.left)} and ${labelOf(s.right)} side by side; the header and alerts stay`;
 }
 
 // Side window, split in two (Joe's call 2026-11-04): its two panes are LEFT and RIGHT, and any pinned tab can sit in
@@ -336,6 +427,7 @@ function applyLayout() {
   main.classList.toggle("ws-split", layout.split);
   main.classList.toggle("ws-single", !layout.split);
   main.classList.toggle("ws-focus", focusOn());
+  main.classList.toggle("ws-swap", focusOn() && !!layout.focus.swap);
   document.body.classList.toggle("split-view", layout.split);
   const nowVisible = new Set();
   if (SIDE) {  // only the pinned tabs' buttons, and a pane with none never shows
@@ -365,6 +457,11 @@ function applyLayout() {
   toggle.setAttribute("aria-pressed", String(layout.split));
   toggle.title = layout.split ? "Two panes: COMMS left, WORK right. Click for a single pane." : "One pane at a time. Click to show COMMS and WORK side by side.";
   renderFocusButton();
+  if (focusOn()) {  // remembered for the next time: the two WORK tabs on show now
+    const s = focusSides();
+    if (homeOf(s.left) === "work" && homeOf(s.right) === "work" && s.left !== s.right
+        && (s.left !== layout.pair.left || s.right !== layout.pair.right)) savePair(s.left, s.right);
+  }
   if (layout.split) applySplit();
   navPill();
   document.dispatchEvent(new CustomEvent("cc:layout", { detail: { split: layout.split, focus: focusOn() } }));
@@ -447,8 +544,8 @@ $("#layout-toggle").addEventListener("click", () => {
 // Focus layout button, next to Split/Single (its state is drawn by renderFocusButton).
 $("#layout-toggle").after(el("button", {
   id: "focus-layout", class: "layout-toggle focus-layout small subtle", type: "button", hidden: true, "aria-pressed": "false",
-  onclick: () => setFocusLayout(!layout.focus),
-}, "⧉ Pulse | Code"));
+  onclick: () => setFocusLayout(!focusOn()),
+}, "⧉ Work | Work"));
 
 window.addEventListener("resize", () => {
   if (!layout.ready) return;
@@ -521,7 +618,8 @@ function applySplit() {
   sp.setAttribute("aria-valuemin", String(Math.round((minL / w) * 100)));
   sp.setAttribute("aria-valuemax", String(Math.round((maxL / w) * 100)));
   sp.setAttribute("aria-valuenow", String(Math.round((left / w) * 100)));
-  sp.setAttribute("aria-valuetext", `COMMS ${Math.round((left / w) * 100)}%, WORK ${100 - Math.round((left / w) * 100)}%`);
+  const [a, b] = focusOn() ? ["Left", "right"] : ["COMMS", "WORK"];
+  sp.setAttribute("aria-valuetext", `${a} ${Math.round((left / w) * 100)}%, ${b} ${100 - Math.round((left / w) * 100)}%`);
 }
 
 function setSplit(frac, save = true) {
@@ -2805,7 +2903,21 @@ function paletteSources() {
   }
   if (window.innerWidth >= splitMin() && !focusOn()) add("Commands", layout.split ? "Single pane" : "Split panes", "layout", () => $("#layout-toggle").click());
   if (SIDE && layout.split) add("Commands", "Flip sides", "swap the side window's left and right", flipSides);
-  if (focusReady()) add("Commands", layout.focus ? "Leave focus layout" : "Focus layout: Pulse + VS Code", "Pulse left, VS Code right", () => setFocusLayout(!layout.focus));
+  if (focusReady()) {
+    add("Commands", "Work | Work: pick two tabs side by side…", "any two WORK tabs", workPairDialog);
+    if (focusOn()) {
+      const s = focusSides();
+      add("Commands", "Leave Work | Work", `${labelOf(s.left)} | ${labelOf(s.right)}`, () => setFocusLayout(false));
+      add("Commands", "Swap sides", `${labelOf(s.right)} left, ${labelOf(s.left)} right`, swapSides);
+    } else {
+      add("Commands", `Work | Work: ${labelOf(layout.pair.left)} | ${labelOf(layout.pair.right)}`, "the last pair", () => setFocusLayout(true));
+      const here = homeOf(layout.active.work) === "work" ? layout.active.work : null;  // beside the WORK tab open now
+      for (const id of here ? workTabs().filter((t) => t !== here) : []) {
+        add("Commands", `Side by side: ${labelOf(id)} | ${labelOf(here)}`, "Work | Work", () => setFocusLayout(true, { left: id, right: here }));
+      }
+      if (workTabs().includes(FOCUS_LEFT) && workTabs().includes(FOCUS_RIGHT)) add("Commands", "Focus layout: Pulse + VS Code", "Work | Work: Pulse left, VS Code right", () => setFocusLayout(true, { left: FOCUS_LEFT, right: FOCUS_RIGHT }));
+    }
+  }
   for (const p of proj.list) add("Projects", `Work on: ${p.name}`, p.path, () => { setActiveProject(p.path); openTab("vscode"); });
   add("Commands", "New task", "Outlook or Asana", () => newTaskDialog());
   add("Commands", "Rescan follow-ups", "", () => { openTab("today"); loaders.today(true); });
@@ -3162,7 +3274,9 @@ function toolItems() {
     plain("✂ Snip in 3 seconds", () => CC.snip?.(3), "Time to open a menu first"),
     side && toggle(side, "⧉ Side window (second screen)"),
     split && toggle(split, "◧ Split: COMMS | WORK side by side"),
-    focusLayout && toggle(focusLayout, "⧉ Pulse | Code layout"),
+    focusLayout && toggle(focusLayout, focusOn() ? `⧉ Work | Work: ${labelOf(focusSides().left)} | ${labelOf(focusSides().right)}` : `⧉ Work | Work: ${labelOf(layout.pair.left)} | ${labelOf(layout.pair.right)}`),
+    focusLayout && plain("⧉ Pick two WORK tabs side by side…", workPairDialog, "Any two WORK tabs, e.g. Websites | ScreenConnect"),
+    focusOn() && plain("⇄ Swap sides", swapSides, "The two tabs change places"),
     el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(!!focusInfo.active), onclick: focusDialog,
       title: "Only high-priority alerts pop up" }, focusInfo.active ? `◐ Focus mode: on until ${timeOf(focusInfo.until)}…` : "◐ Focus mode…"),
     teamsCalls.available && el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(teamsCalls.on), onclick: () => setTeamsCalls(!teamsCalls.on),
@@ -3219,7 +3333,7 @@ window.CC = {
       ref = [...nav.querySelectorAll("button[data-tab]")].find((b) => later.includes(b.dataset.tab)) || null;
     } else if (before) ref = nav.querySelector(`button[data-tab="${CSS.escape(before)}"]`);
     ref ? nav.insertBefore(button, ref) : nav.append(button);
-    const section = el("section", { id: `tab-${id}`, class: "tab" });
+    const section = el("section", { id: `tab-${id}`, class: "tab", "data-home": pane });
     $(`#pane-${pane}-body`).append(section);
     render?.(section);
     if (onShow) loaders[id] = onShow;
