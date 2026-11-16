@@ -286,6 +286,18 @@ async def _followups(todo, refresh=False) -> dict:
         elif _keep(f, cfg, hidden_ids, mutes) and not spam_hidden(f, blocked):
             flagged.append(f)
     flagged.sort(key=lambda f: f["received"] or "", reverse=True)
+    # Topics that aren't Joe's any more (followups.off_topics): out unless the email names him. The newest 60 are
+    # checked in Outlook (subject, sender, the new text; cached per email, so a rescan costs nothing new).
+    off = 0
+    topics = outlook.off_topics()
+    if topics and flagged:
+        try:
+            drop = await outlook.call(outlook.off_topic_ids, [f["id"] for f in flagged[:60]])
+        except Exception as e:
+            log.warning("Flagged: couldn't check off topics (%s)", type(e).__name__)
+            drop = set()
+        off = len(drop)
+        flagged = [f for f in flagged if f["id"] not in drop]
     out["flagged"] = flagged[:25]
     # Back from snooze: read fresh each time (a handful of emails), newest back first; an email that's gone (deleted,
     # moved) or spam-blocked drops out. It's listed here only, not also in the group it would otherwise be in.
@@ -309,7 +321,8 @@ async def _followups(todo, refresh=False) -> dict:
     for k, items in out.items():
         if k not in ("awaiting_reply", "teams_reply"):
             out[k] = [{**i, "important": people.is_important(i.get("sender", ""), important)} for i in items]
-    out["flagged_hidden"] = {"automated": automated, "older": older, "more": max(0, len(flagged) - 25),
+    out["flagged_hidden"] = {"automated": automated, "older": older, "more": max(0, len(flagged) - 25), "off_topic": off,
+                             "topics": [t["name"] for t in topics],
                              "before": before, "since": flagged_since(), "total": len(todo.get("flagged", []))}
     return out
 

@@ -1002,6 +1002,85 @@ def _hoxhunt_row(item, sender) -> bool:
     return hoxhunt_on() and not people.is_internal(sender) and is_hoxhunt(item)
 
 
+# ---- topics that aren't Joe's any more (followups.off_topics; Joe's call 2026-11-16: SPS) --------------------------
+# Mail on one of them (a keyword as a word in the subject or the new text above the quoted history, or a sender at one
+# of its domains) isn't a follow-up and doesn't alert unless it names Joe, the same check as Needs your reply: an
+# urgent person's or important sender's included. The Mail tab still lists it; Outlook's own flags are left alone.
+_topic_cache: dict = {}  # EntryID -> topic name or "" (a received message's text doesn't change)
+_off_ids: dict = {}  # EntryID -> off topic and not naming Joe (off_topic_ids), with "key": the settings it was for
+
+
+def off_topics() -> list[dict]:
+    """followups.off_topics, checked: [{"name", "words": compiled regex or None, "domains": [...]}]."""
+    out = []
+    for t in config.section("followups", {}).get("off_topics") or []:
+        if not isinstance(t, dict):
+            continue
+        words = [str(w).strip() for w in t.get("keywords") or [] if str(w).strip()]
+        domains = [str(d).strip().lower().lstrip("@") for d in t.get("senders") or [] if str(d).strip()]
+        if words or domains:
+            out.append({"name": str(t.get("name") or (words or domains)[0])[:40],
+                        "words": re.compile(r"(?<![\w])(?:" + "|".join(re.escape(w) for w in words) + r")(?![\w])", re.I)
+                        if words else None, "domains": domains})
+    return out
+
+
+def topic_of(subject: str, sender: str, text: str = "", topics=None) -> str:
+    """The off topic this mail is on ("" if none): a keyword in the subject or `text`, or a sender at its domains."""
+    domain = (sender or "").lower().rpartition("@")[2]
+    for t in off_topics() if topics is None else topics:
+        if domain and any(domain == d or domain.endswith("." + d) for d in t["domains"]):
+            return t["name"]
+        if t["words"] and (t["words"].search(subject or "") or t["words"].search(text or "")):
+            return t["name"]
+    return ""
+
+
+def _item_topic(item, sender, topics) -> str:
+    if not topics:
+        return ""
+    key = item.EntryID
+    if key not in _topic_cache:
+        body = item.Body or ""
+        m = QUOTE_START.search(body)
+        if len(_topic_cache) > 5000:
+            _topic_cache.clear()
+        _topic_cache[key] = topic_of(item.Subject or "", sender, (body[:m.start()] if m else body)[:20000], topics)
+    return _topic_cache[key]
+
+
+def _off_topic(item, sender, topics, names, me_smtp) -> bool:
+    """True if this mail is on an off topic and doesn't name Joe: no follow-up, no alert."""
+    return bool(_item_topic(item, sender, topics)) and not _mentions_me(item, names, me_smtp)
+
+
+def off_topic_ids(ids) -> set:
+    """Of these EntryIDs (Follow-ups' Flagged rows), the ones on an off topic that don't name Joe. COM thread."""
+    topics = off_topics()
+    if not topics:
+        return set()
+    me_name, me_smtp = _me()
+    names, ns, out = _mention_names(me_name), None, set()
+    key = repr((config.section("followups", {}).get("off_topics"), names, me_smtp))  # settings changed: ask again
+    if _off_ids.get("key") != key:
+        _off_ids.clear()
+        _off_ids["key"] = key
+    for i in ids:
+        if i not in _off_ids:  # a received email's answer doesn't change, so a rescan opens only new ones
+            try:
+                ns = ns or _ns()
+                item = ns.GetItemFromID(i)
+                _off_ids[i] = _off_topic(item, _sender_smtp(item).lower(), topics, names, me_smtp)
+            except pywintypes.com_error:
+                continue
+            if len(_off_ids) > 5000:
+                _off_ids.clear()
+                _off_ids["key"] = key
+        if _off_ids.get(i):
+            out.add(i)
+    return out
+
+
 def _mention_names(me_name) -> list[str]:
     """What counts as naming Joe: followups.mention_names plus his Outlook name (his address is checked too)."""
     fu = config.section("followups", {})
@@ -1019,6 +1098,7 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, important=()) -> 
     # "Needs your reply" only when the message calls Joe out by name or address (urgent people always count).
     mention_names = _mention_names(me_name)
     need_mention = fu.get("needs_reply_requires_mention", True) is not False
+    topics = off_topics()
     now = datetime.now()
     horizon = now - timedelta(days=max(awaiting_days, reply_days) + 7)
 
@@ -1054,8 +1134,11 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, important=()) -> 
                 who = teams_sender(item.Subject)
                 teams_reply.append({**_summary(item), "from_name": who, "urgent": people.matches("", who, urgent)})
             continue
+        # Not Joe's any more (followups.off_topics) and not naming him: checked last, so only mail that would be
+        # listed has its text read.
+        off = lambda: bool(topics) and _off_topic(item, sender, topics, mention_names, me_smtp)  # noqa: E731
         if (item.UnRead and important and people.is_important(sender, important) and len(unread_vip) < 25
-                and not _hoxhunt_row(item, sender)):
+                and not _hoxhunt_row(item, sender) and not off()):
             unread_vip.append({**_summary(item), "important": True})
         if received < recent or conv in reply_seen:
             continue
@@ -1073,6 +1156,8 @@ def followups(awaiting_days=7, reply_days=5, min_wait_hours=4, important=()) -> 
         if need_mention and not is_urgent and not _mentions_me(item, mention_names, me_smtp):
             continue
         if _hoxhunt_row(item, sender):  # a phishing test never needs a reply (it may borrow an urgent person's name)
+            continue
+        if off():
             continue
         summary = {**_summary(item), "internal": people.is_internal(sender), "urgent": is_urgent}
         if is_urgent and len(urgent_reply) < 25:
@@ -1125,7 +1210,8 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
     # Teams' notification emails don't count (the Teams reader alerts on chats and @mentions itself).
     # outlook.alerts_require_mention: false goes back to alerting on every rule match.
     need_mention = cfg.get("alerts_require_mention", True) is not False
-    me_name, me_smtp = _me() if need_mention else ("", "")
+    topics = off_topics()
+    me_name, me_smtp = _me() if need_mention or topics else ("", "")
     names = _mention_names(me_name)
     hoxhunt = hoxhunt_on()
     for item in _iter_inbox(200):
@@ -1142,6 +1228,8 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
         if blocked and blocked.hit(mail["sender"], item.Subject or "", mail["sender_name"]):
             spam.append(item)  # no alert; moved below (not while walking the sorted Items)
             continue
+        if topics and _off_topic(item, (mail["sender"] or "").lower(), topics, names, me_smtp):
+            continue  # a topic that isn't Joe's any more (followups.off_topics), not naming him: urgent people too
         # Urgent people beat every other rule: high priority, with sound.
         if urgent:
             if is_teams_notification(mail["sender"]):

@@ -2350,6 +2350,7 @@ function renderFollowups(f) {
   if (f.error) { box.replaceChildren(el("div", { class: "err" }, f.error)); return; }
   const h = f.flagged_hidden || {};
   const hiddenNote = [h.more && `${h.more} more`, h.older && `${h.older} older`, h.automated && `${h.automated} automated`,
+    h.off_topic && `${h.off_topic} ${(h.topics || []).join(" / ") || "off-topic"} not naming you`,
     h.before && `${h.before.toLocaleString()} flagged before ${new Date(`${h.since}T00:00`).toLocaleDateString([], { month: "short", day: "numeric" })}`]
     .filter(Boolean).join(" · ");
   const sections = [

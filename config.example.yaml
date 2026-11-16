@@ -63,6 +63,12 @@ followups:
   urgent_escalate_hours: 4             # one high-priority reminder if an urgent message is still unanswered
   flagged_days: 30         # flagged mail older than this (and not due) is hidden
   flagged_since: ""            # YYYY-MM-DD: flags set before this day are ignored everywhere in CC (Outlook keeps them)
+  off_topics:              # work that isn't yours any more: its mail isn't a follow-up (Flagged, Needs your reply,
+                           # Urgent, Important senders) and doesn't alert unless it names you (mention_names, your
+                           # name or address in the subject or the new text above the quoted history). Mail still lists it.
+    - name: SPS
+      keywords: ["SPS"]    # whole words, any case, in the subject or the new text
+      senders: ["spscommerce.com", "sps-commerce.intercom-mail.com"]  # sender domains (and their subdomains)
   ignore_subjects:         # regular expressions; matching mail never shows as a follow-up
     - "^Junk:"
     - "Hoxhunt"
