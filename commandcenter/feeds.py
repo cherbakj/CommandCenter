@@ -298,6 +298,25 @@ def _event_span(ev):
     return s_dt, max(e_dt, s_dt)
 
 
+def _yearly_in_own_month(ev) -> None:
+    """A yearly rule that names a day but no month ("FREQ=YEARLY;BYMONTHDAY=21") means the 21st of every month by
+    the letter of RFC 5545, and that's how dateutil expands it; Google shows it once a year, in the event's own
+    month. Joe's birthdays come that way (2026-11-16: Apr 21, Jul 23 and Oct 21 all showed in November), so such a
+    rule gets DTSTART's month, as Google reads it. Rules naming a month, week or year day are left as they are."""
+    try:
+        month = ev.get("DTSTART").dt.month
+    except Exception:
+        return
+    rules = ev.get("RRULE")
+    for rule in rules if isinstance(rules, list) else ([rules] if rules is not None else []):
+        try:
+            if (str((rule.get("FREQ") or [""])[0]).upper() == "YEARLY" and rule.get("BYMONTHDAY")
+                    and not rule.get("BYMONTH") and not rule.get("BYWEEKNO") and not rule.get("BYYEARDAY")):
+                rule["BYMONTH"] = [month]
+        except Exception:
+            continue
+
+
 def _relevant(cal, start: datetime, end: datetime, deadline: float):
     """A copy of the calendar with only the VEVENTs that can show up in [start, end): recurring series cheap enough
     to expand (see _rule_steps; per series and summed), plus single events and moved occurrences near the window.
@@ -309,6 +328,7 @@ def _relevant(cal, start: datetime, end: datetime, deadline: float):
         if time.monotonic() > deadline:
             raise TooComplex("This calendar takes too long to read")
         if ev.get("RRULE") is not None or ev.get("RDATE") is not None:
+            _yearly_in_own_month(ev)
             steps = _rule_steps(ev, end + slack)
             if steps > MAX_SERIES_STEPS:
                 skipped += 1
