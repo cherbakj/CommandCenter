@@ -331,7 +331,7 @@ class SiteView(NativeOverlay):
         core.LaunchingExternalUriScheme += lambda s, a: self._on_scheme(v, a)
         core.DownloadStarting += lambda s, a: self._on_download(v, a)
         core.PermissionRequested += lambda s, a: self._on_permission(v, a)
-        core.ScreenCaptureStarting += lambda s, a: setattr(a, "Cancel", True)
+        core.ScreenCaptureStarting += lambda s, a: self._on_screen(v, a)
         core.SaveAsUIShowing += lambda s, a: setattr(a, "Cancel", True)  # Ctrl+S: no "save page" anywhere
         core.SourceChanged += lambda s, a: self._track(v)
         core.HistoryChanged += lambda s, a: self._track(v)
@@ -448,6 +448,10 @@ class SiteView(NativeOverlay):
         args.State = CoreWebView2PermissionState.Allow if allow else CoreWebView2PermissionState.Deny
         if not allow:
             log.info("%s: refused a %s permission request", self.NAME, str(args.PermissionKind)[:30])
+
+    def _on_screen(self, v, args):
+        """A page asks to capture the screen (getDisplayMedia): refused, except where a view allows it (MeetingView)."""
+        args.Cancel = True
 
     def _on_failed(self, v, args):
         kind = str(args.ProcessFailedKind)
@@ -766,3 +770,107 @@ class TeamsView(SiteView):
             self.action("web", "navigate", web)
             return {"ok": True, "site": "web"}
         return super().handle_action({**body, "site": "web"})
+
+
+class MeetingView(TeamsView):
+    """The Meeting tab (Joe's call 2026-11-17): Teams meetings joined inside Command Center, with the camera,
+    microphone and screen sharing, in a view of their own so the Teams tab's chats stay free during a call. Its own
+    profile (data/webview-meeting), signed in with the Windows work account like the Teams view (OS_SSO).
+    - It stays blank (about:blank) until Join: only a checked Teams meeting link (teams_meeting_link) opens in it.
+    - Camera and microphone: allowed only while a meeting is open here, only for a page on Teams' own hosts
+      (https, TEAMS_APP_HOSTS), never while locked; asked each time, never remembered (SavesInProfile off).
+    - Screen sharing: the same rules for the page shown; the browser only starts it from a click in the page (Teams'
+      Share button), and Windows / WebView2 then asks which screen or window.
+    - Leave, Lock, Restart and Quit end the meeting (the view goes back to blank), so nothing is left on."""
+    NAME = "Meeting view"
+    PROFILE = "webview-meeting"
+    SITES = ("web",)
+    HOSTS = ("main",)
+    BLANK = "about:blank"
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.meeting = None  # {"link": the checked page, "app": the link for the Teams app, "at": when joined}
+
+    def sites(self):
+        return {"web": self.BLANK}
+
+    def site_of(self, url):
+        return "web" if _https_on(url, TEAMS_APP_HOSTS) else None
+
+    def _in_page(self, src, url):
+        return url  # a meeting always loads its own page (never a same-document hop from another meeting)
+
+    def _call_ok(self, uri: str) -> bool:
+        p = urllib.parse.urlsplit(uri or "")
+        return (self.meeting is not None and p.scheme == "https" and p.port in (None, 443) and not p.username
+                and not p.password and (p.hostname or "").lower() in TEAMS_APP_HOSTS
+                and self.app.unlocked and not self.app.lock_showing)
+
+    def on_permission(self, v, kind, uri: str = ""):
+        from Microsoft.Web.WebView2.Core import CoreWebView2PermissionKind as K
+        if kind in (K.Camera, K.Microphone):
+            if self._call_ok(uri):
+                log.info("Meeting view: allowed the %s", "camera" if kind == K.Camera else "microphone")
+                return True
+            return False
+        return SiteView.on_permission(self, v, kind, uri)
+
+    def _on_screen(self, v, args):
+        src = str(v.controller.CoreWebView2.Source) if v.controller else ""
+        if self._call_ok(src):
+            log.info("Meeting view: screen sharing started (Teams' Share)")
+            return
+        args.Cancel = True
+        log.info("Meeting view: refused a screen capture request")
+
+    def status(self) -> dict:
+        out = super().status()
+        m = self.meeting
+        out["meeting"] = {"at": m["at"]} if m else None
+        return out
+
+    def _apply(self):
+        SiteView._apply(self)
+        if self.meeting is not None and (not self.app.unlocked or self.app.lock_showing):
+            self._leave("locked")
+
+    def _leave(self, why: str):
+        """UI thread: the meeting ends here (the page goes to blank, which hangs up)."""
+        was = self.meeting is not None
+        self.meeting = None
+        for v in self.views.values():
+            if v.controller is not None:
+                v.controller.CoreWebView2.Navigate(self.BLANK)
+        if was:
+            log.info("Meeting view: meeting ended (%s)", why)
+
+    def leave(self, why: str = "left"):
+        self._invoke(lambda: self._leave(why))
+
+    def handle_action(self, body: dict) -> dict:
+        name = str(body.get("action") or "")
+        if name == "meeting":
+            web = teams_meeting_link(body.get("link"))
+            if not web:
+                raise ValueError("not a Teams meeting link")
+            if not self.app.unlocked or self.app.lock_showing:
+                raise ValueError("Command Center is locked")
+            app = web.replace("https://teams.microsoft.com/_#/l/", "https://teams.microsoft.com/l/", 1)
+            self.meeting = {"link": web, "app": app, "at": time.time()}
+            self.action("web", "navigate", web)
+            log.info("Meeting view: joining a meeting")
+            return {"ok": True, "site": "web"}
+        if name == "leave":
+            self.leave()
+            return {"ok": True}
+        if name == "app":  # carry on in the Teams app: left here first, so there's only one of you in the call
+            m = self.meeting
+            if not m:
+                raise ValueError("no meeting open here")
+            self.leave("moved to the Teams app")
+            threading.Thread(target=webbrowser.open, args=(m["app"],), daemon=True).start()
+            return {"ok": True}
+        if name == "reload":
+            return SiteView.handle_action(self, {"action": "reload", "site": "web"})
+        raise ValueError("unknown action")

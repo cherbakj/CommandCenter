@@ -1,0 +1,29 @@
+/* Meeting tab (WORK, static/meeting.js). Bar and stage as the Pulse tab's (pulse.css .pv-*); during a meeting the
+   native view covers .mt-hole, before one the list of coming meetings shows in it. */
+.mt-bar .mt-head { font: 700 .82rem var(--font-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim, var(--muted)); }
+.mt-bar .mt-sub { font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
+.mt-bar .mt-live { color: var(--red); font-size: .9rem; }
+.mt-hole { align-items: start; justify-items: center; padding: 2rem 1rem; }
+.mt-idle { width: min(42rem, 100%); }
+.mt-panel { display: grid; gap: .8rem; }
+.mt-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; }
+.mt-row { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr) auto; align-items: center; gap: .7rem; padding: .45rem .6rem;
+  border: 1px solid var(--line); border-radius: .35rem; }
+.mt-row.soon { border-color: rgb(var(--amber-rgb, 255 183 77) / .55); }
+.mt-row.on { border-color: rgb(var(--red-rgb) / .6); }
+.mt-when { font: 700 .85rem var(--font-ui); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mt-row.on .mt-when { color: var(--red); }
+.mt-row.soon .mt-when { color: var(--amber); }
+.mt-what { display: grid; min-width: 0; }
+.mt-subject, .mt-times { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mt-subject { font-weight: 600; }
+.mt-times { font-size: .78rem; }
+.mt-link { display: flex; gap: .5rem; }
+.mt-link input { flex: 1; min-width: 0; }
+.mt-switch { display: flex; align-items: center; gap: .5rem; font-size: .85rem; cursor: pointer; }
+.mt-help { font-size: .8rem; margin: 0; }
+.meeting-chip { flex: none; color: var(--red); border-color: var(--red); font-weight: 700; white-space: nowrap; }
+@container (max-width: 30rem) {
+  .mt-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .mt-when { grid-column: 1 / -1; }
+}

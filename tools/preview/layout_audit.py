@@ -85,7 +85,11 @@ SETUP = """([scale, compact]) => { const r = document.documentElement; r.style.s
 def run(args) -> int:
     if not args.no_build:
         sys.argv = [str(HERE / "build.py")]
-        runpy.run_path(str(HERE / "build.py"), run_name="__main__")
+        try:
+            runpy.run_path(str(HERE / "build.py"), run_name="__main__")
+        except SystemExit as e:  # build.py ends with sys.exit(main()): carry on to the audit unless it failed
+            if e.code:
+                return e.code
     html = SKELETON + PAGE.read_text(encoding="utf-8") + "\n</body></html>"
     SHOTS.mkdir(parents=True, exist_ok=True)
     found = 0

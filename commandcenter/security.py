@@ -494,9 +494,9 @@ async def side_window_set(request: Request):
 
 @router.get("/api/teams/calls", include_in_schema=False)
 async def teams_calls_state():
-    """Join meetings in CC (siteview.calls_on): available only in the desktop app (the Teams view)."""
+    """Join meetings in CC (siteview.calls_on): available only in the desktop app (the Meeting tab's view)."""
     from .siteview import calls_on
-    return {"available": bool(shell and "teams" in (getattr(shell, "overlays", None) or {})), "on": calls_on()}
+    return {"available": bool(shell and "meeting" in (getattr(shell, "overlays", None) or {})), "on": calls_on()}
 
 
 @router.post("/api/teams/calls", include_in_schema=False)

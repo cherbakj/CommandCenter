@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = Path(r"C:\Sonance\internal\CommandCenter")
+REPO = HERE.parents[1]  # this copy of the repo (a worktree too), not always the live folder
 STATIC = REPO / "commandcenter" / "static"
 OUT = HERE / "out" / "preview.html"
 

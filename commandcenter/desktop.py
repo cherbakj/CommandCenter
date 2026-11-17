@@ -31,7 +31,7 @@ import webview
 from PIL import Image, ImageDraw
 
 from . import alerts, config, db, security, starterror
-from .siteview import PulseView, TeamsView, _no_autofill
+from .siteview import MeetingView, PulseView, TeamsView, _no_autofill
 from .codedock import CodeDock
 from .outlookdock import OutlookDock
 from .screenconnectdock import ScreenConnectDock
@@ -427,13 +427,14 @@ class DesktopApp:
         self.pulse = PulseView(self)  # the Pulse tab's site view
         self.teams = TeamsView(self)  # Teams on the web in the Teams tab
         self.websites = WebsiteView(self)  # the sites added in the Websites tab
+        self.meeting = MeetingView(self)  # Teams meetings in the Meeting tab (camera, microphone, screen sharing)
         self.ssms = SsmsDock(self)    # the SQL tab's docked SSMS
         self.ssms.hotkey_factory = GlobalHotkey
         self.code = CodeDock(self)    # desktop VS Code docked in the VS Code tab
         self.outlook = OutlookDock(self)  # classic Outlook docked in the side window's Outlook tab
         self.screenconnect = ScreenConnectDock(self)  # ScreenConnect session windows docked in the ScreenConnect tab
         self.overlays = {"pulse": self.pulse, "teams": self.teams, "websites": self.websites, "ssms": self.ssms, "code": self.code,
-                         "outlook": self.outlook, "screenconnect": self.screenconnect}
+                         "outlook": self.outlook, "screenconnect": self.screenconnect, "meeting": self.meeting}
         self.side = None  # the side window (open_side), for a second screen
         self._side_lock = threading.Lock()
         self._screens = self._screen_count()  # how many screens now (docking: _screens_changed)
@@ -736,7 +737,12 @@ class DesktopApp:
         its page shows the Teams tab. The page call carries no data from the link."""
         if not self.window or not self.unlocked or self.lock_showing or self.quitting:
             raise ValueError("Command Center is locked")
-        result = self.teams.handle_action({"action": "meeting" if kind == "meeting" else "chat", "link": link})
+        if kind == "meeting":  # Join from the side window: the meeting in the main window's Meeting tab
+            result = self.meeting.handle_action({"action": "meeting", "link": link})
+            self.show()
+            self.window.run_js("window.CC && CC.meetingTab && CC.meetingTab.reveal()")
+            return result
+        result = self.teams.handle_action({"action": "chat", "link": link})
         # wherever the Teams view lives: the main window, or the side window while Teams is pinned whole there
         target = self.side if self.teams.host == "side" and self.side is not None else self.window
         if target is self.window:

@@ -71,9 +71,9 @@ function linkButton(url, label, cls = "small") {
   return el("button", { type: "button", class: cls, onclick: () => openExternal(url) }, label);
 }
 
-// Join on a Teams meeting (every Join button): with "Join meetings in CC" on (Tools ▾; siteview.calls_on), the
-// meeting opens in the Teams tab's view, which may then use the microphone and camera; from the side window, in the
-// main window's. Otherwise, or if that fails, the Teams app as before.
+// Join on a Teams meeting (every Join button): with "Join meetings in CC" on (Tools ▾, or the switch on the Meeting
+// tab; siteview.calls_on), the meeting opens in the Meeting tab (meeting.js, desktop.MeetingView: camera, microphone
+// and screen sharing); from the side window, in the main window's. Otherwise, or if that fails, the Teams app.
 const teamsCalls = { available: false, on: false };
 async function loadTeamsCalls() {
   try { Object.assign(teamsCalls, await api("/api/teams/calls")); } catch { /* serve mode, server restarting */ }
@@ -81,15 +81,15 @@ async function loadTeamsCalls() {
 async function setTeamsCalls(on) {
   await guarded(async () => {
     Object.assign(teamsCalls, await api("/api/teams/calls", { on }));
-    toast(on ? "Join meetings in CC: on. Join opens the meeting in the Teams tab, with your microphone and camera when the meeting asks."
-      : "Join meetings in CC: off. Join opens the Teams app.");
+    toast(on ? "Join meetings in CC: on. Join opens the meeting in the Meeting tab, with your camera and microphone."
+      : "Join meetings in CC: off. Join opens the Teams app (the Meeting tab's own Join still works).");
   });
 }
 async function joinMeeting(url) {
-  if (teamsCalls.on && CC.teamsWeb?.available) {
+  if (teamsCalls.on && (SIDE ? CC.sideDesktop : CC.meetingTab?.available)) {
     try {
-      if (CC.teamsWeb.elsewhere) await api("/api/window/side/chat", { link: url, kind: "meeting" });  // the view is in the other window
-      else { await api("/api/window/teams/action", { action: "meeting", link: url }); CC.teamsWeb.reveal(); }
+      if (SIDE) await api("/api/window/side/chat", { link: url, kind: "meeting" });  // the main window's Meeting tab
+      else await CC.meetingTab.join(url);
       return;
     } catch (e) { toast(`Opening it in the Teams app (${e.message})`); }
   }
@@ -206,9 +206,9 @@ const splitMin = () => (SIDE ? 1100 : SPLIT_MIN_WIDTH);
 const SPLIT_DEFAULT = 0.44;
 const PANE_OF = {
   today: "comms", alerts: "comms", mail: "comms", calendar: "comms", teams: "comms", "pulse-feedback": "comms", personal: "comms",
-  vscode: "work", toolkit: "work", sql: "work", pulse: "work", websites: "work", screenconnect: "work", voice: "work",
+  vscode: "work", toolkit: "work", sql: "work", pulse: "work", websites: "work", screenconnect: "work", meeting: "work", voice: "work",
 };
-const TAB_ORDER = { comms: ["today", "alerts", "mail", "calendar", "teams", "pulse-feedback", "personal"], work: ["vscode", "toolkit", "sql", "pulse", "websites", "screenconnect", "voice"] };
+const TAB_ORDER = { comms: ["today", "alerts", "mail", "calendar", "teams", "pulse-feedback", "personal"], work: ["vscode", "toolkit", "sql", "pulse", "websites", "screenconnect", "meeting", "voice"] };
 const TAB_ID = /^[a-z0-9_-]{1,40}$/i;
 // "projects" was the terminal Claude tab; Claude now lives in the VS Code tab.
 const pickTab = (v, d) => (v === "projects" ? "vscode" : typeof v === "string" && TAB_ID.test(v) ? v : d);
@@ -3123,12 +3123,13 @@ async function toggleFullscreen() {
   await guarded(async () => { const r = await api("/api/window/fullscreen", {}); setFullscreenUi(r.fullscreen); });
 }
 $("#win-lock").addEventListener("click", async () => {
-  if (!await confirmDialog("Lock Command Center?", "You'll need Windows Hello to get back in. Alerts keep running.", "Lock")) return;
+  if (!await confirmDialog("Lock Command Center?", `${CC.meetingTab?.inMeeting ? "The meeting in the Meeting tab ends. " : ""}You'll need Windows Hello to get back in. Alerts keep running.`, "Lock")) return;
   // The server drops the session and the window switches itself to the local lock screen.
   await guarded(() => api("/api/session/lock", {}));
 });
 // Restart and Close: a confirm, then a full-window overlay while the app goes (native views hide under it).
 async function appExit(path, title, text, verb, doing) {
+  if (CC.meetingTab?.inMeeting) text = `A Teams meeting is open in the Meeting tab: this ends it. ${text}`;
   if (!await confirmDialog(title, text, verb)) return;
   const overlay = el("div", { class: "restart-overlay", role: "status", "aria-live": "assertive" },
     el("div", { class: "restart-box" }, el("img", { class: "restart-mark", src: "/static/jc-logo.svg", alt: "" }), el("div", {}, doing)));
@@ -3281,7 +3282,7 @@ function toolItems() {
     el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(!!focusInfo.active), onclick: focusDialog,
       title: "Only high-priority alerts pop up" }, focusInfo.active ? `◐ Focus mode: on until ${timeOf(focusInfo.until)}…` : "◐ Focus mode…"),
     teamsCalls.available && el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(teamsCalls.on), onclick: () => setTeamsCalls(!teamsCalls.on),
-      title: "Join opens Teams meetings in the Teams tab, which may then use your microphone and camera (Teams' own pages only, asked each time; Lock ends a meeting there)" }, "🎥 Join meetings in CC (mic & camera)"),
+      title: "Join buttons open Teams meetings in the Meeting tab, with your camera, microphone and screen sharing (Teams' own pages only; Lock ends a meeting there)" }, "🎥 Join meetings in CC (Meeting tab)"),
     keep?.available && el("button", { type: "button", role: "menuitemcheckbox", "aria-checked": String(!!keep.on), onclick: () => CC.keepAvailable.set(!keep.on),
       title: "Teams won't go Away while Command Center is open and Windows is unlocked" }, "● Stay Available in Teams"),
     CC.shortcuts && plain("⌨ Keyboard shortcuts", () => CC.shortcuts(), "?"),
@@ -3298,11 +3299,13 @@ function toolItems() {
 loadTeamsCalls();
 document.addEventListener("visibilitychange", () => { if (!document.hidden) loadTeamsCalls(); });
 extraPaletteSources.push(() => teamsCalls.available ? [{ group: "Commands", label: `Join meetings in CC: turn ${teamsCalls.on ? "off" : "on"}`,
-  hint: teamsCalls.on ? "now on: meetings open in the Teams tab" : "now off: meetings open in the Teams app", run: () => setTeamsCalls(!teamsCalls.on) }] : []);
+  hint: teamsCalls.on ? "now on: meetings open in the Meeting tab" : "now off: meetings open in the Teams app", run: () => setTeamsCalls(!teamsCalls.on) }] : []);
 loadSide().then((info) => { if (!SIDE && info?.available && info.open && !info.shown) setSideOpen(true); });
 
 window.CC = {
-  joinMeeting,  // Join on a Teams meeting: the Teams tab's view (Join meetings in CC on) or the Teams app
+  joinMeeting,  // Join on a Teams meeting: the Meeting tab (Join meetings in CC on) or the Teams app
+  get teamsCalls() { return { ...teamsCalls }; },  // Join meetings in CC: {available, on}
+  setTeamsCalls,
   side: SIDE,  // this page is the side window (pinned tabs only; no native views, no pop-ups)
   get sideDesktop() { return !!sideInfo?.available; },  // ...in the desktop app: its Teams chats open in the main window
   $, el, api, guarded, fill, when, timeOf, duration, srcTag, showDialog, showMessage, confirmDialog, openTab, openExternal, loaders,

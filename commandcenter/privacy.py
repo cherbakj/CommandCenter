@@ -175,6 +175,11 @@ def inventory() -> list[dict]:
              "Separate from the background Teams reader's profile. With Tools ▾ > Join meetings in CC on (kv teams:calls, "
              "off unless you turn it on), meetings open there too and Teams' own pages may use your microphone and camera, "
              "asked each time and never remembered; Lock ends a meeting there."),
+            ("meeting_view", "Teams meetings (Meeting tab)", "webview-meeting",
+             "Teams on the web for meetings joined in the Meeting tab, signed in with your Windows work account. It's blank "
+             "until you join; during a meeting Teams' own pages may use your camera, microphone and (from Teams' Share "
+             "button) screen sharing, asked each time and never remembered. Leave, Lock, Restart and Close end the meeting. "
+             "Nothing from a meeting is recorded or kept by Command Center."),
             ("pulse_view", "Pulse site (Pulse tab)", "webview-pulse",
              "pulse.sonance.com and dev.pulse.sonance.com, signed in by you (Okta), shown in the Pulse tab."),
             ("websites_view", "Sites in the Websites tab", "webview-websites",
