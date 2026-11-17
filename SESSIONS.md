@@ -2,6 +2,55 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-11-16 to 11-17 (11-16 ~10:30 AM - 11-17 10:05 AM local, with breaks)
+
+**Summary:** SPS mail no longer shows up as Joe's follow-ups or alerts unless it names him. Google birthdays no longer repeat every month on the personal calendar. A new Meeting tab joins Teams meetings inside CC with camera, microphone and screen sharing. Only the Meeting tab is still waiting on a restart.
+
+### Done
+- `c127cd3` **Topics that aren't Joe's any more** (`followups.off_topics`):
+  - What it hides: SPS mail (the word as a whole word in the subject or new text, or senders at spscommerce.com / sps-commerce.intercom-mail.com) is left out of Flagged, Urgent, Needs your reply, Important senders, the Calendar's dated flags and mail alerts, unless it names Joe.
+  - Exceptions: urgent people get no exception. The Mail tab, Awaiting their reply and Outlook's own flags are unchanged.
+  - Checked read-only on his mailbox: of 463 flags since 10-24, exactly 8 SPS ones are hidden, and none of them named him.
+- `9213ac4` **Personal calendar fix:**
+  - The bug: Google birthdays come as `FREQ=YEARLY;BYMONTHDAY=N` with no month. dateutil expands that as every month, so Jake (Oct 21), Alex (Apr 21) and Rolan (Jul 23) showed in November.
+  - The fix: such a rule now gets the event's own month (`feeds._yearly_in_own_month`), as Google reads it.
+- `5d1f451` **Meeting tab** (WORK, between ScreenConnect and Voice; `siteview.MeetingView`, `static/meeting.js`):
+  - Before a meeting: the list of Teams meetings in the next 24 hours with Join, and Join with a pasted link.
+  - During one: the meeting fills the tab, with Leave and Teams app on the bar and a red ● Meeting button in the header on every tab.
+  - The view: its own WebView2 profile `data/webview-meeting`, blank until Join.
+  - Permissions: camera, microphone and screen capture only while a meeting is open there, on Teams' own https pages, never while locked.
+  - Ending: Leave, Lock, Restart and Close end the meeting.
+  - Join from the side window goes to the main window's Meeting tab.
+  - Also in this commit: `tools/preview/build.py` builds from its own copy of the repo (it read the live folder before), and `layout_audit.py` no longer stops after the build.
+- Tested:
+  - A hidden desktop test copy with a stand-in meeting page and WebView2's fake camera and microphone (25 checks).
+  - The tab in headless Edge (33 checks).
+  - The layout audit at 7 sizes.
+
+### Decisions
+- SPS: hidden unless the email names Joe, urgent people included. The mechanism is general (`off_topics`), so other topics can be added in config.yaml.
+- Meetings: Joe chose a **new Meeting tab** over just switching on the existing "Join meetings in CC" (meetings in the Teams tab).
+- Screen sharing: allowed **on his click** (Teams' Share button and Windows' picker), not left blocked.
+- "Join meetings in CC" (kv `teams:calls`) keeps its meaning: with it on, Join buttons elsewhere go to the Meeting tab; off, they go to the Teams app. The Meeting tab's own Join always joins in CC. It's still off on Joe's PC.
+
+### Settings changed (config.yaml, not in git)
+- `followups.off_topics: [{name: SPS, keywords: [SPS], senders: [spscommerce.com, sps-commerce.intercom-mail.com]}]`: SPS is no longer Joe's work.
+
+### Waiting on a restart
+- The live app started 11-17 08:39, so `7a2cb8e`, `c127cd3` and `9213ac4` are already loaded.
+- `5d1f451` (Meeting tab) loads at the next restart. The tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] Try the Meeting tab with a real Teams meeting. Teams' support for calls inside WebView2 is untested; if it misbehaves, the bar's **Teams app** button moves the call to the app.
+- [ ] To make every Join button use it, turn on the switch on the Meeting tab, or Tools ▾ > Join meetings in CC.
+
+### Known issues
+- The Meeting tab hasn't been tried with real Teams. Screen sharing's picker was only tested at the handler level: no real `getDisplayMedia`, because that needs a real click.
+- "● Meeting" means a meeting page is open in the view. If Joe leaves with Teams' own hang-up button, the chip stays until he presses Leave (CC can't read the page).
+
+### Incidents
+- Two read-only screenshots of the CC window on 11-16 evening, to see the calendar. The first was taken without asking (said in the chat as it was taken; CC was showing Pulse and VS Code). The second was taken after Joe opened the Calendar tab for it. Both were deleted afterwards; no focus or input was changed.
+
 ## 2026-11-06 (8:25 AM - 2:35 PM local)
 
 **Summary:** WORK tabs can now sit side by side (Work | Work), Okta is in Websites with app tabs and ask-once sites, a new ScreenConnect tab docks remote sessions, and Stay Available turns itself off at 5 PM. Both of today's commits load at the next restart. The 11-04 session never closed, so its commits are listed here too.
