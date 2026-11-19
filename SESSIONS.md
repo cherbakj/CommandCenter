@@ -2,6 +2,36 @@
 
 Newest first. Written by the `close-session` skill, read by `start-session`.
 
+## 2026-11-19 (~8:20-9:05 AM local)
+
+**Summary:** In full screen, the header's empty space now drags CC to another screen, and meeting reminders are a single pop-up 5 minutes before each meeting, like the personal reminders. Both are live (Joe restarted at 9:01).
+
+### Done
+- `85b597f` **Drag CC to another screen** (`DesktopApp.drag`, `POST /api/window/drag`, app.js header mousedown):
+  - In full screen, a mouse-down on the header's empty parts (the `DRAG_PARTS` themselves: logo, gaps between tabs, beside the buttons) hands off to Windows' own move loop (`ReleaseCapture` + `WM_NCLBUTTONDOWN` on HTCAPTION). On release the window fills the work area of the screen the pointer is on (`_fill(at_cursor=True)`). No refits run mid-drag (`_dragging`).
+  - Not when the button is already up (a plain click). Buttons, the status text and the meeting chip don't start it. Windowed: pywebview's drag regions as before.
+  - Tested on a hidden stand-in form (5 checks) and in headless Edge (6 checks). The real drag wasn't tried (needs Joe's mouse).
+- `800e2cc` **Meeting reminder pop-up** (`meetingpop.py`, `static/meetingpop.js`, CSS in `style.css`):
+  - One reminder 5 minutes before (`remind_minutes` default now `[5]`). It's a modal dialog with a live countdown, subject, times and place, plus **Join** (Teams; closes it), **Prep**, **Remind me when it starts** (in memory) and **Got it**. Esc and clicks outside don't close it.
+  - Comes to the front via `reminders.front_hook("meetingPoll")` (added to `FRONT_POLLS`): not while locked or the screen may be on show (e.g. the microphone is in use in another call).
+  - Pending = unread `meeting` alerts whose sealed action now carries `start` / `end` / `subject` and whose meeting isn't over. Reading the alert in the feed ends it. Older alerts without times never pop up. Main window only; nothing new stored.
+  - Tested: 12 server checks on a worktree's own database, and the pop-up in headless Edge at 1920 and 700 px (12 checks).
+
+### Decisions
+- Full-screen drag keeps the window full size while it moves and fills the drop screen. Not Windows' "restore to a small window while dragging".
+- Windowed drag left on pywebview's drag regions (no Aero Snap change).
+- Meeting reminders: only the 5-minute one, no 15-minute or "starts now" reminder. The pop-up has a Got it (meetings, unlike personal reminders, can just be acknowledged).
+
+### Settings changed (config.yaml, not in git)
+- `outlook.meetings.remind_minutes: [5]` (was `[15, 5, 0]`): Joe wants a single reminder.
+
+### Waiting on a restart
+- Nothing: the live app started at 9:01, after both commits. The tree is clean and safe to restart on.
+
+### Waiting on Joe
+- [ ] Try the header drag between his screens in full screen.
+- [ ] See the first real meeting pop-up (Join from it, and Remind me when it starts).
+
 ## 2026-11-16 to 11-17 (11-16 ~10:30 AM - 11-17 10:05 AM local, with breaks)
 
 **Summary:** SPS mail no longer shows up as Joe's follow-ups or alerts unless it names him. Google birthdays no longer repeat every month on the personal calendar. A new Meeting tab joins Teams meetings inside CC with camera, microphone and screen sharing. Only the Meeting tab is still waiting on a restart.
