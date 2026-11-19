@@ -439,6 +439,7 @@ class DesktopApp:
         self._side_lock = threading.Lock()
         self._screens = self._screen_count()  # how many screens now (docking: _screens_changed)
         self._screens_timer = None
+        self._dragging = False  # full screen: the header is being dragged (drag); no refits until it's dropped
 
     # ---- window (security.shell uses these for the /api/window/* routes) ----
     def show(self):
@@ -504,6 +505,37 @@ class DesktopApp:
             self._on_ui(self._unfill)
         return self.fullscreen
 
+    # ---- full screen: drag the header to another screen (Joe's call 2026-11-19) --------------------------------
+    # The page asks on a mouse-down on the header's empty space. Windows' own move loop then moves the window with the
+    # mouse (as dragging a title bar); once the button is up the window fills the work area of the monitor the
+    # pointer is on. Windowed, pywebview's drag regions move it as before.
+    def drag(self) -> bool:
+        if not self.window or not self.fullscreen:
+            return False
+        self._on_ui(self._drag)
+        return True
+
+    def _drag(self, form):
+        """UI thread: Windows' move loop (WM_NCLBUTTONDOWN on the caption); returns when the button is released."""
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        if self._dragging or not self.fullscreen:
+            return
+        button = 0x02 if user32.GetSystemMetrics(23) else 0x01  # SM_SWAPBUTTON: the primary button is the right one
+        if not user32.GetAsyncKeyState(button) & 0x8000:
+            return  # already let go (a plain click): nothing to move, and a move loop now would wait for a click
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        hwnd = ctypes.c_void_p(int(form.Handle.ToInt64()))
+        self._dragging = True
+        try:
+            user32.ReleaseCapture()  # the WebView2 holds the mouse since the mouse-down
+            lparam = wintypes.LPARAM((pt.y & 0xFFFF) << 16 | (pt.x & 0xFFFF))  # the pointer, as POINTS
+            user32.SendMessageW(hwnd, 0x00A1, wintypes.WPARAM(2), lparam)  # WM_NCLBUTTONDOWN on HTCAPTION
+        finally:
+            self._dragging = False
+        self._fill(form, at_cursor=True)
+
     def set_mic_permission(self, on: bool) -> bool:
         """Voice's switch (server thread): waits until the window has the new state, so the page's next request sees it."""
         if not _nav["core"]:
@@ -551,13 +583,15 @@ class DesktopApp:
         dwm(hwnd, 33, ctypes.byref(pref), 4)   # DWMWA_WINDOW_CORNER_PREFERENCE: do not round / default
         dwm(hwnd, 34, ctypes.byref(color), 4)  # DWMWA_BORDER_COLOR: none / default
 
-    def _fill(self, form):
-        """UI thread: frameless over the work area of the window's monitor."""
+    def _fill(self, form, at_cursor: bool = False):
+        """UI thread: frameless over the work area of the window's monitor (after a header drag: the pointer's)."""
         import System.Windows.Forms as WinForms
         from System.Drawing import Rectangle
         if not self.fullscreen or form.WindowState == WinForms.FormWindowState.Minimized:
             return
-        screen = WinForms.Screen.FromControl(form)
+        if self._dragging:
+            return  # mid-drag (moves are reported as it goes): fitted once it's dropped
+        screen = WinForms.Screen.FromPoint(WinForms.Cursor.Position) if at_cursor else WinForms.Screen.FromControl(form)
         w, b = screen.WorkingArea, screen.Bounds
         auto_hide = (w.X, w.Y, w.Width, w.Height) == (b.X, b.Y, b.Width, b.Height)
         target = (w.X, w.Y, w.Width, w.Height - (1 if auto_hide else 0))

@@ -551,6 +551,14 @@ async def window_fullscreen(request: Request):
     return {"fullscreen": shell.toggle_fullscreen()}
 
 
+@router.post("/api/window/drag", include_in_schema=False)
+async def window_drag(request: Request):
+    """Full screen: a mouse-down on the header's empty space moves the window to wherever it's dropped (desktop.drag)."""
+    if not _main_shell(request) or not hasattr(shell, "drag"):
+        return _no_shell()
+    return {"dragging": shell.drag()}
+
+
 @router.post("/api/window/hide", include_in_schema=False)
 async def window_hide(request: Request):
     if not _main_shell(request):

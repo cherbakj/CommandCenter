@@ -3146,8 +3146,14 @@ $("#win-restart").addEventListener("click", restartApp);
 // ⏻ (where ✕ was): close the app for real, after a confirm. Minimize, full screen and Restart have their own buttons.
 $("#win-power").addEventListener("click", quitApp);
 // Buttons in the header must never start a window drag: stop their mousedown before pywebview's body listener.
+// Full screen (Joe's call 2026-11-19): the header's empty space drags the window to another screen; Windows moves it
+// (desktop.drag) and it fills the screen it's dropped on. Only the DRAG_PARTS themselves (a mouse-down on the status
+// text or the meeting chip's text doesn't move it); a double-click doesn't start a second drag.
 document.querySelector("header").addEventListener("mousedown", (e) => {
-  if (e.target.closest("button, input, select, textarea, a, [tabindex]")) e.stopPropagation();
+  if (e.target.closest("button, input, select, textarea, a, [tabindex]")) { e.stopPropagation(); return; }
+  if (!isFullscreen || $("#win-controls").hidden || e.button !== 0 || e.detail > 1 || !e.target.matches(DRAG_PARTS)) return;
+  e.preventDefault();  // no text selection while it moves
+  api("/api/window/drag", {}).catch(() => {});
 });
 $("#win-min").addEventListener("click", () => guarded(() => api("/api/window/minimize", {})));
 $("#win-full").addEventListener("click", toggleFullscreen);
