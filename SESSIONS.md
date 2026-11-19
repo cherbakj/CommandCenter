@@ -16,6 +16,7 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
   - Comes to the front via `reminders.front_hook("meetingPoll")` (added to `FRONT_POLLS`): not while locked or the screen may be on show (e.g. the microphone is in use in another call).
   - Pending = unread `meeting` alerts whose sealed action now carries `start` / `end` / `subject` and whose meeting isn't over. Reading the alert in the feed ends it. Older alerts without times never pop up. Main window only; nothing new stored.
   - Tested: 12 server checks on a worktree's own database, and the pop-up in headless Edge at 1920 and 700 px (12 checks).
+- `a7efbcc` **Pulse Feedback "with admin" count** (after the close): a blue badge on the Pulse Feedback tab and a "N WITH ADMIN" chip in its head count open tickets with the monkey with admin (`monkey_with` 'admin' or unset; not resolved, not on hold). It's `with_admin` in the poller's cached summary, read every 2 min, hidden at 0. Tested on sample rows, in headless Edge and with the layout audit (7 sizes, OK).
 
 ### Decisions
 - Full-screen drag keeps the window full size while it moves and fills the drop screen. Not Windows' "restore to a small window while dragging".
@@ -26,11 +27,13 @@ Newest first. Written by the `close-session` skill, read by `start-session`.
 - `outlook.meetings.remind_minutes: [5]` (was `[15, 5, 0]`): Joe wants a single reminder.
 
 ### Waiting on a restart
-- Nothing: the live app started at 9:01, after both commits. The tree is clean and safe to restart on.
+- The Pulse Feedback "with admin" badge (`a7efbcc`). The drag and meeting pop-up are already live (started 9:01). The tree is clean and safe to restart on. The badge appears after the first Pulse poll following the restart.
 
 ### Waiting on Joe
 - [ ] Try the header drag between his screens in full screen.
 - [ ] See the first real meeting pop-up (Join from it, and Remind me when it starts).
+- [ ] After a restart, check the Pulse Feedback badge matches the open tickets with admin in Pulse.
+- [ ] `a7efbcc` and this log update aren't pushed to GitHub yet: the next close-session pushes them.
 
 ## 2026-11-16 to 11-17 (11-16 ~10:30 AM - 11-17 10:05 AM local, with breaks)
 
