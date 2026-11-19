@@ -908,6 +908,15 @@ dialog.hx-pop h3 { margin-bottom: .3rem; }
 .hx-pop-time { font: 700 1rem var(--font-mono); color: var(--amber); min-width: 5rem; font-variant-numeric: tabular-nums; }
 .hx-pop-subj { font: 600 1.02rem/1.4 var(--font-ui); color: var(--text); overflow-wrap: anywhere; }
 .hx-pop-acts { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+/* meeting reminder pop-up (meetingpop.js): amber, as the header's next meeting within 15 minutes */
+dialog.mp-pop { width: min(36rem, 94vw); border-color: rgb(var(--amber-rgb) / .6); }
+dialog.mp-pop .panel-label { color: var(--amber); margin-bottom: .35rem; }
+.mp-pop-list { max-height: 60vh; overflow-y: auto; margin: 0; }
+.list li.mp-pop-row { display: grid; gap: .25rem; align-items: start; }
+.mp-pop-when { font: 700 1rem var(--font-mono); color: var(--amber); font-variant-numeric: tabular-nums; }
+.mp-pop-subj { font: 700 1.15rem/1.35 var(--font-ui); color: var(--text); overflow-wrap: anywhere; }
+.mp-pop-meta { overflow-wrap: anywhere; }
+.mp-pop-acts { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin-top: .45rem; }
 #mail-view pre.mv-body { margin: .9rem 0 0; max-width: 78ch; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
   font: 400 1rem/1.65 var(--font-body); color: var(--text); background: none; border: 0; padding: 0; max-height: none; overflow: visible; }
 /* Pictures from inside an email (the Mail reader and Triage). A white ground, because many are logos and screenshots

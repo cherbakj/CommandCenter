@@ -974,6 +974,7 @@ HOXHUNT_DOMAINS = ("hoxhuntsigning.com",)
 _AR_DKIM_PASS = re.compile(r"\bdkim=pass\b[^;]*?\bheader\.d=([\w.-]+)", re.I)
 _hoxhunt_cache: dict = {}  # EntryID -> bool (a received message's headers don't change)
 on_hoxhunt = None  # set by hoxhunt.py: called (off the event loop) with the number of new tests, for the pop-up
+on_meeting = None  # set by meetingpop.py: called (off the event loop) with the number of new meeting reminders
 
 
 def hoxhunt_on() -> bool:
@@ -1267,7 +1268,7 @@ def scan_new_mail() -> list[tuple[dict, dict]]:
 
 
 def scan_meetings() -> list[tuple[dict, int]]:
-    reminders = sorted(config.section("outlook", {}).get("meetings", {}).get("remind_minutes", [10, 1]))
+    reminders = sorted(config.section("outlook", {}).get("meetings", {}).get("remind_minutes", [5]))
     if not reminders:
         return []
     due = []
@@ -1324,11 +1325,16 @@ async def watch_loop():
                                         toast="important new mail" if rule.get("priority") == "high" else "new mail")
             if new_tests and on_hoxhunt:  # the pop-up, and the window in front (hoxhunt.py)
                 await asyncio.to_thread(on_hoxhunt, new_tests)
-            for m, minutes in await call(scan_meetings):
+            due = await call(scan_meetings)
+            for m, minutes in due:
                 when = "now" if minutes == 0 else f"in {minutes} min"
-                action = {"type": "meeting", "id": m["id"], "join_url": m["join_url"], "prep": True}
+                # start / end / subject: the pop-up (meetingpop.py) shows it until it's over; the action is sealed
+                action = {"type": "meeting", "id": m["id"], "join_url": m["join_url"], "prep": True,
+                          "start": m["start"], "end": m["end"], "subject": m["subject"]}
                 alerts.raise_alert("Calendar", f"{m['subject']} starts {when}", m["location"], "high", action,
                                    toast=f"meeting {when}")
+            if due and on_meeting:  # the pop-up, and the window in front (meetingpop.py)
+                await asyncio.to_thread(on_meeting, len(due))
             db.kv_set("outlook:status", {"ok": True, "checked": db.now()})
         except Exception as e:
             log.exception("Outlook scan failed")
