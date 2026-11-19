@@ -444,6 +444,8 @@ def summarize(tickets: list[dict]) -> dict:
         "high_priority": sum(1 for t in open_ if t["priority"] == "high"),
         "open_total": len(open_),
         "on_hold": sum(1 for t in open_ if t["status"] == "On hold"),
+        # open, not on hold, the monkey with the admins (monkey_with 'admin', or not set): the Pulse Feedback tab's badge
+        "with_admin": sum(1 for t in open_ if t["status"] == "Open"),
         **_aging_summary(aging_report(tickets)),
     }
 

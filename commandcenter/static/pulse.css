@@ -87,3 +87,8 @@
 .ws-help { margin: .25rem 0 .6rem; font-size: .82rem; }
 .ws-check { display: flex; align-items: center; gap: .4rem; margin: .2rem 0 .6rem; font-size: .9rem; }
 .ws-check input { width: auto; margin: 0; }
+
+/* The Pulse Feedback tab's badge and chip: open tickets with the monkey with admin (pulse.js renderBadge). */
+.badge.badge-pulse { background: #00a3e1; color: #00131c; box-shadow: 0 0 .6rem rgb(0 163 225 / .5); }
+.badge.badge-pulse[hidden] { display: none; }
+.chip.pulse-admin-chip.on { color: #00a3e1; border-color: rgb(0 163 225 / .55); }

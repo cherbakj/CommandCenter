@@ -16,7 +16,8 @@
   const SORT_KEY = "cc.pulse.sort";
   const SORTS = [["newest", "Newest first"], ["oldest", "Oldest waiting"]];
   const state = { filter: "mine", search: "", sort: savedSort(), tickets: [], status: null, summary: null, loading: false };
-  let root, body, timer, searchTimer;
+  let root, body, timer, searchTimer, navBtn = null, badge = null;  // badge: on the tab's nav button (renderBadge)
+  const ADMIN_TIP = (n) => `${n} open ticket${n === 1 ? "" : "s"} with admin (waiting on the Pulse team; on hold not counted)`;
 
   // The sort choice is a per-viewer convenience: localStorage may be missing or blocked.
   function savedSort() {
@@ -80,6 +81,7 @@
       const sum = await api("/api/pulse/summary");
       state.summary = sum.configured && !sum.error ? sum : null;
     } catch { state.summary = null; }
+    renderBadge(state.summary);
     state.loading = false;
     renderList();
   }
@@ -188,9 +190,12 @@
     else fill(list, sorted(state.tickets).map(row), state.search ? "No tickets match that search." :
       state.filter === "mine" ? "Nothing waiting on you. Inbox zero." : "No tickets.");
     const counts = el("span", { class: "chip" }, `${state.tickets.length} TICKET${state.tickets.length === 1 ? "" : "S"}`);
+    const admin = state.summary?.with_admin;
+    const adminChip = admin == null ? null : el("span", { class: `chip pulse-admin-chip${admin ? " on" : ""}`, title: ADMIN_TIP(admin) },
+      `${admin} WITH ADMIN`);
     body.replaceChildren(...[toolbar(), agingBar(),
       el("div", { class: "panel pulse-panel" },
-        el("div", { class: "panel-head" }, el("span", { class: "panel-label" }, "PULSE // FEEDBACK TICKETS"), counts,
+        el("div", { class: "panel-head" }, el("span", { class: "panel-label" }, "PULSE // FEEDBACK TICKETS"), counts, adminChip,
           state.loading ? el("span", { class: "muted" }, "refreshing…") : null),
         list)].filter(Boolean));
   }
@@ -287,6 +292,30 @@
   }
 
   CC.registerTab({ id: "pulse-feedback", label: "Pulse Feedback", render, onShow: () => guarded(load), pane: "comms" });
+
+  // The number on the Pulse Feedback tab (Joe's call 2026-11-19): open tickets with the monkey with admin (not
+  // resolved, not on hold, waiting on the Pulse team), from the poller's cached summary (pulse.py with_admin). Read
+  // every 2 minutes, as often as the poller; hidden at 0, before Pulse is set up and while the summary can't be read.
+  navBtn = document.querySelector('.navs button[data-tab="pulse-feedback"]');
+  badge = navBtn ? el("span", { class: "badge badge-pulse", hidden: true }) : null;
+  if (badge) navBtn.append(badge);
+  function renderBadge(s) {
+    if (!badge) return;
+    const n = s?.with_admin || 0;
+    badge.hidden = !n;
+    badge.textContent = n > 99 ? "99+" : String(n);
+    navBtn.title = n ? ADMIN_TIP(n) : "";
+  }
+  async function pollBadge() {
+    if (document.hidden) return;
+    try {
+      const sum = await api("/api/pulse/summary");
+      renderBadge(sum.configured && !sum.error ? sum : null);
+    } catch { /* server restarting: the next poll tries again */ }
+  }
+  pollBadge();
+  setInterval(pollBadge, 120000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) pollBadge(); });
 
   // Pulse alerts (action type "pulse", pulse.py) open the ticket in the Pulse tab, like "Open in Pulse" on a row.
   // (Older alerts, from before this type, carry a plain "url" action and still open in the browser.)

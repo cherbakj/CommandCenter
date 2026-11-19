@@ -268,7 +268,7 @@
     return { configured: true, open_mine: open.filter((t) => t.mine && t.status !== "On hold").length,
       new_today: tickets.filter((t) => t.created_at.slice(0, 10) === today()).length,
       high_priority: open.filter((t) => t.priority === "high").length, open_total: open.length,
-      on_hold: open.filter((t) => t.status === "On hold").length,
+      on_hold: open.filter((t) => t.status === "On hold").length, with_admin: open.filter((t) => t.status === "Open").length,
       aging_fresh: c("fresh"), aging_warn: c("warn"), aging_overdue: c("overdue"), aging_unknown: 0, aging_waiting: waiting.length,
       oldest_days: waiting[0]?.age_days ?? null, oldest_ticket_no: waiting[0]?.ticket_no ?? null, aging_warn_days: 2, aging_overdue_days: 5, as_of: at(-1) };
   }
